@@ -20,6 +20,8 @@ from src.collectors.report_detail import ENDPOINTS
 from src.loaders.duckdb_store import connect, save_raw
 from src.loaders.investments import ENDPOINT as INVESTMENT_ENDPOINT, rebuild_investments
 from src.loaders.relations import make_person_id, rebuild_relations
+from src.loaders.temporal import chain_changes
+from src.pipeline.definitions import check_relations_valid_from_sane
 
 A, B = "00688996", "00401731"
 YANG = ("양종희", "1961년 06월", "남")
@@ -206,3 +208,35 @@ class SchemaMigrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChangeChainingTest(unittest.TestCase):
+    """변동 테이블만 따로: 같은 날 행이 여럿이면 다음 '날짜'로 닫히고, 변동일이 기준일보다 늦어도 검사를 통과한다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb")})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_same_day_rows_close_at_next_date_not_same_day(self):
+        with connect() as con:
+            for change_on, nm, rcept in (("2015-02-12", "(주)외환은행", "20240814003949"), ("2015-02-12", "(주)하나은행", "20210517001611"),
+                                        ("2017-06-12", "(주)하나은행", "20210517001611")):
+                con.execute("INSERT INTO major_shareholder_change (corp_code, change_on, mxmm_shrholdr_nm, source_rcept_no, bsns_year, "
+                            "reprt_code, stlm_dt, valid_from, loaded_at) VALUES (?, ?, ?, ?, '2020', '11011', DATE '2020-12-31', ?, now())",
+                            [B, change_on, nm, rcept, change_on])
+            chain_changes(con)
+            rows = con.execute("SELECT change_on, mxmm_shrholdr_nm, valid_to FROM major_shareholder_change ORDER BY 1, 2").fetchall()
+        self.assertEqual(rows, [(date(2015, 2, 12), "(주)외환은행", date(2017, 6, 12)), (date(2015, 2, 12), "(주)하나은행", date(2017, 6, 12)),
+                                (date(2017, 6, 12), "(주)하나은행", None)])
+
+    def test_change_after_report_date_passes_valid_from_check(self):
+        # KB금융 2021 사업보고서(기준일 2021-12-31)에 실린 2022-01-27 변동. 정상이다
+        with connect() as con:
+            con.execute("INSERT INTO major_shareholder_change (corp_code, change_on, mxmm_shrholdr_nm, source_rcept_no, bsns_year, "
+                        "reprt_code, stlm_dt, valid_from, loaded_at) VALUES (?, DATE '2022-01-27', '국민연금공단', '20220325001281', "
+                        "'2021', '11011', DATE '2021-12-31', DATE '2022-01-27', now())", [A])
+            result = check_relations_valid_from_sane(con)
+        self.assertTrue(result.passed)

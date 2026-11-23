@@ -60,7 +60,7 @@ DART 정기보고서 주요정보 API별로, `valid_from`과 `valid_to`를 채�
 |---|---|---|---|---|---|
 | 회사 → 출자 대상 (지분율) | 타법인 출자현황 `otrCprInvstmntSttus` | 보고서 기준일 `stlm_dt` | 같은 출자 회사의 다음 정기보고서 `stlm_dt` | 분기 (지분율 값은 보고서마다 바뀌므로 보고서 단위 행) | 최초 취득일 `frst_acqs_de` |
 | 회사 → 최대주주 (지분율) | 최대주주 현황 `hyslrSttus` | 보고서 기준일 `stlm_dt` | 같은 회사의 다음 보고서 `stlm_dt` | 분기 | (변동현황에서) |
-| 회사 → 최대주주 **변동** | 최대주주 변동현황 `hyslrChgSttus` | 변동일 `change_on` | 같은 회사의 다음 변동 행의 `change_on` | **일** (가장 정확. 분기 사이 변동을 여기서 얻는다) | = `change_on` |
+| 회사 → 최대주주 **변동** | 최대주주 변동현황 `hyslrChgSttus` | 변동일 `change_on` | 같은 회사의 다음 변동**일** `change_on` (같은 날 행이 여럿이면 같은 값) | **일** (가장 정확. 분기 사이 변동을 여기서 얻는다) | = `change_on` |
 | 회사 → 임원 (직위, 겸직) | 임원 현황 `exctvSttus` | 보고서 기준일 `stlm_dt` | 같은 회사의 다음 보고서 `stlm_dt`. 다음 보고서에 그 사람(`person_id`)이 없고 임기만료일 `tenure_end_on`이 더 이르면 그 날짜 | 분기 | `tenure_start_on` = `stlm_dt` − 재직기간 `hffc_pd`(월 단위 근사) |
 
 > **변경 (2026-11-23, E 단계):** 처음 설계는 `valid_from`을 최초 취득일·역산한 선임 시점으로 두고 "다음 보고서에 없으면 닫기"였다.
@@ -76,7 +76,7 @@ DART 정기보고서 주요정보 API별로, `valid_from`과 `valid_to`를 채�
 | API | 응답 필드 | 날짜·숫자 형식 |
 |---|---|---|
 | `hyslrSttus` (3행) | `rcept_no, corp_cls, corp_code, corp_name, stock_knd, nm, relate, bsis_posesn_stock_co, bsis_posesn_stock_qota_rt, trmend_posesn_stock_co, trmend_posesn_stock_qota_rt, rm, stlm_dt` | `stlm_dt` = `2025-12-31`. 주식 수 `33,107,971`(쉼표), 지분율 `8.68`(% 없음). `nm`이 `계`인 합계 행 있음 → 제외 |
-| `hyslrChgSttus` (28행) | `rcept_no, corp_cls, corp_code, corp_name, change_on, mxmm_shrholdr_nm, posesn_stock_co, qota_rt, change_cause, rm, stlm_dt` | `change_on` = `2019년 12월 31일` (한글). `qota_rt` = `9.97%` (**% 붙음**, 현황 API와 다름). 2025 보고서에 2019~2025년 변동 28행이 모두 실림 → **보고서마다 과거 변동이 중복되므로 `change_on` + 주주명으로 중복 제거** |
+| `hyslrChgSttus` (28행) | `rcept_no, corp_cls, corp_code, corp_name, change_on, mxmm_shrholdr_nm, posesn_stock_co, qota_rt, change_cause, rm, stlm_dt` | `change_on` = `2019년 12월 31일` (한글). `qota_rt` = `9.97%` (**% 붙음**, 현황 API와 다름). 2025 보고서에 2019~2025년 변동 28행이 모두 실림 → **보고서마다 과거 변동이 중복되므로 `change_on` + 주주명(법인 표기 뗀 정규화 이름)으로 중복 제거**. 백필에서 같은 변동이 '하나은행'·'(주)하나은행'으로 다르게 적힌 사례가 있었다 (devlog 2026-11-23) |
 | `exctvSttus` (32행) | `rcept_no, corp_cls, corp_code, corp_name, nm, sexdstn, birth_ym, ofcps, rgist_exctv_at, fte_at, chrg_job, main_career, mxmm_shrholdr_relate, hffc_pd, tenure_end_on, stlm_dt` | `tenure_end_on` = `2026년 11월 20일`, `birth_ym` = `1961년 06월`. `hffc_pd`는 `2년 \n1개월`, `1년8개월`처럼 **줄바꿈·공백이 섞임** → 정규식으로 년·개월 추출. `chrg_job`·`main_career`에 줄바꿈 포함. 재직 **시작일 필드는 없음** (역산만 가능) |
 | `otrCprInvstmntSttus` (앞서 확인) | `investment` 테이블 참고 | `frst_acqs_de` = `2019.01.11` (점) |
 

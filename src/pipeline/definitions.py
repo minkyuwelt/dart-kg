@@ -323,10 +323,13 @@ def check_relations_source_known(con: duckdb.DuckDBPyConnection) -> dg.AssetChec
 
 
 def check_relations_valid_from_sane(con: duckdb.DuckDBPyConnection) -> dg.AssetCheckResult:
+    # 스냅샷 테이블은 valid_from = 기준일이라 기준일보다 늦을 수 없다. 변동 테이블은 valid_from = 변동일이고,
+    # 사업보고서는 기준일 석 달 뒤에 내므로 그 사이 변동(예: 기준일 2021-12-31, 변동 2022-01-27)이 실린다 → 있는지만 본다
     bad = {
         t: con.execute(f"SELECT count(*) FROM {t} WHERE valid_from IS NULL OR (stlm_dt IS NOT NULL AND valid_from > stlm_dt)").fetchone()[0]
-        for t in RELATION_TABLES
+        for t in ("major_shareholder", "executive")
     }
+    bad["major_shareholder_change"] = con.execute("SELECT count(*) FROM major_shareholder_change WHERE valid_from IS NULL").fetchone()[0]
     return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
 
 
@@ -370,7 +373,7 @@ def relations_source_known() -> dg.AssetCheckResult:
         return check_relations_source_known(con)
 
 
-@dg.asset_check(asset=relations, description="모든 관계 행에 valid_from이 있고 보고서 기준일보다 늦지 않은지 (0005)")
+@dg.asset_check(asset=relations, description="모든 관계 행에 valid_from이 있고, 스냅샷 행은 보고서 기준일보다 늦지 않은지 (0005)")
 def relations_valid_from_sane() -> dg.AssetCheckResult:
     with connect(read_only=True) as con:
         return check_relations_valid_from_sane(con)

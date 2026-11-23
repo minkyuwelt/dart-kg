@@ -12,7 +12,8 @@ parse 단계는 보고서 하나만 보고 행을 만들므로 "언제까지 참
 3) 임원 보정      : 다음 보고서에 그 사람이 없고 임기만료일(tenure_end_on)이 다음 기준일보다 이르면 임기만료일로 닫는다
 
 규칙 (변동 테이블: major_shareholder_change)
-- valid_to = 같은 회사의 다음 변동일(change_on). 변동일이 있어 일 단위다
+- valid_to = 같은 회사의 다음 변동일(change_on). 변동일이 있어 일 단위다. 같은 날 행이 여럿이면 같은 valid_to
+- valid_from(= change_on)은 보고서 기준일보다 늦을 수 있다. 사업보고서는 기준일 석 달 뒤에 내므로 그 사이 변동도 실린다
 
 "언제부터 그 관계였나"(최초 취득일, 임원 선임 시점)는 valid_from이 아니라 별도 컬럼(frst_acqs_de, tenure_start_on)이다.
 valid_from을 그 날짜로 두면 연속된 보고서의 행이 겹쳐서 시점 조회가 행을 여러 개 돌려준다 (B 단계의 설계를 E에서 고침).
@@ -68,17 +69,19 @@ def close_executive_tenures(con: duckdb.DuckDBPyConnection) -> int:
 
 
 def chain_changes(con: duckdb.DuckDBPyConnection) -> None:
-    """major_shareholder_change.valid_to = 같은 회사의 다음 변동일."""
+    """major_shareholder_change.valid_to = 같은 회사의 다음 변동일.
+
+    "다음 행"이 아니라 "다음 날짜"다. 같은 날 변동 행이 둘 이상이면(이름 표기가 달라 중복 제거를 빠져나갔거나,
+    실제로 같은 날 두 사건) 모두 그 다음 날짜로 닫혀야 valid_to = valid_from인 행이 생기지 않는다.
+    """
     con.execute("UPDATE major_shareholder_change SET valid_to = NULL")
     con.execute(
         """
-        WITH nxt AS (SELECT corp_code, change_on, mxmm_shrholdr_nm,
-                            lead(change_on) OVER (PARTITION BY corp_code ORDER BY change_on, mxmm_shrholdr_nm) AS next_on
-                     FROM major_shareholder_change)
+        WITH dates AS (SELECT DISTINCT corp_code, change_on FROM major_shareholder_change),
+             nxt AS (SELECT corp_code, change_on, lead(change_on) OVER (PARTITION BY corp_code ORDER BY change_on) AS next_on FROM dates)
         UPDATE major_shareholder_change SET valid_to = nxt.next_on
         FROM nxt
         WHERE major_shareholder_change.corp_code = nxt.corp_code AND major_shareholder_change.change_on = nxt.change_on
-          AND major_shareholder_change.mxmm_shrholdr_nm = nxt.mxmm_shrholdr_nm
         """
     )
 
