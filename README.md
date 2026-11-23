@@ -73,4 +73,43 @@ docs/devlog/       날짜별 개발 일지
    python -m src.collectors.corp_code
    ```
 
+4. **오프라인 테스트** — DART API를 호출하지 않습니다.
+
+   ```bash
+   python -m unittest discover -s tests -t . -v
+   ```
+
+## 파이프라인 실행하기 (Dagster + DuckDB)
+
+데이터는 `data/dartkg.duckdb` 파일 하나에 쌓입니다. Docker는 필요 없습니다.
+
+| 자산 | 내용 | API 호출 |
+|---|---|---|
+| `corp_codes` | 공시 대상 전체 회사 목록 → `corp` 테이블 | 1건 |
+| `disclosures` | 한 회사의 한 달치 공시 목록 → `raw_api_response`(원본) + `disclosure` 테이블. 파티션 = 월 × 회사 | 파티션당 보통 1건 |
+
+1. **화면 띄우기** — 실행 후 http://localhost:3000 에 접속합니다.
+
+   ```bash
+   DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions
+   ```
+
+2. **처음 한 번** — 화면에서 `corp_codes`를 먼저 실행(Materialize)하고, `disclosures`는 원하는 월·회사 파티션을 골라 실행합니다. 5년치 전체(60개월 × 4곳)는 240건입니다.
+
+3. **매일 수집** — 화면의 Automation에서 `daily_disclosures` 스케줄을 켭니다. 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 4건, 매달 1~7일은 지난달까지 8건). `dagster dev`가 떠 있을 때만 동작합니다.
+
+화면 없이 터미널에서 실행할 수도 있습니다.
+
+```bash
+DAGSTER_HOME=$PWD/dagster_home dagster asset materialize -m src.pipeline.definitions --select disclosures --partition "00688996|2026-11-01"
+```
+
+Dagster 없이 같은 작업을 하려면:
+
+```bash
+python -m src.loaders.collect disclosures 00688996 20261101 20261130
+```
+
+> DuckDB는 쓰기 연결을 여는 프로세스가 하나뿐이어야 합니다. 파이프라인이 도는 동안 노트북에서는 `connect(read_only=True)`로만 엽니다.
+
 > OpenDART API는 하루 약 20,000건까지 호출할 수 있습니다. 대상 회사를 늘릴 때는 호출 수를 먼저 계산하세요.

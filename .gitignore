@@ -232,3 +232,7 @@ data/
 # OS / 에디터
 .DS_Store
 .vscode/
+
+# Dagster 실행 기록 (dagster.yaml 설정 파일만 커밋)
+dagster_home/*
+!dagster_home/dagster.yaml

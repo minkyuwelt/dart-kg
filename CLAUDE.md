@@ -33,6 +33,8 @@ src/pipeline/      Dagster 자산·스케줄 정의
 src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 sql/schema.sql     DuckDB 테이블 정의
+tests/             오프라인 테스트 (DART API를 호출하지 않음, `python -m unittest discover -s tests -t .`)
+dagster_home/      Dagster 인스턴스 설정 (dagster.yaml만 커밋)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록 (NNNN-제목.md)
 docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
@@ -67,5 +69,6 @@ GitHub가 유일한 중계 지점이다. 웹과 노트북은 서로의 파일을
 ## 규칙
 - API 키는 `.env`의 `DART_API_KEY`로만 읽음 (`python-dotenv`). `.env`는 절대 커밋하지 않음. 새 환경변수를 추가하면 `.env.example`도 함께 갱신
 - 코드 설명은 한국어로, 코드 주석보다 자세하게
+- DART API 호출은 반드시 `src/collectors/dart_client.py`를 거친다 (에러 메시지에서 API 키를 가리고, DART status 코드를 처리함). `requests`로 DART를 직접 호출하지 않기
 - 의미 있는 작업이 끝나면 `docs/devlog/`에 오늘 한 일, 막힌 점, 해결 방법을 짧게 기록
 - 기술(DB, 도구, 주요 라이브러리)을 추가하거나 바꿀 때는 먼저 `docs/decisions/`에 요구사항 근거와 대안 비교를 기록. "많이 쓰여서", "써 봐서/안 써 봐서"는 근거가 아님
