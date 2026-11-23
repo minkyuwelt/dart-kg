@@ -102,9 +102,18 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions
    ```
 
-2. **처음 한 번** — 화면에서 `targets_job`(corp_codes → holding_investments → target_corps)을 먼저 실행합니다. 그다음 `disclosures`의 월·회사 파티션을 골라 실행합니다. 5년치 전체(60개월 × 59곳)는 3,540건입니다.
+2. **처음 한 번** — 화면에서 `targets_job`(corp_codes → holding_investments → target_corps)을 먼저 실행합니다.
 
-3. **매일 수집** — 화면의 Automation에서 `daily_disclosures` 스케줄을 켭니다. 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `yearly_targets`는 매년 4월 15일에 새 사업보고서로 대상을 갱신합니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
+3. **과거 공시 백필** — 2021-01부터 이번 달까지(71개월 × 59곳 = 4,189개 파티션, 최소 4,189건)를 채웁니다. Dagster 화면의 백필은 파티션마다 프로세스를 띄워 몇 시간이 걸리므로, 프로세스 하나에서 도는 스크립트를 씁니다. `dagster dev`는 꺼 둔 상태로 실행합니다.
+
+   ```bash
+   DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill --dry-run   # 계획만 (API 호출 없음)
+   DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill
+   ```
+
+   완료한 파티션은 Dagster에 기록되므로 중간에 멈춰도 다시 실행하면 이어서 합니다. `--from`, `--to`, `--corp`로 범위를 좁힐 수 있고, `--max-calls`(기본 8,000) 또는 DART 한도 초과 응답에서 멈춥니다.
+
+4. **매일 수집** — 화면의 Automation에서 `daily_disclosures` 스케줄을 켭니다. 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `yearly_targets`는 매년 4월 15일에 새 사업보고서로 대상을 갱신합니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
 
 화면 없이 터미널에서 실행할 수도 있습니다.
 
