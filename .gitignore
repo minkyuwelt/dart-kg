@@ -221,3 +221,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ===== dart-kg 프로젝트 전용 =====
+# 환경변수 (API 키, DB 비밀번호) — 절대 커밋 금지
+.env
+# Airflow 로그
+logs/
+# Docker 볼륨 데이터 (PostgreSQL, Neo4j 등)
+data/
+# OS / 에디터
+.DS_Store
+.vscode/
