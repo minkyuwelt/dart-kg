@@ -239,3 +239,6 @@ dagster_home/*
 
 # CI 임시 폴더 (GitHub Actions 러너에서만 생김)
 .ci/
+
+# 검증 스크립트 결과 (임원 이름·생년월 포함 → 공개 저장소에 올리지 않음. 요약은 devlog에)
+notebooks/phase2_questions_result.txt
