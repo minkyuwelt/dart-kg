@@ -133,16 +133,16 @@ class RelationsAssetTest(DuckDBTestCase):
             for name, endpoint in ENDPOINTS.items():
                 body = json.loads((FIXTURES / f"{endpoint.removesuffix('.json')}_{KB}_2025_11011.json").read_text(encoding="utf-8"))
                 save_raw(con, endpoint, key, body)
-        result = dg.materialize(
-            [definitions.relations, definitions.relations_source_known, definitions.relations_valid_from_sane],
-            instance=self.instance,
-        )
+        result = dg.materialize([definitions.relations, *definitions.RELATION_CHECKS], instance=self.instance)
         self.assertTrue(result.success)
         meta = result.asset_materializations_for_node("relations")[0].metadata
         self.assertEqual((meta["major_shareholder"].value, meta["major_shareholder_change"].value, meta["executive"].value), (1, 28, 32))
         self.assertTrue(all(ev.passed for ev in result.get_asset_check_evaluations()))
         with connect(read_only=True) as con:
-            self.assertEqual(con.execute("SELECT valid_from FROM executive WHERE nm = '양종희'").fetchone()[0], date(2023, 11, 30))
+            self.assertEqual(con.execute("SELECT valid_from, tenure_start_on FROM executive WHERE nm = '양종희'").fetchone(),
+                             (date(2025, 12, 31), date(2023, 11, 30)))
+            self.assertEqual(con.execute("SELECT count(*) FROM executive_current").fetchone()[0], 32)
+        self.assertEqual(meta["person"].value, 32)
 
 
 def report_disclosures_run(instance: dg.DagsterInstance, corp_code: str, month: str, reports: list[str]) -> None:

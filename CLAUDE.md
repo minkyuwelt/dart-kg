@@ -7,6 +7,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
   - 대상 목록은 코드에 적지 않는다. 지주의 최신 사업보고서 타법인 출자현황에서 `target_corp` 테이블로 뽑는다
   - 해외 자회사·펀드·손자회사는 수집 대상이 아니고, 모회사 출자 데이터에 그래프 노드로만 들어간다
   - 출자 대상 이름 → corp_code 연결에서 후보가 여럿이면 추측하지 말고, 근거를 확인해 `config/corp_name_overrides.csv`에 적는다
+  - 사람(임원)은 `person_id` = 이름|생년월|성별로 묶는다 (`docs/decisions/0006-person-identity.md`). 같은 조합이 다른 사람으로 확인되면 추측하지 말고 0006에 분리 규칙을 적는다
 - 데이터 출처: OpenDART API (https://opendart.fss.or.kr)
 - API 호출 한도(일 약 20,000건)를 넘지 않도록, 대상 회사를 늘릴 때는 호출 수를 먼저 계산할 것
 
@@ -18,7 +19,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
-현재 단계: Phase 2 (수집 함수·관계 테이블·파서·Dagster 자산·백필 스크립트까지. 시간 닫기·사람 식별은 예정)
+현재 단계: Phase 2 (코드 완료: 수집·관계 테이블·Dagster 자산·시간 닫기·사람 식별. 남은 것: 노트북 백필(D)과 시점 질의 검증(F))
 
 ## 아키텍처 원칙
 - DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함
