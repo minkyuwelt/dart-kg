@@ -11,6 +11,11 @@ Dagster 자산은 이 함수들을 호출만 한다. 그래서 같은 작업을 
     # 타법인 출자현황 적재 (API: 회사 수만큼)
     python -m src.loaders.collect investments 2025 00688996 00382199
 
+    # 한 회사의 한 보고서에서 주요정보 4종(출자·최대주주·변동·임원) 원본 저장 (API 4건, Phase 2)
+    python -m src.loaders.collect report_details 00688996 2025 11011
+    # 원본에서 관계 테이블 다시 만들기 (API 0건)
+    python -m src.loaders.relations rebuild
+
 Dagster가 도는 중에는 DuckDB 쓰기 잠금이 겹치므로 CLI를 함께 실행하지 않는다.
 """
 
@@ -21,6 +26,7 @@ import duckdb
 from src.collectors.corp_code import download_corp_code_xml, get_api_key, parse_corps
 from src.collectors.disclosure_list import fetch_disclosures, parse_disclosures
 from src.collectors.investment import fetch_investments
+from src.collectors.report_detail import ENDPOINTS, fetch_report_detail
 from src.loaders.duckdb_store import connect, save_raw, upsert_corps, upsert_disclosures
 from src.loaders.investments import rebuild_investments
 
@@ -71,11 +77,36 @@ def collect_investments(
     return {"api_calls": len(corp_codes), "no_data": statuses.count("013"), "investment_rows": stats["rows"]}
 
 
+def collect_report_details(
+    con: duckdb.DuckDBPyConnection, api_key: str, corp_code: str, bsns_year: str, reprt_code: str
+) -> dict:
+    """한 회사의 한 정기보고서에서 주요정보 4종 원본을 받아 저장한다. API 4건.
+
+    정규화 테이블은 여기서 만들지 않는다. 관계 테이블은 "다음 보고서"를 봐야 시간을 닫을 수 있어서
+    보고서 하나씩이 아니라 원본 전체로 다시 만든다 (src/loaders/relations.py rebuild, investments.py rebuild).
+    """
+    page = fetch_investments(api_key, corp_code, bsns_year, reprt_code)
+    pages = {"investment": page}
+    for name in ENDPOINTS:
+        pages[name] = fetch_report_detail(api_key, name, corp_code, bsns_year, reprt_code)
+    con.begin()
+    try:
+        for p in pages.values():
+            save_raw(con, p.endpoint, p.request_key, p.body)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    statuses = {name: p.body.get("status") for name, p in pages.items()}
+    return {"api_calls": len(pages), "statuses": statuses, "no_data": sum(s == "013" for s in statuses.values())}
+
+
 def main(argv: list[str]) -> None:
     usage = (
         "사용법: python -m src.loaders.collect corps"
         " | disclosures <corp_code> <bgn_de> <end_de>"
         " | investments <bsns_year> <corp_code> [<corp_code> ...]"
+        " | report_details <corp_code> <bsns_year> <reprt_code>"
     )
     if not argv:
         sys.exit(usage)
@@ -87,6 +118,8 @@ def main(argv: list[str]) -> None:
             print(collect_disclosures(con, api_key, *argv[1:]))
         elif argv[0] == "investments" and len(argv) >= 3:
             print(collect_investments(con, api_key, argv[2:], argv[1]))
+        elif argv[0] == "report_details" and len(argv) == 4:
+            print(collect_report_details(con, api_key, *argv[1:]))
         else:
             sys.exit(usage)
 
