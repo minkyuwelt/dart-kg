@@ -24,7 +24,6 @@
     python -m src.loaders.relations rebuild
 """
 
-import json
 import re
 import sys
 from datetime import date
@@ -34,7 +33,7 @@ import duckdb
 import pandas as pd
 
 from src.collectors.report_detail import ENDPOINTS
-from src.loaders.duckdb_store import connect
+from src.loaders.duckdb_store import connect, raw_bodies
 from src.loaders.investments import build_name_index, load_overrides, normalize_name, resolve, to_number
 
 DATE_PATTERNS = (
@@ -245,13 +244,6 @@ def dedupe_changes(rows: list[dict]) -> list[dict]:
     return list(best.values())
 
 
-def _raw_bodies(con: duckdb.DuckDBPyConnection, endpoint: str):
-    for request_key, body in con.execute(
-        "SELECT request_key, body FROM raw_api_response WHERE endpoint = ? AND status = '000'", [endpoint]
-    ).fetchall():
-        yield request_key, json.loads(body)
-
-
 def _replace_table(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict], columns: list[str]) -> int:
     """테이블을 비우고 rows로 다시 채운다. 트랜잭션은 호출하는 쪽이 연다."""
     con.execute(f"DELETE FROM {table}")
@@ -292,14 +284,14 @@ def rebuild_relations(con: duckdb.DuckDBPyConnection) -> dict:
     overrides = load_overrides()
 
     shareholders: list[dict] = []
-    for request_key, body in _raw_bodies(con, ENDPOINTS["major_shareholder"]):
+    for request_key, body in raw_bodies(con, ENDPOINTS["major_shareholder"]):
         shareholders.extend(parse_major_shareholders(request_key, body, index, overrides))
     changes: list[dict] = []
-    for request_key, body in _raw_bodies(con, ENDPOINTS["major_shareholder_change"]):
+    for request_key, body in raw_bodies(con, ENDPOINTS["major_shareholder_change"]):
         changes.extend(parse_major_shareholder_changes(request_key, body))
     changes = dedupe_changes(changes)
     executives: list[dict] = []
-    for request_key, body in _raw_bodies(con, ENDPOINTS["executive"]):
+    for request_key, body in raw_bodies(con, ENDPOINTS["executive"]):
         executives.extend(parse_executives(request_key, body))
 
     con.begin()

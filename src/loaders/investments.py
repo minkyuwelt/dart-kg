@@ -25,7 +25,6 @@
 """
 
 import csv
-import json
 import re
 import sys
 from pathlib import Path
@@ -34,7 +33,7 @@ from urllib.parse import parse_qs
 import duckdb
 import pandas as pd
 
-from src.loaders.duckdb_store import REPO_ROOT, connect
+from src.loaders.duckdb_store import REPO_ROOT, connect, raw_bodies
 
 ENDPOINT = "otrCprInvstmntSttus.json"
 OVERRIDES_PATH = REPO_ROOT / "config" / "corp_name_overrides.csv"
@@ -157,10 +156,8 @@ def rebuild_investments(con: duckdb.DuckDBPyConnection) -> dict:
     index = build_name_index(con)
     overrides = load_overrides()
     rows = []
-    for request_key, body in con.execute(
-        "SELECT request_key, body FROM raw_api_response WHERE endpoint = ? AND status = '000'", [ENDPOINT]
-    ).fetchall():
-        rows.extend(parse_investment_rows(request_key, json.loads(body), index, overrides))
+    for request_key, body in raw_bodies(con, ENDPOINT):
+        rows.extend(parse_investment_rows(request_key, body, index, overrides))
 
     df = pd.DataFrame(rows)
     con.begin()

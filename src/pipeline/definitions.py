@@ -6,6 +6,7 @@
 
 자산 구성 (화살표는 의존 관계)
     corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
+                                              └────────▶ report_details ─▶ relations  (Phase 2)
 
     corp_codes          : corpCode.xml 전체 → corp 테이블 (API 1건)
     holding_investments : 지주 4곳의 최신 사업보고서 타법인 출자현황 → investment 테이블 (API 4건)
@@ -13,6 +14,11 @@
                           새 회사를 disclosures의 회사 파티션에 추가한다 (API 0건)
     disclosures         : list.json → raw_api_response + disclosure 테이블
                           파티션 = 월(month) × 회사(corp). 파티션 하나가 "한 회사의 한 달치 공시"이고 보통 API 1건
+    report_details      : (Phase 2) 한 회사의 한 정기보고서에서 주요정보 4종(출자·최대주주·변동·임원) 원본 저장
+                          파티션 = 회사(corp) × 보고서(report: '2025-11011' = 사업연도-보고서종류). API 4건.
+                          disclosure 목록에 그 보고서가 없으면 API를 부르지 않고 건너뛴다 (0건)
+    relations           : (Phase 2) 원본 전체에서 investment·major_shareholder·major_shareholder_change·executive
+                          테이블을 다시 만든다. API 0건. 시간 닫기(valid_to)는 아직 없다 (0005)
 
 왜 월 × 회사 파티션인가
     - 일 단위로 나누면 5년 백필 호출이 30배가 된다 (59곳 기준 일 단위 약 107,000건 vs 월 단위 3,540건)
@@ -36,8 +42,17 @@ from zoneinfo import ZoneInfo
 import dagster as dg
 
 from src.collectors.corp_code import HOLDING_CORPS, get_api_key
-from src.loaders.collect import collect_corps, collect_disclosures, collect_investments
+from src.loaders.collect import collect_corps, collect_disclosures, collect_investments, collect_report_details
 from src.loaders.duckdb_store import connect, is_lock_error
+from src.loaders.investments import rebuild_investments
+from src.loaders.periodic_reports import (
+    latest_periodic_report,
+    periodic_reports_of,
+    report_partition_key,
+    report_partition_keys,
+    split_report_partition_key,
+)
+from src.loaders.relations import rebuild_relations
 from src.loaders.targets import latest_business_report_year, rebuild_target_corps
 
 # DuckDB 파일 잠금에 걸렸을 때 다시 시도하는 횟수와 간격(초).
@@ -51,6 +66,12 @@ KST = ZoneInfo("Asia/Seoul")
 month_partitions = dg.MonthlyPartitionsDefinition(start_date="2021-01-01", end_offset=1, timezone="Asia/Seoul")
 corp_partitions = dg.DynamicPartitionsDefinition(name="corp")
 disclosure_partitions = dg.MultiPartitionsDefinition({"month": month_partitions, "corp": corp_partitions})
+
+# Phase 2: 정기보고서 파티션. 2021 사업연도부터 올해까지 연 4개(1분기·반기·3분기·사업). 키는 '2025-11011'.
+# 회사 × 보고서 조합 중 실제로 보고서가 있는 것만 API를 부르므로, 없는 조합을 백필해도 호출이 늘지 않는다.
+FIRST_REPORT_YEAR = 2021
+report_partitions = dg.StaticPartitionsDefinition(report_partition_keys(FIRST_REPORT_YEAR, datetime.now(ZoneInfo("Asia/Seoul")).year))
+report_detail_partitions = dg.MultiPartitionsDefinition({"corp": corp_partitions, "report": report_partitions})
 
 
 def today_kst() -> date:
@@ -90,6 +111,7 @@ def write_connection() -> Iterator:
 
 
 TARGET_CODES_METADATA_KEY = "target_codes"
+PERIODIC_REPORTS_METADATA_KEY = "periodic_reports"
 
 
 def target_codes_from_instance(instance: dg.DagsterInstance) -> list[str] | None:
@@ -204,7 +226,17 @@ def disclosures(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
         corp_name = row[0] if row else corp_code
         context.log.info(f"{corp_name}({corp_code}) {bgn_de}~{end_de} 공시 목록 수집")
         stats = collect_disclosures(con, get_api_key(), corp_code, bgn_de, end_de)
-    return dg.MaterializeResult(metadata={"corp_name": corp_name, "period": f"{bgn_de}~{end_de}", **stats})
+        # 이 달에 접수된 정기보고서(정정본 포함). daily_report_details 스케줄이 DuckDB를 열지 않고 읽는 곳
+        reports = sorted({report_partition_key(r["bsns_year"], r["reprt_code"]) for r in periodic_reports_of(con, corp_code, bgn_de, end_de)})
+    return dg.MaterializeResult(
+        metadata={
+            "corp_code": corp_code,
+            "corp_name": corp_name,
+            "period": f"{bgn_de}~{end_de}",
+            **stats,
+            PERIODIC_REPORTS_METADATA_KEY: dg.MetadataValue.json(reports),
+        }
+    )
 
 
 @dg.asset_check(asset=disclosures, description="모든 공시의 corp_code가 corp 테이블에 있는지 (회사 식별자 무결성)")
@@ -227,10 +259,85 @@ def disclosure_rcept_no_format() -> dg.AssetCheckResult:
     return dg.AssetCheckResult(passed=bad == 0, severity=dg.AssetCheckSeverity.WARN, metadata={"bad_rows": bad})
 
 
+@dg.asset(
+    group_name="dart",
+    partitions_def=report_detail_partitions,
+    deps=[target_corps],
+    description="(Phase 2) 한 회사의 한 정기보고서 주요정보 4종 원본 저장. 목록에 보고서가 있을 때만 API 4건.",
+)
+def report_details(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    """disclosure 목록에 그 보고서가 있으면 주요정보 4종을 받아 원본으로 저장한다.
+
+    목록에 없으면(사업보고서를 내지 않는 자회사, 아직 접수 전) API를 부르지 않고 건너뛴다.
+    그래서 전체 파티션을 백필해도 호출 수는 실제 보고서 수 × 4를 넘지 않는다.
+    정정본이 접수되면 같은 파티션을 다시 돌린다. 응답의 rcept_no가 바뀌어 원본이 따로 남는다 (collect_report_details).
+    """
+    keys = context.partition_key.keys_by_dimension
+    corp_code, report = keys["corp"], keys["report"]
+    bsns_year, reprt_code = split_report_partition_key(report)
+
+    with write_connection() as con:
+        row = con.execute("SELECT corp_name FROM corp WHERE corp_code = ?", [corp_code]).fetchone()
+        corp_name = row[0] if row else corp_code
+        listed = latest_periodic_report(con, corp_code, bsns_year, reprt_code)
+        if listed is None:
+            context.log.info(f"{corp_name}({corp_code}) {report}: 공시 목록에 보고서가 없어 건너뜀")
+            return dg.MaterializeResult(metadata={"corp_code": corp_code, "corp_name": corp_name, "report": report,
+                                                  "skipped": "공시 목록에 보고서 없음", "api_calls": 0})
+        context.log.info(f"{corp_name}({corp_code}) {listed['report_nm']} ({listed['rcept_no']}) 주요정보 수집")
+        stats = collect_report_details(con, get_api_key(), corp_code, bsns_year, reprt_code)
+    # 응답의 rcept_no가 목록의 최신 접수번호와 다르면 목록이 오래됐거나(정정본이 아직 목록에 없음) API가 다른 버전을 준 것
+    return dg.MaterializeResult(
+        metadata={"corp_code": corp_code, "corp_name": corp_name, "report": report,
+                  "listed_rcept_no": listed["rcept_no"], "listed_report_nm": listed["report_nm"], **stats,
+                  "rcept_no_matches_listing": stats["rcept_no"] == listed["rcept_no"]}
+    )
+
+
+@dg.asset(
+    group_name="dart",
+    deps=[report_details, holding_investments],
+    description="(Phase 2) 원본 전체에서 관계 테이블(investment·최대주주·변동·임원)을 다시 만든다. API 0건.",
+)
+def relations() -> dg.MaterializeResult:
+    with write_connection() as con:
+        inv = rebuild_investments(con)
+        rel = rebuild_relations(con)
+    return dg.MaterializeResult(metadata={"investment": inv["rows"], **{k: v for k, v in rel.items() if k != "holder_by_method"},
+                                          "holder_by_method": dg.MetadataValue.json(rel["holder_by_method"])})
+
+
+RELATION_TABLES = ("major_shareholder", "major_shareholder_change", "executive")
+
+
+@dg.asset_check(asset=relations, description="관계 행의 근거 공시(source_rcept_no)가 disclosure 목록에 있는지")
+def relations_source_known() -> dg.AssetCheckResult:
+    # 주요정보 응답의 rcept_no는 최신 정정본이다. 정정 공시가 접수된 날 disclosures보다 먼저 돌면 잠깐 어긋날 수 있어 경고로 둔다
+    with connect(read_only=True) as con:
+        missing = {
+            t: con.execute(f"SELECT count(DISTINCT source_rcept_no) FROM {t} r ANTI JOIN disclosure d ON d.rcept_no = r.source_rcept_no").fetchone()[0]
+            for t in RELATION_TABLES
+        }
+    return dg.AssetCheckResult(passed=sum(missing.values()) == 0, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"unknown_sources": dg.MetadataValue.json(missing)})
+
+
+@dg.asset_check(asset=relations, description="모든 관계 행에 valid_from이 있고 보고서 기준일보다 늦지 않은지 (0005)")
+def relations_valid_from_sane() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        bad = {
+            t: con.execute(f"SELECT count(*) FROM {t} WHERE valid_from IS NULL OR (stlm_dt IS NOT NULL AND valid_from > stlm_dt)").fetchone()[0]
+            for t in RELATION_TABLES
+        }
+    return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+
+
 targets_job = dg.define_asset_job(
     "targets_job", selection=dg.AssetSelection.assets(corp_codes, holding_investments, target_corps)
 )
 disclosures_job = dg.define_asset_job("disclosures_job", selection=dg.AssetSelection.assets(disclosures))
+report_details_job = dg.define_asset_job("report_details_job", selection=dg.AssetSelection.assets(report_details))
+relations_job = dg.define_asset_job("relations_job", selection=dg.AssetSelection.assets(relations))
 
 
 def latest_target_bsns_year(instance: dg.DagsterInstance) -> int | None:
@@ -302,11 +409,62 @@ def daily_disclosures(context: dg.ScheduleEvaluationContext):
             )
 
 
+def _recent_materializations(instance: dg.DagsterInstance, asset_key: dg.AssetKey, since: float) -> list:
+    """since(epoch 초) 이후의 자산 실행 기록. 스케줄이 DuckDB 대신 읽는 곳."""
+    return list(instance.fetch_materializations(dg.AssetRecordsFilter(asset_key=asset_key, after_timestamp=since), limit=5000).records)
+
+
+LOOKBACK_DAYS = 2  # 스케줄이 "최근"으로 보는 범위. 하루 꺼져 있어도 다음 날 따라잡는다. run_key가 같은 날 중복을 막는다
+
+
+@dg.schedule(job=report_details_job, cron_schedule="30 7 * * *", execution_timezone="Asia/Seoul")
+def daily_report_details(context: dg.ScheduleEvaluationContext):
+    """매일 07:30(KST), 최근 disclosures 실행이 새로 본 정기보고서(정정본 포함)의 주요정보를 수집한다.
+
+    07:00 daily_disclosures가 남긴 실행 메타데이터(periodic_reports)를 Dagster 인스턴스에서 읽는다.
+    DuckDB는 열지 않는다. 정기보고서가 없는 날은 건너뛰므로 평소 API 0건, 보고서 접수 시기에 보고서당 4건.
+    """
+    now = context.scheduled_execution_time
+    today = now.astimezone(KST).date()
+    wanted: set[tuple[str, str]] = set()
+    for record in _recent_materializations(context.instance, disclosures.key, now.timestamp() - LOOKBACK_DAYS * 86400):
+        meta = record.asset_materialization.metadata
+        corp = meta.get("corp_code")
+        reports = meta.get(PERIODIC_REPORTS_METADATA_KEY)
+        if corp is None or reports is None:
+            continue
+        wanted.update((corp.value, r) for r in reports.value)
+    if not wanted:
+        yield dg.SkipReason(f"최근 {LOOKBACK_DAYS}일 공시 수집에서 새 정기보고서가 없습니다.")
+        return
+    known = set(context.instance.get_dynamic_partitions("corp"))
+    for corp_code, report in sorted(wanted):
+        if corp_code not in known or report not in report_partitions.get_partition_keys():
+            context.log.warning(f"파티션에 없는 조합 건너뜀: {corp_code} {report}")
+            continue
+        yield dg.RunRequest(
+            run_key=f"{today.isoformat()}|{corp_code}|{report}",
+            partition_key=dg.MultiPartitionKey({"corp": corp_code, "report": report}),
+        )
+
+
+@dg.schedule(job=relations_job, cron_schedule="30 8 * * *", execution_timezone="Asia/Seoul")
+def daily_relations(context: dg.ScheduleEvaluationContext):
+    """매일 08:30(KST), 최근에 report_details가 실행됐으면 관계 테이블을 다시 만든다 (API 0건)."""
+    now = context.scheduled_execution_time
+    today = now.astimezone(KST).date()
+    if not _recent_materializations(context.instance, report_details.key, now.timestamp() - LOOKBACK_DAYS * 86400):
+        yield dg.SkipReason(f"최근 {LOOKBACK_DAYS}일에 report_details 실행이 없습니다.")
+        return
+    yield dg.RunRequest(run_key=f"relations|{today.isoformat()}")
+
+
 defs = dg.Definitions(
-    assets=[corp_codes, holding_investments, target_corps, disclosures],
-    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format],
-    jobs=[targets_job, disclosures_job],
-    schedules=[targets_freshness, daily_disclosures],
+    assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations],
+    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format,
+                  relations_source_known, relations_valid_from_sane],
+    jobs=[targets_job, disclosures_job, report_details_job, relations_job],
+    schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)
     executor=dg.in_process_executor,
 )
