@@ -23,6 +23,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 ## 아키텍처 원칙
 - DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함
 - Neo4j(그래프·벡터·전문검색)는 DuckDB에서 언제든 재생성할 수 있어야 함
+- 관계 데이터(Phase 2 이후: 최대주주·임원·출자)는 이중 시간축으로 적는다: 사실 시간(`valid_from`·`valid_to`)과 기록 시간(`source_rcept_no`·`superseded_by`). 끝난 관계·정정된 공시는 지우지 않고 닫는다. 시간 값은 공시가 주는 날짜에서 규칙으로 얻고 LLM으로 추측하지 않는다 (`docs/decisions/0005-temporal-model.md`)
 - 모든 적재는 멱등성 유지: 재실행해도 중복이 생기지 않게 (예: `rcept_no` 기본키 + `ON CONFLICT`)
 - corp_code(8자리 고유번호)를 회사 식별자로 사용. 회사명으로 조인하지 않기
 - 수집·적재 로직은 Dagster에 의존하지 않는 일반 함수로 만들고, Dagster 자산은 그 함수를 호출만 한다 (CLI로도 실행 가능하게)
