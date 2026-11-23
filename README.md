@@ -56,7 +56,7 @@ docs/devlog/       날짜별 개발 일지
 2. **패키지 설치** — 가상환경을 만든 뒤 의존성을 설치합니다.
 
    ```bash
-   python -m venv .venv
+   python3 -m venv .venv
    ```
 
    ```bash
@@ -120,6 +120,12 @@ python -m src.loaders.collect investments 2025 00688996 00382199
 python -m src.loaders.investments rebuild   # 원본 응답에서 investment 테이블 재생성 (API 호출 없음)
 ```
 
-> DuckDB는 쓰기 연결을 여는 프로세스가 하나뿐이어야 합니다. 파이프라인이 도는 동안 노트북에서는 `connect(read_only=True)`로만 엽니다.
+> DuckDB는 파일을 프로세스 단위로 잠급니다. 노트북에서 읽기 전용으로 열어 둔 연결도 파이프라인의 쓰기를 막습니다. 탐색할 때는 아래처럼 열고 블록이 끝나면 바로 닫으세요. 파이프라인이 잠금에 걸리면 5분 간격으로 최대 3번 다시 시도합니다.
+>
+> ```python
+> from src.loaders.duckdb_store import connect
+> with connect(read_only=True) as con:
+>     df = con.sql("SELECT * FROM disclosure ORDER BY rcept_dt DESC LIMIT 20").df()
+> ```
 
 > OpenDART API는 하루 약 20,000건까지 호출할 수 있습니다. 대상 회사를 늘릴 때는 호출 수를 먼저 계산하세요.
