@@ -161,8 +161,8 @@ CREATE TABLE IF NOT EXISTS executive (
     mxmm_shrholdr_relate  VARCHAR,               -- 최대주주와의 관계
     hffc_pd_raw           VARCHAR,               -- 재직기간 원문 ('2년 \n1개월')
     hffc_months           INTEGER,               -- 재직기간(월)
-    tenure_start_on       DATE,                  -- 선임 시점 근사: stlm_dt - hffc_months (월 단위). 못 구하면 NULL
-    tenure_start_method   VARCHAR,               -- stlm_dt_minus_hffc_pd / NULL
+    tenure_start_on       DATE,                  -- 선임 시점. 재직기간이 날짜 범위면 그 시작일(정확), 기간이면 stlm_dt - hffc_months (월 단위 근사). 못 구하면 NULL
+    tenure_start_method   VARCHAR,               -- hffc_pd_range / stlm_dt_minus_hffc_pd / NULL
     tenure_end_on         DATE,                  -- 임기 만료일
     person_id             VARCHAR,               -- 이름|생년월|성별 (person 테이블)
     stlm_dt               DATE,                  -- 보고서 기준일

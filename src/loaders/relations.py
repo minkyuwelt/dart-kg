@@ -48,7 +48,13 @@ YEAR_MONTH_PATTERNS = (
     re.compile(r"^(\d{4})\s*년\s*(\d{1,2})\s*월$"),  # 1961년 06월
     re.compile(r"^(\d{4})[.-](\d{1,2})$"),  # 1961.06, 1961-06
 )
-PERIOD_RE = re.compile(r"(?:(\d+)\s*년)?\s*(?:(\d+)\s*개?월)?")
+PERIOD_RE = re.compile(r"(?:(\d+)년)?(?:(\d+)개?월)?")  # 공백을 뗀 문자열에 쓴다
+DECIMAL_YEARS_RE = re.compile(r"(\d+\.\d+)년")  # '3.2년'
+PERIOD_WORD_RE = re.compile(r"\d년|\d개?월")
+# 재직기간 안의 날짜: 2022.01.07 / 2022.1.7 / '23.3.22 / 24.05.27. (공백을 뗀 문자열에 쓴다)
+TENURE_DATE_RE = re.compile(r"'?(\d{4}|\d{2})\.(\d{1,2})\.(\d{1,2})\.?")
+# 임원 현황에서 사람이 아닌 자리 표시 행
+PLACEHOLDER_NAMES = {"-", "해당없음", "해당사항없음", "없음", "기재생략"}
 
 
 def _clean(text: str | None) -> str:
@@ -92,14 +98,64 @@ def parse_percent(text: str | None) -> float | None:
 
 
 def parse_period_months(text: str | None) -> int | None:
-    """재직기간 '2년 \\n1개월' → 25. 년·월 중 하나도 없으면 None."""
+    """재직기간 '2년 \n1개월' → 25, '3.2년' → 38. 년·월 중 하나도 없으면 None.
+
+    뒤에 '(초임)', '(1회 연임)' 같은 설명이 붙어도 앞의 기간만 읽는다.
+    """
     s = re.sub(r"\s+", "", _clean(text))
     if s in ("", "-"):
         return None
-    m = PERIOD_RE.fullmatch(s)
+    m = DECIMAL_YEARS_RE.match(s)
+    if m:
+        return round(float(m.group(1)) * 12)
+    m = PERIOD_RE.match(s)
     if not m or (m.group(1) is None and m.group(2) is None):
         return None
     return int(m.group(1) or 0) * 12 + int(m.group(2) or 0)
+
+
+def _loose_date(m: re.Match) -> date | None:
+    """TENURE_DATE_RE의 매치를 date로. 두 자리 연도('23, 24)는 2000년대로 본다. 말이 안 되는 날짜(00일)는 None."""
+    year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if year < 100:
+        year += 2000
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def parse_tenure(text: str | None, stlm_dt: date | None) -> dict:
+    """재직기간(hffc_pd) 원문에서 선임 시점을 읽는다. 결과: tenure_start_on, tenure_start_method, hffc_months, range_end_on.
+
+    백필에서 본 실제 표기 (devlog 2026-11-23). 회사마다 제각각이라 두 갈래로 읽는다.
+      1) 날짜 범위: '2022.01.07~', '2021.7.1 ~ 기준일', '2024.02.01\n~\n현재', "'23.3.22~현재", '24.05.27. ~ 현재',
+         '2017.09.\n22~현재'(줄바꿈이 날짜 안에), '2019.03.21~현재(FY2023 정기주총일)', '2022.01.01~2023.12.31'
+         → 선임일이 **정확히** 적혀 있으므로 그대로 쓴다 (method 'hffc_pd_range'). 끝 날짜가 있으면 range_end_on
+      2) 기간: '2년 1개월', '3.2년', '2.5년(초임)' → 기준일에서 빼서 월 단위로 근사 (method 'stlm_dt_minus_hffc_pd')
+    둘 다 아니면('기재생략', '-') 모두 None.
+    """
+    none = {"tenure_start_on": None, "tenure_start_method": None, "hffc_months": None, "range_end_on": None}
+    s = re.sub(r"\s+", "", _clean(text))
+    if s in ("", "-"):
+        return none
+    dates = list(TENURE_DATE_RE.finditer(s))
+    if dates and not PERIOD_WORD_RE.search(s[: dates[0].start()]):
+        start = _loose_date(dates[0])
+        if start is None:
+            return none
+        end = None
+        if len(dates) > 1 and re.fullmatch(r"[~\-–]", s[dates[0].end(): dates[1].start()]):  # '시작~끝'일 때만 끝 날짜
+            end = _loose_date(dates[1])
+        months = None
+        if stlm_dt is not None and stlm_dt >= start:
+            months = (stlm_dt.year - start.year) * 12 + (stlm_dt.month - start.month) - (stlm_dt.day < start.day)
+        return {"tenure_start_on": start, "tenure_start_method": "hffc_pd_range", "hffc_months": months, "range_end_on": end}
+    months = parse_period_months(text)
+    if months is None or stlm_dt is None:
+        return none
+    return {"tenure_start_on": shift_months(stlm_dt, -months), "tenure_start_method": "stlm_dt_minus_hffc_pd",
+            "hffc_months": months, "range_end_on": None}
 
 
 def shift_months(d: date, months: int) -> date:
@@ -196,20 +252,18 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
     """임원 현황 응답 → executive 행.
 
     valid_from은 보고서 기준일이다 (스냅샷 체인, temporal.py 참고). 선임 시점은 별도 컬럼 tenure_start_on에
-    기준일에서 재직기간(월)을 뺀 근사값으로 둔다. 재직기간을 못 읽으면 NULL.
+    둔다: 재직기간이 날짜 범위면 그 시작일(정확), 기간이면 기준일에서 뺀 근사값. 못 읽으면 NULL (parse_tenure).
     """
     params = _report_params(request_key)
     rows = []
     for row_seq, item in enumerate(body.get("list", []), start=1):
         nm = _clean(item.get("nm"))
-        if not nm:
+        if not nm or re.sub(r"\s+", "", nm) in PLACEHOLDER_NAMES:
             continue
         stlm_dt = parse_date(item.get("stlm_dt"))
-        months = parse_period_months(item.get("hffc_pd"))
-        if stlm_dt is not None and months is not None:
-            tenure_start, method = shift_months(stlm_dt, -months), "stlm_dt_minus_hffc_pd"
-        else:
-            tenure_start, method = None, None
+        tenure = parse_tenure(item.get("hffc_pd"), stlm_dt)
+        # 임기만료일이 비어 있고 재직기간에 끝 날짜가 적혀 있으면('2022.01.01~2023.12.31') 그것을 임기만료일로 쓴다
+        tenure_end = parse_date(item.get("tenure_end_on")) or tenure["range_end_on"]
         birth_ym, sexdstn = parse_year_month(item.get("birth_ym")), _text(item.get("sexdstn"))
         rows.append(
             {
@@ -229,10 +283,10 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
                 "main_career": _text(item.get("main_career")),
                 "mxmm_shrholdr_relate": _text(item.get("mxmm_shrholdr_relate")),
                 "hffc_pd_raw": _text(item.get("hffc_pd")),
-                "hffc_months": months,
-                "tenure_start_on": tenure_start,
-                "tenure_start_method": method,
-                "tenure_end_on": parse_date(item.get("tenure_end_on")),
+                "hffc_months": tenure["hffc_months"],
+                "tenure_start_on": tenure["tenure_start_on"],
+                "tenure_start_method": tenure["tenure_start_method"],
+                "tenure_end_on": tenure_end,
                 "stlm_dt": stlm_dt,
                 "valid_from": stlm_dt,
             }

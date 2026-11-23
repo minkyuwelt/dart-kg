@@ -139,11 +139,15 @@ def data_health(con: duckdb.DuckDBPyConnection, out: Report) -> None:
         FROM major_shareholder WHERE superseded_by IS NULL GROUP BY 1 ORDER BY 2 DESC
     """))
 
-    out("\n[1-8] 임원 선임 시점(tenure_start_on)을 못 구한 행 수 (재직기간 표기가 규칙에 안 맞는 경우)")
+    out("\n[1-8] 임원 선임 시점(tenure_start_on)을 어떻게 구했나. 못 구한 행의 원문 표기는 최대 40개만")
     out(table(con, """
-        SELECT count(*) AS rows_live, count(*) FILTER (tenure_start_on IS NULL) AS no_tenure_start,
-               string_agg(DISTINCT hffc_pd_raw, ' | ') FILTER (tenure_start_on IS NULL) AS raw_samples
-        FROM executive WHERE superseded_by IS NULL
+        SELECT coalesce(tenure_start_method, '(없음)') AS method, count(*) AS rows_live,
+               round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS pct
+        FROM executive WHERE superseded_by IS NULL GROUP BY 1 ORDER BY 2 DESC
+    """))
+    out(table(con, """
+        SELECT replace(hffc_pd_raw, chr(10), ' ') AS raw, count(*) AS n FROM executive
+        WHERE superseded_by IS NULL AND tenure_start_on IS NULL GROUP BY 1 ORDER BY 2 DESC
     """))
 
 
@@ -216,10 +220,13 @@ def q4_major_shareholder_history(con: duckdb.DuckDBPyConnection, out: Report) ->
             FROM major_shareholder_change WHERE corp_code = ? ORDER BY change_on
         """, [code], max_rows=20))
     out("\n  (대조) 같은 지주의 보고서별 최대주주 지분율 스냅샷 (최대주주 현황 API). 변동 이력과 방향이 맞아야 함")
+    # relate 표기는 회사마다 다르다('본인', '대주주', '최대주주'...) → 보고서마다 지분율이 가장 큰 행을 최대주주로 본다
     out(table(con, """
-        SELECT corp_code, stlm_dt, nm, trmend_posesn_stock_qota_rt AS pct, valid_to, source_rcept_no
-        FROM major_shareholder WHERE corp_code IN (SELECT corp_code FROM target_corp WHERE role = 'holding')
-          AND superseded_by IS NULL AND relate = '본인' ORDER BY corp_code, stlm_dt
+        SELECT corp_code, stlm_dt, nm, relate, pct, valid_to, source_rcept_no FROM (
+            SELECT corp_code, stlm_dt, nm, relate, trmend_posesn_stock_qota_rt AS pct, valid_to, source_rcept_no,
+                   row_number() OVER (PARTITION BY source_rcept_no ORDER BY trmend_posesn_stock_qota_rt DESC NULLS LAST) AS rn
+            FROM major_shareholder WHERE corp_code IN (SELECT corp_code FROM target_corp WHERE role = 'holding') AND superseded_by IS NULL
+        ) WHERE rn = 1 ORDER BY corp_code, stlm_dt
     """, max_rows=80))
 
 
