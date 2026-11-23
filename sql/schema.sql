@@ -77,3 +77,87 @@ CREATE TABLE IF NOT EXISTS target_corp (
     bsns_year         VARCHAR     NOT NULL,  -- 근거 사업연도
     loaded_at         TIMESTAMPTZ NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- Phase 2 관계 테이블. 정기보고서 주요정보 API 원본에서 src/loaders/relations.py가 통째로 다시 만든다 (rebuild).
+-- 시간 컬럼은 docs/decisions/0005-temporal-model.md의 이중 시간축:
+--   valid_from / valid_to      사실이 참이었던 기간 (valid_to NULL = 아직 유효)
+--   source_rcept_no / superseded_by  어느 공시로 알게 됐고, 어느 정정 공시가 대체했는가 (NULL = 대체되지 않음)
+-- valid_to·superseded_by는 "닫기" 단계에서 채운다 (아직 구현 전). rebuild 직후에는 모두 NULL이다.
+-- 주요정보 API는 보고서의 최신 정정본만 주므로, 백필한 과거 보고서는 정정본 하나만 있다.
+
+-- 최대주주 현황 (hyslrSttus.json). 보고서 기준일(stlm_dt)에 참이었던 최대주주와 지분율.
+CREATE TABLE IF NOT EXISTS major_shareholder (
+    source_rcept_no             VARCHAR     NOT NULL,  -- 이 행을 뽑은 보고서 접수번호 (응답의 rcept_no)
+    row_seq                     INTEGER     NOT NULL,  -- 응답 안 행 순서. 합계 행('계')은 제외
+    corp_code                   VARCHAR     NOT NULL,  -- 보고서를 낸 회사
+    bsns_year                   VARCHAR     NOT NULL,
+    reprt_code                  VARCHAR     NOT NULL,  -- 11011 사업, 11012 반기, 11013 1분기, 11014 3분기
+    nm                          VARCHAR     NOT NULL,  -- 주주 이름 그대로 (회사 또는 사람)
+    relate                      VARCHAR,               -- 관계 (본인, 특수관계인 등)
+    stock_knd                   VARCHAR,               -- 주식 종류
+    holder_corp_code            VARCHAR,               -- 주주가 회사면 corp_code (Phase 1 이름 연결 규칙). 실패하면 NULL
+    resolve_method              VARCHAR     NOT NULL,  -- override / exact / hangul / ambiguous / not_found
+    bsis_posesn_stock_co        BIGINT,                -- 기초 주식 수
+    bsis_posesn_stock_qota_rt   DOUBLE,                -- 기초 지분율(%)
+    trmend_posesn_stock_co      BIGINT,                -- 기말 주식 수
+    trmend_posesn_stock_qota_rt DOUBLE,                -- 기말 지분율(%)
+    rm                          VARCHAR,
+    stlm_dt                     DATE,                  -- 보고서 기준일
+    valid_from                  DATE,                  -- = stlm_dt
+    valid_to                    DATE,                  -- 다음 보고서에 없으면 그 보고서의 stlm_dt (닫기 단계)
+    superseded_by               VARCHAR,               -- 정정 공시 접수번호 (닫기 단계)
+    loaded_at                   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source_rcept_no, row_seq)
+);
+
+-- 최대주주 변동현황 (hyslrChgSttus.json). 변동일이 있어 사실 시간이 일 단위다.
+-- 보고서마다 과거 변동이 누적되어 실리므로 기본키는 접수번호가 아니라 (회사, 변동일, 주주명)이고,
+-- source_rcept_no는 그 변동을 처음 보고한 보고서다.
+CREATE TABLE IF NOT EXISTS major_shareholder_change (
+    corp_code          VARCHAR     NOT NULL,
+    change_on          DATE        NOT NULL,  -- 변동일
+    mxmm_shrholdr_nm   VARCHAR     NOT NULL,  -- 최대주주 이름 그대로
+    posesn_stock_co    BIGINT,                -- 변동 후 주식 수
+    qota_rt            DOUBLE,                -- 변동 후 지분율(%). 응답은 '9.97%'
+    change_cause       VARCHAR,               -- 변동 원인
+    rm                 VARCHAR,
+    source_rcept_no    VARCHAR     NOT NULL,  -- 처음 보고한 보고서 접수번호
+    bsns_year          VARCHAR     NOT NULL,  -- 그 보고서의 사업연도
+    reprt_code         VARCHAR     NOT NULL,
+    stlm_dt            DATE,
+    valid_from         DATE        NOT NULL,  -- = change_on
+    valid_to           DATE,                  -- 같은 회사의 다음 변동일 (닫기 단계)
+    superseded_by      VARCHAR,
+    loaded_at          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (corp_code, change_on, mxmm_shrholdr_nm)
+);
+
+-- 임원 현황 (exctvSttus.json). 사람 식별자(person)는 결정 0006(예정)에서 정한다.
+-- 선임일 필드가 없어 valid_from은 기준일에서 재직기간(월)을 뺀 근사값이다 (valid_from_method에 표시).
+CREATE TABLE IF NOT EXISTS executive (
+    source_rcept_no       VARCHAR     NOT NULL,
+    row_seq               INTEGER     NOT NULL,
+    corp_code             VARCHAR     NOT NULL,
+    bsns_year             VARCHAR     NOT NULL,
+    reprt_code            VARCHAR     NOT NULL,
+    nm                    VARCHAR     NOT NULL,  -- 이름
+    sexdstn               VARCHAR,               -- 성별
+    birth_ym              VARCHAR,               -- 생년월 'YYYY-MM' (응답은 '1961년 06월')
+    ofcps                 VARCHAR,               -- 직위 (회장, 부문장, 사외이사 ...)
+    rgist_exctv_at        VARCHAR,               -- 등기임원 여부 (사내이사, 사외이사, 기타비상무이사, 미등기)
+    fte_at                VARCHAR,               -- 상근 여부
+    chrg_job              VARCHAR,               -- 담당 업무 (줄바꿈 포함)
+    main_career           VARCHAR,               -- 주요 경력 (줄바꿈 포함)
+    mxmm_shrholdr_relate  VARCHAR,               -- 최대주주와의 관계
+    hffc_pd_raw           VARCHAR,               -- 재직기간 원문 ('2년 \n1개월')
+    hffc_months           INTEGER,               -- 재직기간(월)
+    tenure_end_on         DATE,                  -- 임기 만료일
+    stlm_dt               DATE,                  -- 보고서 기준일
+    valid_from            DATE,                  -- stlm_dt - hffc_months (월 단위 근사) 또는 stlm_dt
+    valid_from_method     VARCHAR     NOT NULL,  -- stlm_dt_minus_hffc_pd / stlm_dt
+    valid_to              DATE,                  -- 다음 보고서에 없으면 그 stlm_dt, tenure_end_on이 더 이르면 그 날짜 (닫기 단계)
+    superseded_by         VARCHAR,
+    loaded_at             TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source_rcept_no, row_seq)
+);

@@ -1,7 +1,7 @@
 # 0005. 관계 데이터의 시간 표현: 이중 시간축(bi-temporal)
 
 - 날짜: 2026-11-23
-- 상태: 채택 (설계만. Phase 2 테이블을 만들 때 이 문서대로 구현한다)
+- 상태: 채택. 구현 진행 중 — 테이블 3개와 parse(valid_from)까지 `src/loaders/relations.py`, `sql/schema.sql` (2026-11-23). close(valid_to·superseded_by)는 예정
 - 관련: 0001(기술 스택) Phase 2~4, 0002(수집 대상)
 - 참고: 0004는 노트북에서 진행 중인 Neo4j 한국어 전문검색 실험 기록으로 비워 둔다
 

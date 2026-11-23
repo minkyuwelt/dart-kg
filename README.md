@@ -127,6 +127,8 @@ Dagster 없이 같은 작업을 하려면:
 python -m src.loaders.collect disclosures 00688996 20261101 20261130
 python -m src.loaders.collect investments 2025 00688996 00382199
 python -m src.loaders.investments rebuild   # 원본 응답에서 investment 테이블 재생성 (API 호출 없음)
+python -m src.loaders.collect report_details 00688996 2025 11011   # (Phase 2) 한 보고서의 주요정보 4종 원본 저장 (API 4건)
+python -m src.loaders.relations rebuild      # (Phase 2) 원본에서 최대주주·변동·임원 테이블 재생성 (API 호출 없음)
 ```
 
 > DuckDB는 파일을 프로세스 단위로 잠급니다. 노트북에서 읽기 전용으로 열어 둔 연결도 파이프라인의 쓰기를 막습니다. 탐색할 때는 아래처럼 열고 블록이 끝나면 바로 닫으세요. 파이프라인이 잠금에 걸리면 5분 간격으로 최대 3번 다시 시도합니다.
