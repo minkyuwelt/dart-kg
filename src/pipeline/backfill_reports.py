@@ -14,7 +14,8 @@ DuckDB의 disclosure 목록에서 세운다는 것이다. 대상 회사 × 보�
     - 이미 완료로 기록된 파티션은 건너뛴다 → 중간에 멈춰도 다시 실행하면 이어서 한다
     - 최근 보고서부터 거꾸로 수집한다
     - 멈추는 조건: --max-calls, DART 한도 초과(020), 연속 5번 실패
-    - 끝나면 relations(관계 테이블 재생성, API 0건)를 실행하고 품질 검사 2개 결과를 Dagster에 기록한다
+    - 끝나면 relations(관계 테이블 재생성, API 0건)를 실행하고 품질 검사 4개 결과를 Dagster에 기록한다
+    - --rebuild-only: 수집 없이 이 마지막 단계만 (수집은 끝났는데 재생성·검사만 다시 할 때)
 
 DuckDB 쓰기 연결을 처음부터 끝까지 하나만 연다. 실행 중에는 노트북·dagster dev에서 DuckDB를 열지 말 것.
 """
@@ -36,6 +37,7 @@ from src.loaders.periodic_reports import periodic_reports_of, report_partition_k
 from src.loaders.relations import rebuild_relations
 from src.pipeline.definitions import (
     FIRST_REPORT_YEAR,
+    RELATION_CHECK_FUNCTIONS,
     RELATION_CHECKS,
     relations,
     report_details,
@@ -87,7 +89,7 @@ def rebuild_and_check(instance: dg.DagsterInstance, con: duckdb.DuckDBPyConnecti
     results = []
     for check in RELATION_CHECKS:
         spec = next(iter(check.check_specs))
-        result = check()
+        result = RELATION_CHECK_FUNCTIONS[spec.name](con)  # 쓰기 연결을 그대로 쓴다 (같은 프로세스에서 연결을 또 열 수 없음)
         metadata = {k: v.value if hasattr(v, "value") else v for k, v in (result.metadata or {}).items()}
         instance.report_runless_asset_event(
             dg.AssetCheckEvaluation(asset_key=relations.key, check_name=spec.name, passed=result.passed,
@@ -111,6 +113,12 @@ def run(args: argparse.Namespace) -> int:
         raise
 
     with con:
+        if args.rebuild_only:
+            print("관계 테이블 재생성(API 0건)...")
+            for name, passed, metadata in rebuild_and_check(instance, con):
+                print(f"품질 검사 {name}: {'통과' if passed else '실패'} {metadata}")
+            return 0
+
         keys = plan_partitions(instance, con, args.from_year, args.corp)
         corps = sorted({k.keys_by_dimension["corp"] for k in keys})
         print(f"백필할 보고서 {len(keys):,}개 (회사 {len(corps)}곳, 완료된 파티션 제외), API 호출 {len(keys) * 4:,}건")
@@ -173,6 +181,7 @@ def main() -> None:
     parser.add_argument("--corp", action="append", help="특정 corp_code만 (여러 번 지정 가능)")
     parser.add_argument("--max-calls", type=int, default=8000, help="이 호출 수에 닿으면 멈춤 (기본 8000)")
     parser.add_argument("--dry-run", action="store_true", help="계획만 출력하고 API를 호출하지 않음")
+    parser.add_argument("--rebuild-only", action="store_true", help="수집 없이 관계 테이블 재생성과 품질 검사만 (API 호출 없음)")
     sys.exit(run(parser.parse_args()))
 
 

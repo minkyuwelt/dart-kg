@@ -40,6 +40,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import dagster as dg
+import duckdb
 
 from src.collectors.corp_code import HOLDING_CORPS, get_api_key
 from src.loaders.collect import collect_corps, collect_disclosures, collect_investments, collect_report_details
@@ -311,53 +312,80 @@ def relations() -> dg.MaterializeResult:
 RELATION_TABLES = ("major_shareholder", "major_shareholder_change", "executive")
 
 
-@dg.asset_check(asset=relations, description="관계 행의 근거 공시(source_rcept_no)가 disclosure 목록에 있는지")
-def relations_source_known() -> dg.AssetCheckResult:
+def check_relations_source_known(con: duckdb.DuckDBPyConnection) -> dg.AssetCheckResult:
     # 주요정보 응답의 rcept_no는 최신 정정본이다. 정정 공시가 접수된 날 disclosures보다 먼저 돌면 잠깐 어긋날 수 있어 경고로 둔다
-    with connect(read_only=True) as con:
-        missing = {
-            t: con.execute(f"SELECT count(DISTINCT source_rcept_no) FROM {t} r ANTI JOIN disclosure d ON d.rcept_no = r.source_rcept_no").fetchone()[0]
-            for t in RELATION_TABLES
-        }
+    missing = {
+        t: con.execute(f"SELECT count(DISTINCT source_rcept_no) FROM {t} r ANTI JOIN disclosure d ON d.rcept_no = r.source_rcept_no").fetchone()[0]
+        for t in RELATION_TABLES
+    }
     return dg.AssetCheckResult(passed=sum(missing.values()) == 0, severity=dg.AssetCheckSeverity.WARN,
                                metadata={"unknown_sources": dg.MetadataValue.json(missing)})
+
+
+def check_relations_valid_from_sane(con: duckdb.DuckDBPyConnection) -> dg.AssetCheckResult:
+    bad = {
+        t: con.execute(f"SELECT count(*) FROM {t} WHERE valid_from IS NULL OR (stlm_dt IS NOT NULL AND valid_from > stlm_dt)").fetchone()[0]
+        for t in RELATION_TABLES
+    }
+    return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+
+
+def check_relations_intervals_sane(con: duckdb.DuckDBPyConnection) -> dg.AssetCheckResult:
+    bad = {
+        t: con.execute(f"SELECT count(*) FROM {t} WHERE (valid_to IS NOT NULL AND valid_to <= valid_from) "
+                       f"OR (superseded_by IS NOT NULL AND valid_to IS NOT NULL)").fetchone()[0]
+        for t in (*RELATION_TABLES, "investment")
+    }
+    return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+
+
+def check_relations_current_unique(con: duckdb.DuckDBPyConnection) -> dg.AssetCheckResult:
+    dup = {
+        "executive": con.execute("SELECT count(*) FROM (SELECT corp_code, person_id, ofcps FROM executive_current "
+                                 "GROUP BY 1, 2, 3 HAVING count(*) > 1)").fetchone()[0],
+        "major_shareholder": con.execute("SELECT count(*) FROM (SELECT corp_code, nm, stock_knd FROM major_shareholder_current "
+                                         "GROUP BY 1, 2, 3 HAVING count(*) > 1)").fetchone()[0],
+        # 현재 행은 회사마다 가장 최근 보고서 하나에서만 나와야 한다
+        "reports_per_corp": con.execute("SELECT count(*) FROM (SELECT corp_code FROM major_shareholder_current "
+                                        "GROUP BY 1 HAVING count(DISTINCT stlm_dt) > 1)").fetchone()[0],
+    }
+    return dg.AssetCheckResult(passed=sum(dup.values()) == 0, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"duplicates": dg.MetadataValue.json(dup)})
+
+
+# 검사 본체는 연결을 받는 일반 함수로 두고, Dagster 검사는 읽기 전용 연결을 열어 호출만 한다.
+# 백필 스크립트는 쓰기 연결을 이미 열고 있어 같은 프로세스에서 읽기 전용 연결을 또 열 수 없으므로
+# (DuckDB: "different configuration than existing connections") 본체 함수를 자기 연결로 호출한다.
+RELATION_CHECK_FUNCTIONS = {
+    "relations_source_known": check_relations_source_known,
+    "relations_valid_from_sane": check_relations_valid_from_sane,
+    "relations_intervals_sane": check_relations_intervals_sane,
+    "relations_current_unique": check_relations_current_unique,
+}
+
+
+@dg.asset_check(asset=relations, description="관계 행의 근거 공시(source_rcept_no)가 disclosure 목록에 있는지")
+def relations_source_known() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        return check_relations_source_known(con)
 
 
 @dg.asset_check(asset=relations, description="모든 관계 행에 valid_from이 있고 보고서 기준일보다 늦지 않은지 (0005)")
 def relations_valid_from_sane() -> dg.AssetCheckResult:
     with connect(read_only=True) as con:
-        bad = {
-            t: con.execute(f"SELECT count(*) FROM {t} WHERE valid_from IS NULL OR (stlm_dt IS NOT NULL AND valid_from > stlm_dt)").fetchone()[0]
-            for t in RELATION_TABLES
-        }
-    return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+        return check_relations_valid_from_sane(con)
 
 
 @dg.asset_check(asset=relations, description="닫힌 구간이 거꾸로가 아니고(valid_to > valid_from), 정정된 행은 열려 있지 않은지")
 def relations_intervals_sane() -> dg.AssetCheckResult:
     with connect(read_only=True) as con:
-        bad = {
-            t: con.execute(f"SELECT count(*) FROM {t} WHERE (valid_to IS NOT NULL AND valid_to <= valid_from) "
-                           f"OR (superseded_by IS NOT NULL AND valid_to IS NOT NULL)").fetchone()[0]
-            for t in (*RELATION_TABLES, "investment")
-        }
-    return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+        return check_relations_intervals_sane(con)
 
 
 @dg.asset_check(asset=relations, description="현재 상태 뷰에서 같은 키의 행이 하나뿐인지 (시점 조회가 행 하나를 돌려주는 전제)")
 def relations_current_unique() -> dg.AssetCheckResult:
     with connect(read_only=True) as con:
-        dup = {
-            "executive": con.execute("SELECT count(*) FROM (SELECT corp_code, person_id, ofcps FROM executive_current "
-                                     "GROUP BY 1, 2, 3 HAVING count(*) > 1)").fetchone()[0],
-            "major_shareholder": con.execute("SELECT count(*) FROM (SELECT corp_code, nm, stock_knd FROM major_shareholder_current "
-                                             "GROUP BY 1, 2, 3 HAVING count(*) > 1)").fetchone()[0],
-            # 현재 행은 회사마다 가장 최근 보고서 하나에서만 나와야 한다
-            "reports_per_corp": con.execute("SELECT count(*) FROM (SELECT corp_code FROM major_shareholder_current "
-                                            "GROUP BY 1 HAVING count(DISTINCT stlm_dt) > 1)").fetchone()[0],
-        }
-    return dg.AssetCheckResult(passed=sum(dup.values()) == 0, severity=dg.AssetCheckSeverity.WARN,
-                               metadata={"duplicates": dg.MetadataValue.json(dup)})
+        return check_relations_current_unique(con)
 
 
 RELATION_CHECKS = (relations_source_known, relations_valid_from_sane, relations_intervals_sane, relations_current_unique)

@@ -123,6 +123,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    ```bash
    DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports --dry-run   # 계획만 (API 호출 없음)
    DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports
+   DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports --rebuild-only   # 수집 없이 재생성·검사만
    ```
 
    이후에는 Automation에서 `daily_report_details`(07:30, 그날 새로 접수된 정기보고서만 수집)와 `daily_relations`(08:30, 관계 테이블 재생성)를 켭니다.
