@@ -19,7 +19,9 @@ import dagster as dg
 
 from src.collectors.corp_code import HOLDING_CORPS
 from src.loaders.duckdb_store import connect
+from src.loaders.targets import rebuild_target_corps
 from src.pipeline import definitions
+from tests.test_targets import SUBSIDIARY_OF, seed_targets
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -113,15 +115,67 @@ class TargetCorpsMetadataTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def test_target_corps_records_codes_and_partitions(self):
+    @mock.patch.object(definitions, "today_kst", return_value=datetime(2026, 11, 24).date())
+    def test_target_corps_records_codes_and_partitions(self, _today):
         with connect() as con:
-            for code, name in HOLDING_CORPS.items():
-                con.execute("INSERT INTO corp VALUES (?, ?, NULL, NULL, now())", [code, name])
+            seed_targets(con, bsns_year="2025")
+        expected = sorted([*HOLDING_CORPS, *SUBSIDIARY_OF.values()])
         with dg.DagsterInstance.ephemeral() as instance:
             result = dg.materialize([definitions.target_corps], instance=instance)
             self.assertTrue(result.success)
-            self.assertEqual(sorted(definitions.target_codes_from_instance(instance)), sorted(HOLDING_CORPS))
-            self.assertEqual(sorted(instance.get_dynamic_partitions("corp")), sorted(HOLDING_CORPS))
+            self.assertEqual(sorted(definitions.target_codes_from_instance(instance)), expected)
+            self.assertEqual(sorted(instance.get_dynamic_partitions("corp")), expected)
+            self.assertEqual(definitions.latest_target_bsns_year(instance), 2025)
+
+    def test_check_fails_when_a_holding_lost_its_subsidiaries(self):
+        """target_corp가 어떤 경로로든 지주 하나의 자회사를 잃으면 검사가 실패한다 (전체 수만 보면 통과했던 경우)."""
+        with connect() as con:
+            seed_targets(con)
+            rebuild_target_corps(con, 2025)
+        self.assertTrue(definitions.target_corps_complete().passed)
+
+        with connect() as con:
+            con.execute("DELETE FROM target_corp WHERE parent_corp_code = '00547583'")
+        result = definitions.target_corps_complete()
+        self.assertFalse(result.passed)
+        self.assertEqual(result.metadata["subsidiaries_by_holding"].value["하나금융지주"], 0)
+
+
+class TargetsFreshnessScheduleTest(unittest.TestCase):
+    """매일 06:30 스케줄이 기준 사업연도가 바뀌었을 때만 targets_job을 요청하는지."""
+
+    def setUp(self):
+        self.instance = self.enterContext(dg.instance_for_test())
+
+    def report_bsns_year(self, year: int) -> None:
+        self.instance.report_runless_asset_event(
+            dg.AssetMaterialization(asset_key=definitions.target_corps.key, metadata={"bsns_year": year})
+        )
+
+    def evaluate(self, when: datetime) -> list:
+        context = dg.build_schedule_context(instance=self.instance, scheduled_execution_time=when)
+        return list(definitions.targets_freshness(context))
+
+    def test_runs_when_never_materialized(self):
+        results = self.evaluate(datetime(2026, 11, 24, 6, 30, tzinfo=KST))
+        self.assertIsInstance(results[0], dg.RunRequest)
+
+    def test_skips_when_up_to_date(self):
+        self.report_bsns_year(2025)
+        results = self.evaluate(datetime(2026, 11, 24, 6, 30, tzinfo=KST))
+        self.assertIsInstance(results[0], dg.SkipReason)
+
+    def test_runs_when_new_business_year_starts_and_retries_next_day(self):
+        self.report_bsns_year(2025)
+        # 3월 31일: 아직 2025 기준이 최신 → 건너뜀
+        self.assertIsInstance(self.evaluate(datetime(2027, 3, 31, 6, 30, tzinfo=KST))[0], dg.SkipReason)
+        # 4월 1일: 2026 사업보고서 기준으로 갱신 요청. 4월 15일을 놓쳐도 이후 아무 날에나 잡힌다
+        first = self.evaluate(datetime(2027, 4, 1, 6, 30, tzinfo=KST))[0]
+        self.assertIsInstance(first, dg.RunRequest)
+        # 갱신이 실패해(지주 사업보고서 미제출) 기록이 그대로면 다음 날 다른 run_key로 다시 요청
+        second = self.evaluate(datetime(2027, 4, 2, 6, 30, tzinfo=KST))[0]
+        self.assertIsInstance(second, dg.RunRequest)
+        self.assertNotEqual(first.run_key, second.run_key)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,10 @@ from src.collectors.corp_code import HOLDING_CORPS
 MIN_SUBSIDIARY_STAKE = 30.0
 
 
+class IncompleteTargetsError(RuntimeError):
+    """자회사가 하나도 잡히지 않은 지주가 있어 대상 목록을 바꾸지 않았을 때."""
+
+
 def latest_business_report_year(today: date) -> int:
     """오늘 기준으로 사업보고서가 나와 있을 가장 최근 사업연도.
 
@@ -31,7 +35,10 @@ def latest_business_report_year(today: date) -> int:
 
 
 def rebuild_target_corps(con: duckdb.DuckDBPyConnection, bsns_year: int) -> dict:
-    """target_corp 테이블을 다시 만든다. investment 테이블에 해당 연도 지주 사업보고서 데이터가 있어야 한다."""
+    """target_corp 테이블을 다시 만든다. investment 테이블에 해당 연도 지주 사업보고서 데이터가 있어야 한다.
+
+    자회사가 0곳인 지주가 하나라도 있으면 IncompleteTargetsError를 내고 기존 목록을 그대로 둔다.
+    """
     holdings = list(HOLDING_CORPS)
     con.begin()
     try:
@@ -61,6 +68,26 @@ def rebuild_target_corps(con: duckdb.DuckDBPyConnection, bsns_year: int) -> dict
             """,
             [holdings, str(bsns_year), MIN_SUBSIDIARY_STAKE, holdings],
         )
+        # 지주마다 자회사가 1곳 이상 있어야 한다. 0곳인 지주가 있으면 그 지주의 사업보고서 출자 데이터가
+        # 아직 없거나(제출 지연·정정 중) 이름 연결이 깨진 것이다. 이대로 반영하면 그 지주의 자회사들이
+        # 목록에서 빠지고 다음 날부터 매일 수집이 경고 없이 멈추므로, 되돌리고 실패시킨다.
+        # 기존 target_corp(작년 기준 목록)는 그대로 남아 매일 수집은 계속된다.
+        empty = con.execute(
+            """
+            SELECT h.code FROM unnest(?::VARCHAR[]) AS h(code)
+            WHERE NOT EXISTS (
+                SELECT 1 FROM target_corp t WHERE t.role = 'subsidiary' AND t.parent_corp_code = h.code
+            )
+            ORDER BY 1
+            """,
+            [holdings],
+        ).fetchall()
+        if empty:
+            names = ", ".join(f"{HOLDING_CORPS[code]}({code})" for (code,) in empty)
+            raise IncompleteTargetsError(
+                f"{bsns_year} 사업보고서 기준 자회사가 0곳인 지주: {names}. "
+                "출자현황 응답(status 013 여부)과 investment의 resolve_method를 확인하세요. 대상 목록은 바꾸지 않았습니다."
+            )
         con.commit()
     except Exception:
         con.rollback()
