@@ -18,6 +18,8 @@
 """
 
 import calendar
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -25,7 +27,12 @@ import dagster as dg
 
 from src.collectors.corp_code import TARGET_CORPS, get_api_key
 from src.loaders.collect import collect_corps, collect_disclosures
-from src.loaders.duckdb_store import connect
+from src.loaders.duckdb_store import connect, is_lock_error
+
+# DuckDB 파일 잠금에 걸렸을 때 다시 시도하는 횟수와 간격(초).
+# 노트북에서 DuckDB를 잠깐 열어 둔 경우 몇 분 뒤에는 풀리는 경우가 대부분이다.
+LOCK_RETRY_MAX = 3
+LOCK_RETRY_WAIT_SEC = 300
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -46,12 +53,33 @@ def month_range(month_key: str, today: date) -> tuple[str, str]:
     return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
 
+@contextmanager
+def write_connection() -> Iterator:
+    """자산에서 쓰는 DuckDB 쓰기 연결. 파일 잠금에 걸리면 Dagster에 "잠시 뒤 다시 실행"을 요청한다.
+
+    DuckDB는 다른 프로세스가 파일을 열고 있으면(읽기 전용이라도) 쓰기 연결을 열 수 없다.
+    예: Jupyter에서 connect(read_only=True)로 열어 둔 채 잊어버린 경우.
+    이때 바로 실패시키면 그날 수집이 빠지므로, RetryRequested로 LOCK_RETRY_WAIT_SEC초 뒤 다시 시도한다.
+
+    연결은 DART API를 호출하기 전에 연다. 그래서 잠금 때문에 다시 시도해도 API 호출 수는 늘지 않는다.
+    잠금이 아닌 에러(디스크 부족 등)는 그대로 실패시킨다.
+    """
+    try:
+        con = connect()
+    except Exception as e:
+        if is_lock_error(e):
+            raise dg.RetryRequested(max_retries=LOCK_RETRY_MAX, seconds_to_wait=LOCK_RETRY_WAIT_SEC) from e
+        raise
+    with con:
+        yield con
+
+
 @dg.asset(
     group_name="dart",
     description="공시 대상 전체 회사 목록(corpCode.xml) → corp 테이블. API 1건.",
 )
 def corp_codes() -> dg.MaterializeResult:
-    with connect() as con:
+    with write_connection() as con:
         stats = collect_corps(con, get_api_key())
         found = con.execute(
             "SELECT count(*) FROM corp WHERE corp_code IN (SELECT unnest(?::VARCHAR[]))", [list(TARGET_CORPS)]
@@ -71,7 +99,7 @@ def disclosures(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
     bgn_de, end_de = month_range(month, datetime.now(KST).date())
     context.log.info(f"{TARGET_CORPS[corp_code]}({corp_code}) {bgn_de}~{end_de} 공시 목록 수집")
 
-    with connect() as con:
+    with write_connection() as con:
         stats = collect_disclosures(con, get_api_key(), corp_code, bgn_de, end_de)
     return dg.MaterializeResult(
         metadata={"corp_name": TARGET_CORPS[corp_code], "period": f"{bgn_de}~{end_de}", **stats}
@@ -80,7 +108,7 @@ def disclosures(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
 
 @dg.asset_check(asset=disclosures, description="모든 공시의 corp_code가 corp 테이블에 있는지 (회사 식별자 무결성)")
 def disclosure_corp_code_exists() -> dg.AssetCheckResult:
-    with connect() as con:
+    with connect(read_only=True) as con:
         orphans = con.execute(
             "SELECT count(*) FROM disclosure d ANTI JOIN corp c USING (corp_code)"
         ).fetchone()[0]
@@ -92,7 +120,7 @@ def disclosure_corp_code_exists() -> dg.AssetCheckResult:
     description="rcept_no가 14자리 숫자이고 앞 8자리가 접수일(rcept_dt)과 같은지",
 )
 def disclosure_rcept_no_format() -> dg.AssetCheckResult:
-    with connect() as con:
+    with connect(read_only=True) as con:
         bad = con.execute(
             """
             SELECT count(*) FROM disclosure
