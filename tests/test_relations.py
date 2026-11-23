@@ -177,6 +177,16 @@ class ParseFixtureTest(unittest.TestCase):
         self.assertEqual((kim["tenure_start_on"], kim["tenure_end_on"]), (date(2023, 3, 22), date(2026, 3, 25)))  # API 임기만료일 우선
 
 
+class MajorShareholderPlaceholderTest(unittest.TestCase):
+    def test_dash_row_is_skipped(self):
+        body = {"status": "000", "list": [
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "-", "relate": "-", "stlm_dt": "2025-12-31"},
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "국민연금공단", "relate": "최대주주", "trmend_posesn_stock_qota_rt": "8.68", "stlm_dt": "2025-12-31"},
+        ]}
+        rows = parse_major_shareholders(REQUEST_KEY, body, {}, {})
+        self.assertEqual([r["nm"] for r in rows], ["국민연금공단"])
+
+
 class DedupeChangesTest(unittest.TestCase):
     def test_keeps_earliest_report_for_same_change(self):
         rows = [

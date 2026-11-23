@@ -96,11 +96,15 @@ def data_health(con: duckdb.DuckDBPyConnection, out: Report) -> None:
         UNION ALL SELECT 'person', count(*), count(*), count(*) FROM person
     """))
 
-    out("\n[1-2] 회사별 보고서 수 (임원 현황 기준, 정정본 제외). 대상 회사인데 0이면 백필이 빠진 것")
+    out("\n[1-2] 회사별 보고서 수. listed = 공시 목록의 정기보고서 수(정정 포함), loaded = 임원 현황이 적재된 보고서 수(정정 제외).")
+    out("      listed가 0이면 정기보고서 제출 의무가 없는 비상장사(정상). listed > 0인데 loaded가 훨씬 작거나 last_stlm_dt가 오래됐으면 백필·목록 누락 의심")
     out(table(con, """
         SELECT t.corp_code, t.corp_name, t.role,
-               count(DISTINCT e.bsns_year || '-' || e.reprt_code) AS reports,
-               min(e.stlm_dt) AS first_stlm_dt, max(e.stlm_dt) AS last_stlm_dt
+               (SELECT count(*) FROM disclosure d WHERE d.corp_code = t.corp_code
+                  AND (d.report_nm LIKE '%사업보고서%' OR d.report_nm LIKE '%반기보고서%' OR d.report_nm LIKE '%분기보고서%')) AS listed,
+               count(DISTINCT e.bsns_year || '-' || e.reprt_code) AS loaded,
+               min(e.stlm_dt) AS first_stlm_dt, max(e.stlm_dt) AS last_stlm_dt,
+               (SELECT max(rcept_dt) FROM disclosure d WHERE d.corp_code = t.corp_code) AS last_listed_dt
         FROM target_corp t LEFT JOIN executive e ON e.corp_code = t.corp_code AND e.superseded_by IS NULL
         GROUP BY 1, 2, 3 ORDER BY t.role DESC, t.corp_name
     """, max_rows=80))
@@ -124,6 +128,14 @@ def data_health(con: duckdb.DuckDBPyConnection, out: Report) -> None:
     out(table(con, """
         SELECT nm, count(*) AS ids, string_agg(person_id, ' / ' ORDER BY person_id) AS person_ids
         FROM person GROUP BY nm HAVING count(*) > 1 ORDER BY ids DESC, nm
+    """))
+
+    out("\n[1-5b] 같은 이름·같은 출생연도인데 person_id가 다른 경우 (생년월이나 성별 표기 오류로 같은 사람이 갈라졌을 가능성. DART 원문으로 확인 후 0006에 분리·병합 규칙)")
+    out(table(con, """
+        SELECT a.nm, a.person_id AS id_a, b.person_id AS id_b, a.corp_count AS corps_a, b.corp_count AS corps_b
+        FROM person a JOIN person b ON a.nm = b.nm AND a.person_id < b.person_id
+          AND a.birth_ym IS NOT NULL AND b.birth_ym IS NOT NULL AND left(a.birth_ym, 4) = left(b.birth_ym, 4)
+        ORDER BY a.nm
     """))
 
     out("\n[1-6] 보고서 기준일 분포. 12월 결산 가정이라 03-31/06-30/09-30/12-31 외의 날짜가 있으면 periodic_report_key 재검토")

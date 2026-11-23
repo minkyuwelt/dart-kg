@@ -182,7 +182,7 @@ def parse_major_shareholders(request_key: str, body: dict, index: dict, override
     rows = []
     for row_seq, item in enumerate(body.get("list", []), start=1):
         nm = _clean(item.get("nm"))
-        if nm in ("", "계", "합계"):
+        if nm in ("", "계", "합계") or re.sub(r"\s+", "", nm) in PLACEHOLDER_NAMES:
             continue
         name, _ = normalize_name(nm)
         holder_corp_code, method = resolve(name, index, overrides)
