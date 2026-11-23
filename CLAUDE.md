@@ -16,7 +16,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 3. **Phase 3 공시 RAG**: 공시 원문 청크·임베딩 → Neo4j 벡터 인덱스 → Q&A
 4. **Phase 4 지식그래프**: DuckDB → Neo4j 관계 그래프 적재 → GraphRAG (벡터로 찾은 공시 청크에서 회사·임원·지분 경로로 탐색)
 
-기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0003-korean-fulltext.md`
+기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
 현재 단계: Phase 1
 
