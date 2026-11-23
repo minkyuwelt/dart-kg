@@ -42,6 +42,7 @@ tests/             오프라인 테스트 (DART API를 호출하지 않음, `pyt
 dagster_home/      Dagster 인스턴스 설정 (dagster.yaml만 커밋)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록 (NNNN-제목.md)
+.github/workflows/ CI (PR마다 오프라인 테스트)
 docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
 ```
 
@@ -70,6 +71,7 @@ GitHub가 유일한 중계 지점이다. 웹과 노트북은 서로의 파일을
 - 실제 DART API 호출과 Docker 실행은 VS Code(노트북)에서만 한다. 웹 환경에는 `.env`가 없다
 - 노트북에서 고친 내용은 그날 push한다. 커밋하지 않은 변경을 남겨둔 채 작업을 끝내지 않는다
 - 웹에서 만든 코드는 노트북에서 실행 확인 전까지 "미검증"이다. PR 설명에 검증 여부를 적는다
+- PR마다 GitHub Actions(`tests`)가 오프라인 테스트와 `dagster definitions validate`를 돌린다. 체크가 실패한 PR은 병합하지 않는다. CI는 DART API를 호출하지 않으므로, 실제 API 검증은 여전히 노트북에서 한다
 
 ## 규칙
 - API 키는 `.env`의 `DART_API_KEY`로만 읽음 (`python-dotenv`). `.env`는 절대 커밋하지 않음. 새 환경변수를 추가하면 `.env.example`도 함께 갱신
