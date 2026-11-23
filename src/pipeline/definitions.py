@@ -89,10 +89,24 @@ def write_connection() -> Iterator:
         yield con
 
 
-def active_target_codes() -> list[str]:
-    """target_corp 테이블에 있는 현재 수집 대상 corp_code 목록. 읽기만 하므로 read_only로 연다."""
-    with connect(read_only=True) as con:
-        return [r[0] for r in con.execute("SELECT corp_code FROM target_corp ORDER BY role, corp_code").fetchall()]
+TARGET_CODES_METADATA_KEY = "target_codes"
+
+
+def target_codes_from_instance(instance: dg.DagsterInstance) -> list[str] | None:
+    """가장 최근 target_corps 실행이 메타데이터로 남긴 수집 대상 corp_code 목록.
+
+    스케줄은 DuckDB를 열지 않고 이 함수로 대상을 읽는다. 스케줄은 Dagster 데몬 프로세스에서
+    평가되는데, DuckDB는 다른 프로세스가 쓰는 동안 읽기 전용 연결도 열 수 없다. 그 시각에 백필 같은
+    run이 쓰고 있으면 스케줄 평가가 잠금에 걸려 실패하고, 스케줄에는 재시도가 없어 그날 수집이 빠진다.
+    Dagster 인스턴스 저장소(dagster_home)는 DuckDB와 별개라 이 문제가 없다.
+
+    target_corps를 한 번도 실행하지 않았거나 메타데이터가 없으면 None.
+    """
+    event = instance.get_latest_materialization_event(target_corps.key)
+    if event is None or event.asset_materialization is None:
+        return None
+    value = event.asset_materialization.metadata.get(TARGET_CODES_METADATA_KEY)
+    return list(value.value) if value is not None else None
 
 
 @dg.asset(
@@ -137,7 +151,7 @@ def target_corps(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
             """,
             [list(HOLDING_CORPS), str(bsns_year)],
         ).fetchall()
-    codes = active_target_codes()
+        codes = [r[0] for r in con.execute("SELECT corp_code FROM target_corp ORDER BY role, corp_code").fetchall()]
     existing = set(context.instance.get_dynamic_partitions("corp"))
     new = sorted(set(codes) - existing)
     if new:
@@ -149,6 +163,8 @@ def target_corps(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
             "dropped_from_targets": len(existing - set(codes)),
             # 지주의 직접 출자 중 corp_code로 연결하지 못한 곳. config/corp_name_overrides.csv를 확인할 것
             "unresolved": ", ".join(f"{n}({m})" for n, m in unresolved) or "없음",
+            # 매일 스케줄이 DuckDB를 열지 않고 대상 목록을 읽는 곳 (target_codes_from_instance)
+            TARGET_CODES_METADATA_KEY: dg.MetadataValue.json(codes),
         }
     )
 
@@ -228,14 +244,23 @@ def daily_disclosures(context: dg.ScheduleEvaluationContext):
     일주일 넘게 꺼져 있었다면 Dagster 화면에서 해당 월 파티션을 직접 백필한다.
 
     API 호출: 하루 대상 회사 수만큼 (59곳 기준 59건, 1~7일에는 118건)
+
+    DuckDB는 열지 않는다. 대상 목록은 target_corps의 최근 실행 메타데이터에서 읽는다
+    (이유는 target_codes_from_instance 참고).
     """
+    codes = target_codes_from_instance(context.instance)
+    if codes is None:
+        yield dg.SkipReason(
+            "target_corps 실행 기록에 대상 목록(target_codes)이 없습니다. target_corps 또는 targets_job을 실행하세요."
+        )
+        return
     today = context.scheduled_execution_time.astimezone(KST).date()
     this_month = today.replace(day=1)
     months = [this_month]
     if today.day <= 7:
         months.append((this_month - timedelta(days=1)).replace(day=1))
     # 파티션에는 있지만 대상에서 빠진 회사(자회사 매각 등)는 매일 수집하지 않는다
-    targets = set(active_target_codes()) & set(context.instance.get_dynamic_partitions("corp"))
+    targets = set(codes) & set(context.instance.get_dynamic_partitions("corp"))
     for month in months:
         for corp_code in sorted(targets):
             yield dg.RunRequest(
