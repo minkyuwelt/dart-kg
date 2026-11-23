@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS corp (
 
 -- 공시 목록 (list.json). 공시 하나 = 행 하나.
 CREATE TABLE IF NOT EXISTS disclosure (
-    rcept_no     VARCHAR     PRIMARY KEY,  -- 접수번호 14자리. 앞 8자리는 접수일
+    rcept_no     VARCHAR     PRIMARY KEY,  -- 접수번호 14자리. 앞 8자리는 날짜 모양이지만 접수일과 다를 수 있음(11%) → 날짜는 rcept_dt 사용
     corp_code    VARCHAR     NOT NULL,
     corp_name    VARCHAR,                  -- 공시 당시 회사명 (조인에는 쓰지 않는다)
     stock_code   VARCHAR,

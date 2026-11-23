@@ -214,18 +214,14 @@ def disclosure_corp_code_exists() -> dg.AssetCheckResult:
     return dg.AssetCheckResult(passed=orphans == 0, metadata={"orphan_rows": orphans})
 
 
-@dg.asset_check(
-    asset=disclosures,
-    description="rcept_no가 14자리 숫자이고 앞 8자리가 접수일(rcept_dt)과 같은지",
-)
+@dg.asset_check(asset=disclosures, description="rcept_no가 14자리 숫자인지")
 def disclosure_rcept_no_format() -> dg.AssetCheckResult:
+    # "앞 8자리 = 접수일(rcept_dt)" 검사는 두지 않는다. 2026-11-23 백필(2021~2026, 86,621건)에서
+    # 9,695건(11%)이 하루 이상 어긋났다. 대부분 +1일이고 자산운용사의 '효력발생안내'처럼 문서가 만들어진
+    # 다음 날 접수되는 경우다. 앞 8자리는 접수일과 같다는 보장이 없으므로 날짜는 rcept_dt만 쓴다.
     with connect(read_only=True) as con:
         bad = con.execute(
-            """
-            SELECT count(*) FROM disclosure
-            WHERE NOT regexp_full_match(rcept_no, '[0-9]{14}')
-               OR substr(rcept_no, 1, 8) <> strftime(rcept_dt, '%Y%m%d')
-            """
+            "SELECT count(*) FROM disclosure WHERE NOT regexp_full_match(rcept_no, '[0-9]{14}')"
         ).fetchone()[0]
     # 형식이 어긋나도 데이터를 못 쓰는 건 아니므로 실패가 아니라 경고로 둔다
     return dg.AssetCheckResult(passed=bad == 0, severity=dg.AssetCheckSeverity.WARN, metadata={"bad_rows": bad})
