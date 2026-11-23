@@ -144,6 +144,12 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
        multi = con.sql("SELECT person_id, corp_count FROM person WHERE corp_count >= 2").df()
    ```
 
+7. **(Phase 2) 시점 질의 검증** — 백필이 끝난 뒤, 관계 테이블이 질문에 맞는 답을 주는지 확인합니다. 데이터 상태(행 수, 회사별 보고서 수, 정정본, 생년월 없는 사람 비율)와 질문 5개(시점 기준 최대주주·사외이사, 지주·자회사 겸직, 최대주주 변동 이력, 정정 전후 차이)의 결과를 근거 공시 링크와 함께 출력합니다. DuckDB를 읽기 전용으로만 열고 API는 호출하지 않습니다.
+
+   ```bash
+   python notebooks/phase2_questions.py --out notebooks/phase2_questions_result.txt
+   ```
+
 화면 없이 터미널에서 실행할 수도 있습니다.
 
 ```bash
