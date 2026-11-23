@@ -2,10 +2,17 @@
 
 DuckDB 파일 위치는 .env의 DUCKDB_PATH (없으면 저장소 루트의 data/dartkg.duckdb).
 
-주의: DuckDB는 한 파일에 쓰기 연결을 여는 프로세스가 하나뿐이어야 한다.
-- Dagster는 dagster_home/dagster.yaml에서 동시에 도는 run을 1개로 제한해 두었다
-- 노트북·탐색 코드는 connect(read_only=True)로 연다
-- 파이프라인이 도는 동안 다른 터미널에서 쓰기 연결을 열면 "Could not set lock" 에러가 난다
+주의: DuckDB는 파일을 프로세스 단위로 잠근다. 동시에 가능한 조합은 둘뿐이다.
+- 쓰기 연결을 연 프로세스 하나만, 또는
+- 읽기 전용(read_only=True) 연결을 연 프로세스 여러 개만
+읽기 전용이라도 다른 프로세스가 파일을 열고 있으면 쓰기 연결을 열 수 없고, 그 반대도 마찬가지다.
+(duckdb 1.5.6에서 두 방향 모두 "Could not set lock" 에러 확인)
+
+그래서 이 프로젝트에서는
+- Dagster는 dagster_home/dagster.yaml에서 동시에 도는 run을 1개로 제한하고,
+  잠금에 걸리면 몇 분 뒤 다시 시도한다 (src/pipeline/definitions.py의 write_connection)
+- 노트북·탐색 코드는 `with connect(read_only=True) as con:`으로 열고 블록이 끝나면 바로 닫는다.
+  연결을 열어 둔 채 두면 다음 수집이 잠금에 걸린다
 """
 
 import json
@@ -24,6 +31,11 @@ DEFAULT_DB_PATH = REPO_ROOT / "data" / "dartkg.duckdb"
 def db_path() -> Path:
     load_dotenv()
     return Path(os.getenv("DUCKDB_PATH") or DEFAULT_DB_PATH)
+
+
+def is_lock_error(error: BaseException) -> bool:
+    """DuckDB 파일 잠금 때문에 연결에 실패한 에러인지 확인한다."""
+    return isinstance(error, duckdb.IOException) and "lock" in str(error).lower()
 
 
 def connect(read_only: bool = False) -> duckdb.DuckDBPyConnection:
