@@ -105,6 +105,16 @@ def phrase_query(q: str) -> str:
     return " AND ".join(f'"{t}"' for t in q.split())
 
 
+def phrase_query_pre(q: str) -> str:
+    """사용자가 띄어 쓴 낱말 단위로 따옴표를 치고, 전처리는 따옴표 안에서 한다.
+
+    'KB금융' → "KB 금융" (cjk가 KB와 금융이 붙어 있을 때만 찾음), '대표이사 변경' → "대표이사" AND "변경".
+    전처리를 따옴표 밖에서 하면 'KB금융' → "KB" AND "금융"이 되어, 두 조각이 문서 아무 데나
+    따로 있어도 걸린다. 긴 문서일수록 정밀도가 샌다 (PR #13 리뷰).
+    """
+    return " AND ".join(f'"{preprocess(t)}"' for t in q.split())
+
+
 def load_kiwi():
     try:
         from kiwipiepy import Kiwi
@@ -133,7 +143,7 @@ METHODS = [
     ("2 standard 앞부분(*)", "poc_std", lambda q: " ".join(f"{t}*" for t in q.split())),
     ("3 cjk 그대로", "poc_cjk", lambda q: q),
     ("4 cjk 구절", "poc_cjk", phrase_query),
-    ("5 cjk 구절+전처리", "poc_cjk_pre", lambda q: phrase_query(preprocess(q))),
+    ("5 cjk 구절+전처리", "poc_cjk_pre", phrase_query_pre),
 ]
 if KIWI:
     METHODS.append(("6 형태소+whitespace", "poc_morph", morph_query))
