@@ -32,6 +32,7 @@ src/loaders/       PostgreSQL 적재
 src/graph/         (Phase 4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 sql/               테이블 정의 (schema.sql)
+docker/            Docker 이미지·초기화 파일 (Airflow Dockerfile, PostgreSQL 초기화 SQL)
 notebooks/         탐색·실험용
 docs/devlog/       날짜별 개발 일지
 ```
@@ -51,7 +52,7 @@ docs/devlog/       날짜별 개발 일지
 2. **패키지 설치** — 가상환경을 만든 뒤 의존성을 설치합니다.
 
    ```bash
-   python -m venv .venv
+   python3 -m venv .venv
    ```
 
    ```bash
@@ -67,5 +68,54 @@ docs/devlog/       날짜별 개발 일지
    ```bash
    python -m src.collectors.corp_code
    ```
+
+## Docker로 실행하기 (Airflow + PostgreSQL)
+
+`docker-compose.yml`은 두 서비스를 띄웁니다.
+
+| 서비스 | 내용 | 접속 |
+|---|---|---|
+| `postgres` | PostgreSQL 17 + pgvector. 프로젝트 DB(`POSTGRES_DB`)와 Airflow 메타데이터 DB(`airflow`)를 함께 담음 | `localhost:5432` |
+| `airflow` | Airflow 3.3.2 standalone (scheduler·api-server·dag-processor·triggerer를 컨테이너 하나에서 실행) | http://localhost:8080 |
+
+1. **`.env`에 값 채우기** — `POSTGRES_*`, `AIRFLOW_UID`, `AIRFLOW_JWT_SECRET`을 채웁니다. 각 값의 의미는 `.env.example`의 주석을 보세요.
+
+   ```bash
+   id -u
+   ```
+
+   ```bash
+   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+
+2. **폴더 만들기** — Docker가 대신 만들면 root 소유가 되어 Airflow가 로그를 못 씁니다.
+
+   ```bash
+   mkdir -p logs data
+   ```
+
+3. **실행** — 처음에는 이미지를 받고 빌드하느라 몇 분 걸립니다.
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. **상태 확인** — `postgres`가 `healthy`, `airflow`가 `Up`이면 정상입니다. Airflow 로그에 `Airflow is ready`가 나오면 http://localhost:8080 에 접속합니다.
+
+   ```bash
+   docker compose ps
+   ```
+
+   ```bash
+   docker compose logs -f airflow
+   ```
+
+5. **종료** — 데이터는 `data/postgres`에 남습니다.
+
+   ```bash
+   docker compose down
+   ```
+
+> `docker/postgres/init/00_init.sql`은 `data/postgres`가 비어 있을 때 한 번만 실행됩니다. DB 이름·사용자·비밀번호를 바꾸려면 `docker compose down` 후 `data/postgres`를 지우고 다시 올려야 합니다 (데이터도 함께 지워짐).
 
 > OpenDART API는 하루 약 20,000건까지 호출할 수 있습니다. 대상 회사를 늘릴 때는 호출 수를 먼저 계산하세요.

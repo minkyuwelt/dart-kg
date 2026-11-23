@@ -28,6 +28,7 @@ src/loaders/       PostgreSQL 적재
 src/graph/         (Phase 4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 sql/schema.sql     테이블 정의
+docker/            Docker 이미지·초기화 파일 (docker-compose.yml은 루트)
 notebooks/         탐색·실험용
 docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
 ```
