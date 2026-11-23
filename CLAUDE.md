@@ -18,7 +18,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
-현재 단계: Phase 2 시작 (수집 함수·관계 테이블·파서까지. Dagster 자산·시간 닫기·사람 식별은 예정)
+현재 단계: Phase 2 (수집 함수·관계 테이블·파서·Dagster 자산·백필 스크립트까지. 시간 닫기·사람 식별은 예정)
 
 ## 아키텍처 원칙
 - DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함

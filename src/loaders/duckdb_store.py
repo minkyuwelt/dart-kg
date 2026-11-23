@@ -70,6 +70,28 @@ def save_raw(con: duckdb.DuckDBPyConnection, endpoint: str, request_key: str, bo
     )
 
 
+def raw_bodies(con: duckdb.DuckDBPyConnection, endpoint: str):
+    """한 endpoint의 정상(000) 원본 응답을 (request_key, body)로 돌려준다. 같은 보고서(rcept_no)의 중복은 하나만.
+
+    정기보고서 주요정보 응답은 행마다 rcept_no(그 보고서의 접수번호)를 가진다. 같은 보고서가 원본 테이블에
+    두 번 있을 수 있다: Phase 1처럼 파라미터만으로 저장한 행과, Phase 2처럼 rcept_no까지 키에 넣어 저장한 행
+    (collect_report_details 참고). 둘 다 정규화하면 기본키(rcept_no, row_seq)가 겹치므로 가장 최근에 받은 것만 쓴다.
+    rcept_no가 다른 응답(원본과 정정본)은 모두 돌려준다. 그것이 0005의 기록 시간이다.
+    """
+    latest: dict[str, tuple] = {}
+    rows = con.execute(
+        "SELECT request_key, body, fetched_at FROM raw_api_response WHERE endpoint = ? AND status = '000' ORDER BY fetched_at",
+        [endpoint],
+    ).fetchall()
+    for request_key, body_text, fetched_at in rows:
+        body = json.loads(body_text)
+        items = body.get("list") or []
+        rcept_no = items[0].get("rcept_no") if items else None
+        # 같은 rcept_no는 나중에 받은 것이 덮어쓴다 (fetched_at 오름차순이라 마지막이 최신)
+        latest[rcept_no or request_key] = (request_key, body)
+    return list(latest.values())
+
+
 def upsert_corps(con: duckdb.DuckDBPyConnection, corps: list[dict]) -> int:
     """회사 목록을 corp 테이블에 넣는다 (corp_code 기준 upsert). 넣은 행 수를 돌려준다.
 

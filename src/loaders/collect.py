@@ -24,7 +24,7 @@ import sys
 import duckdb
 
 from src.collectors.corp_code import download_corp_code_xml, get_api_key, parse_corps
-from src.collectors.disclosure_list import fetch_disclosures, parse_disclosures
+from src.collectors.disclosure_list import fetch_disclosures, make_request_key, parse_disclosures
 from src.collectors.investment import fetch_investments
 from src.collectors.report_detail import ENDPOINTS, fetch_report_detail
 from src.loaders.duckdb_store import connect, save_raw, upsert_corps, upsert_disclosures
@@ -82,23 +82,39 @@ def collect_report_details(
 ) -> dict:
     """한 회사의 한 정기보고서에서 주요정보 4종 원본을 받아 저장한다. API 4건.
 
+    원본의 request_key에는 요청 파라미터에 더해 응답이 알려 준 접수번호(rcept_no)를 넣는다.
+    주요정보 API는 같은 파라미터로 조회해도 정정본이 나오면 다른 rcept_no의 응답을 주는데,
+    파라미터만 키로 쓰면 정정본이 원본을 덮어써서 "정정 전에 뭐라고 적혀 있었나"(0005의 기록 시간)가 사라진다.
+    rcept_no를 키에 넣으면 원본과 정정본이 각각 남는다. 데이터 없음(013) 응답은 rcept_no가 없으므로 파라미터만 쓴다.
+
     정규화 테이블은 여기서 만들지 않는다. 관계 테이블은 "다음 보고서"를 봐야 시간을 닫을 수 있어서
     보고서 하나씩이 아니라 원본 전체로 다시 만든다 (src/loaders/relations.py rebuild, investments.py rebuild).
     """
-    page = fetch_investments(api_key, corp_code, bsns_year, reprt_code)
-    pages = {"investment": page}
+    params = {"corp_code": corp_code, "bsns_year": bsns_year, "reprt_code": reprt_code}
+    pages = {"investment": fetch_investments(api_key, corp_code, bsns_year, reprt_code)}
     for name in ENDPOINTS:
         pages[name] = fetch_report_detail(api_key, name, corp_code, bsns_year, reprt_code)
+    rcept_nos = set()
     con.begin()
     try:
         for p in pages.values():
-            save_raw(con, p.endpoint, p.request_key, p.body)
+            items = p.body.get("list") or []
+            rcept_no = items[0].get("rcept_no") if items else None
+            key = make_request_key({**params, "rcept_no": rcept_no}) if rcept_no else p.request_key
+            if rcept_no:
+                rcept_nos.add(rcept_no)
+            save_raw(con, p.endpoint, key, p.body)
         con.commit()
     except Exception:
         con.rollback()
         raise
     statuses = {name: p.body.get("status") for name, p in pages.items()}
-    return {"api_calls": len(pages), "statuses": statuses, "no_data": sum(s == "013" for s in statuses.values())}
+    return {
+        "api_calls": len(pages),
+        "statuses": statuses,
+        "no_data": sum(s == "013" for s in statuses.values()),
+        "rcept_no": ", ".join(sorted(rcept_nos)) or None,
+    }
 
 
 def main(argv: list[str]) -> None:

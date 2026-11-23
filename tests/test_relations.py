@@ -192,6 +192,22 @@ class RebuildTest(unittest.TestCase):
                 (date(2023, 11, 30), date(2026, 11, 20)),
             )
 
+    def test_rebuild_keeps_each_report_version_once(self):
+        """같은 보고서를 파라미터 키와 rcept_no 키로 두 번 저장해도 한 번만, 정정본(다른 rcept_no)은 따로 남는다."""
+        with connect() as con:
+            self.seed_raw(con)
+            versioned = make_request_key({"corp_code": KB, "bsns_year": "2025", "reprt_code": "11011", "rcept_no": "20260619000667"})
+            save_raw(con, ENDPOINTS["executive"], versioned, fixture("exctvSttus"))
+            self.assertEqual(rebuild_relations(con)["executive"], 32)
+            original = {"status": "000", "list": [dict(r, rcept_no="20260313001191") for r in fixture("exctvSttus")["list"][:5]]}
+            save_raw(con, ENDPOINTS["executive"],
+                     make_request_key({"corp_code": KB, "bsns_year": "2025", "reprt_code": "11011", "rcept_no": "20260313001191"}), original)
+            self.assertEqual(rebuild_relations(con)["executive"], 37)
+            self.assertEqual(
+                con.execute("SELECT source_rcept_no, count(*) FROM executive GROUP BY 1 ORDER BY 1").fetchall(),
+                [("20260313001191", 5), ("20260619000667", 32)],
+            )
+
     def test_rebuild_resolves_holder_against_corp_table(self):
         with connect() as con:
             con.execute("INSERT INTO corp VALUES ('00688996', 'KB금융', '105560', NULL, now())")
@@ -236,9 +252,13 @@ class CollectReportDetailsTest(unittest.TestCase):
             self.assertEqual(result["api_calls"], 4)
             self.assertEqual(result["no_data"], 1)
             self.assertEqual(result["statuses"]["executive"], "000")
-            saved = con.execute("SELECT endpoint, status FROM raw_api_response ORDER BY endpoint").fetchall()
-            self.assertEqual(saved, [("exctvSttus.json", "000"), ("hyslrChgSttus.json", "000"),
-                                     ("hyslrSttus.json", "000"), ("otrCprInvstmntSttus.json", "013")])
+            self.assertEqual(result["rcept_no"], "20260619000667")
+            saved = con.execute("SELECT endpoint, status, request_key FROM raw_api_response ORDER BY endpoint").fetchall()
+            self.assertEqual([(e, s) for e, s, _ in saved], [("exctvSttus.json", "000"), ("hyslrChgSttus.json", "000"),
+                                                             ("hyslrSttus.json", "000"), ("otrCprInvstmntSttus.json", "013")])
+            # 정상 응답은 rcept_no가 키에 들어가 정정본과 구분되고, 013 응답은 파라미터만
+            self.assertTrue(all("rcept_no=20260619000667" in k for _, s, k in saved if s == "000"))
+            self.assertEqual(saved[-1][2], REQUEST_KEY)
 
 
 if __name__ == "__main__":

@@ -85,6 +85,7 @@ docs/devlog/       날짜별 개발 일지
 
 ```
 corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
+                                          └────────▶ report_details ─▶ relations   (Phase 2)
 ```
 
 | 자산 | 내용 | API 호출 |
@@ -93,6 +94,8 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 | `holding_investments` | 지주 4곳의 최신 사업보고서 타법인 출자현황 → `investment` 테이블 (출자 대상 이름을 corp_code로 연결) | 4건 |
 | `target_corps` | 수집 대상(지주 + 직속 자회사, 2025 기준 59곳) → `target_corp` 테이블, `disclosures`의 회사 파티션 추가 | 0건 |
 | `disclosures` | 한 회사의 한 달치 공시 목록 → `raw_api_response`(원본) + `disclosure` 테이블. 파티션 = 월 × 회사 | 파티션당 보통 1건 |
+| `report_details` | (Phase 2) 한 회사의 한 정기보고서에서 주요정보 4종(타법인 출자·최대주주·최대주주 변동·임원) 원본 저장. 파티션 = 회사 × 보고서(`2025-11011` = 사업연도-보고서종류). 공시 목록에 그 보고서가 없으면 API 없이 건너뜀 | 보고서당 4건 |
+| `relations` | (Phase 2) 원본 전체에서 `investment`·`major_shareholder`·`major_shareholder_change`·`executive` 테이블 재생성. 시간 컬럼은 [0005](docs/decisions/0005-temporal-model.md) | 0건 |
 
 대상 범위를 정한 근거는 [docs/decisions/0002-target-scope.md](docs/decisions/0002-target-scope.md)에 있습니다.
 
@@ -114,6 +117,15 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    2026-11-23 실제 실행: 4,189개 파티션, API 호출 4,661건(페이지 넘김 포함), 공시 86,893건, 약 29.0분. 완료한 파티션은 Dagster에 기록되므로 중간에 멈춰도 다시 실행하면 이어서 합니다. `--from`, `--to`, `--corp`로 범위를 좁힐 수 있고, `--max-calls`(기본 8,000) 또는 DART 한도 초과 응답에서 멈춥니다.
 
 4. **매일 수집** — 화면의 Automation에서 `targets_freshness`와 `daily_disclosures` 스케줄을 켭니다. `daily_disclosures`는 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `targets_freshness`는 매일 06:30에 수집 대상이 최신 사업보고서 기준인지 확인하고, 기준 연도가 바뀌었을 때만(보통 4월 1일, API 5건) `targets_job`을 실행합니다. 노트북이 꺼져 있던 날이 있어도 다음에 켜진 날 따라잡습니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
+
+5. **(Phase 2) 관계 데이터 백필** — 공시 목록 백필이 끝난 뒤 실행합니다. 공시 목록에 있는 정기보고서만 부르므로(사업보고서 제출 30곳 기준 2021년~올해 약 600개 보고서 × 4건 = 약 2,400건) 하루 안에 끝납니다. 끝나면 관계 테이블을 다시 만들고 품질 검사까지 기록합니다. `dagster dev`는 꺼 둔 상태로 실행합니다.
+
+   ```bash
+   DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports --dry-run   # 계획만 (API 호출 없음)
+   DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports
+   ```
+
+   이후에는 Automation에서 `daily_report_details`(07:30, 그날 새로 접수된 정기보고서만 수집)와 `daily_relations`(08:30, 관계 테이블 재생성)를 켭니다.
 
 화면 없이 터미널에서 실행할 수도 있습니다.
 
