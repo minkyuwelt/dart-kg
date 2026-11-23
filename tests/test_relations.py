@@ -23,6 +23,7 @@ from src.loaders.relations import (
     parse_major_shareholders,
     parse_percent,
     parse_period_months,
+    parse_tenure,
     parse_year_month,
     rebuild_relations,
     shift_months,
@@ -67,6 +68,33 @@ class ParserTest(unittest.TestCase):
         self.assertIsNone(parse_period_months("-"))
         self.assertIsNone(parse_period_months(""))
         self.assertIsNone(parse_period_months("미상"))
+        self.assertEqual(parse_period_months("3.2년"), 38)
+        self.assertEqual(parse_period_months("2.5년\n(초임)"), 30)
+
+    def test_parse_tenure_reads_date_ranges_seen_in_backfill(self):
+        # 백필 데이터의 실제 표기 (devlog 2026-11-23). 85%가 기간이 아니라 날짜 범위였다
+        d = date(2025, 12, 31)
+        cases = {
+            "2022.01.07~": (date(2022, 1, 7), None, 47),
+            "2021.7.1\n ~\n 기준일": (date(2021, 7, 1), None, 53),
+            "'23.3.22\n~ 현재": (date(2023, 3, 22), None, 33),
+            "24.05.27.\n ~ 현재": (date(2024, 5, 27), None, 19),
+            "2017.09.\n22~현재": (date(2017, 9, 22), None, 99),
+            "2019.03.21~현재\n (FY2023 정기주총일)": (date(2019, 3, 21), None, 81),
+            "2022.01.01\n ~ 2023.12.31": (date(2022, 1, 1), date(2023, 12, 31), 47),
+            "2022. 4. 22\n~ 기준일": (date(2022, 4, 22), None, 44),
+            "2023.03.22\n-\n현재": (date(2023, 3, 22), None, 33),
+            "2020.12.07": (date(2020, 12, 7), None, 60),
+        }
+        for raw, (start, end, months) in cases.items():
+            with self.subTest(raw=raw):
+                t = parse_tenure(raw, d)
+                self.assertEqual((t["tenure_start_on"], t["range_end_on"], t["hffc_months"], t["tenure_start_method"]),
+                                 (start, end, months, "hffc_pd_range"))
+        self.assertEqual(parse_tenure("2년 \n1개월", d)["tenure_start_method"], "stlm_dt_minus_hffc_pd")
+        self.assertEqual(parse_tenure("2년 \n1개월", d)["tenure_start_on"], date(2023, 11, 30))
+        for raw in ("기재생략", "-", "", "2022.01.00~현재"):
+            self.assertIsNone(parse_tenure(raw, d)["tenure_start_on"], raw)
 
     def test_shift_months_clamps_to_month_end(self):
         self.assertEqual(shift_months(date(2025, 12, 31), -25), date(2023, 11, 30))
@@ -136,6 +164,27 @@ class ParseFixtureTest(unittest.TestCase):
         self.assertEqual((row["valid_from"], row["tenure_start_on"], row["tenure_start_method"], row["hffc_months"]),
                          (date(2025, 12, 31), None, None, None))
         self.assertEqual(row["person_id"], "홍길동|?|?")
+
+    def test_executive_date_range_gives_exact_start_and_fills_missing_end(self):
+        body = {"status": "000", "list": [
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "홍길동", "hffc_pd": "2022.01.01\n ~ 2023.12.31", "tenure_end_on": "-", "stlm_dt": "2025-12-31"},
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "김철수", "hffc_pd": "'23.3.22\n~ 현재", "tenure_end_on": "2026년 03월 25일", "stlm_dt": "2025-12-31"},
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "-", "hffc_pd": "-", "stlm_dt": "2025-12-31"},  # 자리 표시 행은 건너뜀
+        ]}
+        hong, kim = parse_executives(REQUEST_KEY, body)
+        self.assertEqual((hong["tenure_start_on"], hong["tenure_start_method"], hong["tenure_end_on"]),
+                         (date(2022, 1, 1), "hffc_pd_range", date(2023, 12, 31)))
+        self.assertEqual((kim["tenure_start_on"], kim["tenure_end_on"]), (date(2023, 3, 22), date(2026, 3, 25)))  # API 임기만료일 우선
+
+
+class MajorShareholderPlaceholderTest(unittest.TestCase):
+    def test_dash_row_is_skipped(self):
+        body = {"status": "000", "list": [
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "-", "relate": "-", "stlm_dt": "2025-12-31"},
+            {"rcept_no": "20260101000001", "corp_code": KB, "nm": "국민연금공단", "relate": "최대주주", "trmend_posesn_stock_qota_rt": "8.68", "stlm_dt": "2025-12-31"},
+        ]}
+        rows = parse_major_shareholders(REQUEST_KEY, body, {}, {})
+        self.assertEqual([r["nm"] for r in rows], ["국민연금공단"])
 
 
 class DedupeChangesTest(unittest.TestCase):
@@ -227,15 +276,20 @@ class RebuildTest(unittest.TestCase):
     def test_rebuild_resolves_holder_against_corp_table(self):
         with connect() as con:
             con.execute("INSERT INTO corp VALUES ('00688996', 'KB금융', '105560', NULL, now())")
-            body = {"status": "000", "list": [{"rcept_no": "20260320000001", "corp_code": "00401731", "nm": "㈜KB금융지주", "relate": "본인",
-                                                "trmend_posesn_stock_qota_rt": "100", "stlm_dt": "2025-12-31"}]}
-            con.execute("INSERT INTO corp VALUES ('00000002', '케이비금융지주', NULL, NULL, now())")
+            # 한글 읽기 매칭(㈜KB손해보험 → 케이비손해보험)과 수동 매핑(KB금융지주 → 00688996, config/corp_name_overrides.csv)
+            body = {"status": "000", "list": [
+                {"rcept_no": "20260320000001", "corp_code": "00401731", "nm": "㈜KB손해보험", "relate": "본인",
+                 "trmend_posesn_stock_qota_rt": "100", "stlm_dt": "2025-12-31"},
+                {"rcept_no": "20260320000001", "corp_code": "00401731", "nm": "주식회사KB금융지주", "relate": "기타",
+                 "trmend_posesn_stock_qota_rt": "0", "stlm_dt": "2025-12-31"},
+            ]}
+            con.execute("INSERT INTO corp VALUES ('00000002', '케이비손해보험', NULL, NULL, now())")
             save_raw(con, ENDPOINTS["major_shareholder"],
                      make_request_key({"corp_code": "00401731", "bsns_year": "2025", "reprt_code": "11011"}), body)
             rebuild_relations(con)
             self.assertEqual(
-                con.execute("SELECT holder_corp_code, resolve_method, trmend_posesn_stock_qota_rt FROM major_shareholder").fetchone(),
-                ("00000002", "hangul", 100.0),
+                con.execute("SELECT holder_corp_code, resolve_method, trmend_posesn_stock_qota_rt FROM major_shareholder ORDER BY row_seq").fetchall(),
+                [("00000002", "hangul", 100.0), ("00688996", "override", 0.0)],
             )
 
 

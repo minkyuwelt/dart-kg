@@ -96,11 +96,15 @@ def data_health(con: duckdb.DuckDBPyConnection, out: Report) -> None:
         UNION ALL SELECT 'person', count(*), count(*), count(*) FROM person
     """))
 
-    out("\n[1-2] 회사별 보고서 수 (임원 현황 기준, 정정본 제외). 대상 회사인데 0이면 백필이 빠진 것")
+    out("\n[1-2] 회사별 보고서 수. listed = 공시 목록의 정기보고서 수(정정 포함), loaded = 임원 현황이 적재된 보고서 수(정정 제외).")
+    out("      listed가 0이면 정기보고서 제출 의무가 없는 비상장사(정상). listed > 0인데 loaded가 훨씬 작거나 last_stlm_dt가 오래됐으면 백필·목록 누락 의심")
     out(table(con, """
         SELECT t.corp_code, t.corp_name, t.role,
-               count(DISTINCT e.bsns_year || '-' || e.reprt_code) AS reports,
-               min(e.stlm_dt) AS first_stlm_dt, max(e.stlm_dt) AS last_stlm_dt
+               (SELECT count(*) FROM disclosure d WHERE d.corp_code = t.corp_code
+                  AND (d.report_nm LIKE '%사업보고서%' OR d.report_nm LIKE '%반기보고서%' OR d.report_nm LIKE '%분기보고서%')) AS listed,
+               count(DISTINCT e.bsns_year || '-' || e.reprt_code) AS loaded,
+               min(e.stlm_dt) AS first_stlm_dt, max(e.stlm_dt) AS last_stlm_dt,
+               (SELECT max(rcept_dt) FROM disclosure d WHERE d.corp_code = t.corp_code) AS last_listed_dt
         FROM target_corp t LEFT JOIN executive e ON e.corp_code = t.corp_code AND e.superseded_by IS NULL
         GROUP BY 1, 2, 3 ORDER BY t.role DESC, t.corp_name
     """, max_rows=80))
@@ -126,6 +130,14 @@ def data_health(con: duckdb.DuckDBPyConnection, out: Report) -> None:
         FROM person GROUP BY nm HAVING count(*) > 1 ORDER BY ids DESC, nm
     """))
 
+    out("\n[1-5b] 같은 이름·같은 출생연도인데 person_id가 다른 경우 (생년월이나 성별 표기 오류로 같은 사람이 갈라졌을 가능성. DART 원문으로 확인 후 0006에 분리·병합 규칙)")
+    out(table(con, """
+        SELECT a.nm, a.person_id AS id_a, b.person_id AS id_b, a.corp_count AS corps_a, b.corp_count AS corps_b
+        FROM person a JOIN person b ON a.nm = b.nm AND a.person_id < b.person_id
+          AND a.birth_ym IS NOT NULL AND b.birth_ym IS NOT NULL AND left(a.birth_ym, 4) = left(b.birth_ym, 4)
+        ORDER BY a.nm
+    """))
+
     out("\n[1-6] 보고서 기준일 분포. 12월 결산 가정이라 03-31/06-30/09-30/12-31 외의 날짜가 있으면 periodic_report_key 재검토")
     out(table(con, """
         SELECT strftime(stlm_dt, '%m-%d') AS month_day, reprt_code, count(DISTINCT corp_code || source_rcept_no) AS reports
@@ -139,11 +151,15 @@ def data_health(con: duckdb.DuckDBPyConnection, out: Report) -> None:
         FROM major_shareholder WHERE superseded_by IS NULL GROUP BY 1 ORDER BY 2 DESC
     """))
 
-    out("\n[1-8] 임원 선임 시점(tenure_start_on)을 못 구한 행 수 (재직기간 표기가 규칙에 안 맞는 경우)")
+    out("\n[1-8] 임원 선임 시점(tenure_start_on)을 어떻게 구했나. 못 구한 행의 원문 표기는 최대 40개만")
     out(table(con, """
-        SELECT count(*) AS rows_live, count(*) FILTER (tenure_start_on IS NULL) AS no_tenure_start,
-               string_agg(DISTINCT hffc_pd_raw, ' | ') FILTER (tenure_start_on IS NULL) AS raw_samples
-        FROM executive WHERE superseded_by IS NULL
+        SELECT coalesce(tenure_start_method, '(없음)') AS method, count(*) AS rows_live,
+               round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS pct
+        FROM executive WHERE superseded_by IS NULL GROUP BY 1 ORDER BY 2 DESC
+    """))
+    out(table(con, """
+        SELECT replace(hffc_pd_raw, chr(10), ' ') AS raw, count(*) AS n FROM executive
+        WHERE superseded_by IS NULL AND tenure_start_on IS NULL GROUP BY 1 ORDER BY 2 DESC
     """))
 
 
@@ -216,10 +232,13 @@ def q4_major_shareholder_history(con: duckdb.DuckDBPyConnection, out: Report) ->
             FROM major_shareholder_change WHERE corp_code = ? ORDER BY change_on
         """, [code], max_rows=20))
     out("\n  (대조) 같은 지주의 보고서별 최대주주 지분율 스냅샷 (최대주주 현황 API). 변동 이력과 방향이 맞아야 함")
+    # relate 표기는 회사마다 다르다('본인', '대주주', '최대주주'...) → 보고서마다 지분율이 가장 큰 행을 최대주주로 본다
     out(table(con, """
-        SELECT corp_code, stlm_dt, nm, trmend_posesn_stock_qota_rt AS pct, valid_to, source_rcept_no
-        FROM major_shareholder WHERE corp_code IN (SELECT corp_code FROM target_corp WHERE role = 'holding')
-          AND superseded_by IS NULL AND relate = '본인' ORDER BY corp_code, stlm_dt
+        SELECT corp_code, stlm_dt, nm, relate, pct, valid_to, source_rcept_no FROM (
+            SELECT corp_code, stlm_dt, nm, relate, trmend_posesn_stock_qota_rt AS pct, valid_to, source_rcept_no,
+                   row_number() OVER (PARTITION BY source_rcept_no ORDER BY trmend_posesn_stock_qota_rt DESC NULLS LAST) AS rn
+            FROM major_shareholder WHERE corp_code IN (SELECT corp_code FROM target_corp WHERE role = 'holding') AND superseded_by IS NULL
+        ) WHERE rn = 1 ORDER BY corp_code, stlm_dt
     """, max_rows=80))
 
 

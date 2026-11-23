@@ -143,3 +143,11 @@ RETURN s.name, r.stake_pct, r.rcept_no
 - Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956), Graphiti temporal model 문서. 이중 시간축과 "지우지 않고 닫기" 설계의 출처
 - Absorbing Complexity: An Interaction-Native Knowledge Harness for Financial LLM Agents (arXiv 2606.01886). 금융 에이전트에 유효 기간이 있는 시간 그래프를 쓴 사례
 - GraphRAG-Bench (arXiv 2506.02404), WildGraphBench (arXiv 2602.02053). 그래프 검색이 다중 경로 질문에서만 벡터 검색을 이긴다는 근거
+
+## 한계 (2026-11-23 백필 뒤 추가)
+
+- 주요정보 API는 같은 (회사, 사업연도, 보고서종류)에 **최신 정정본만** 돌려준다. 그래서 백필 시점 이전의 정정은 원본 버전을 얻을 수 없고
+  `superseded_by`는 백필 뒤 일일 수집이 원본 → 정정본을 차례로 받은 경우에만 채워진다. 과거에 정정이 있었다는 사실 자체는 공시 목록의
+  `[기재정정]` 보고서명으로 안다 (KB금융은 정기보고서 31건 중 30건에 정정이 있었다)
+- 임원 재직기간(`hffc_pd`)은 85%가 '년/개월'이 아니라 날짜 범위('2022.01.07~현재')다. 이 경우 선임일을 그대로 쓰므로 월 근사보다 정확하다
+  (`tenure_start_method = 'hffc_pd_range'`). 표에 적은 "월 단위 근사"는 나머지 15%에만 해당한다
