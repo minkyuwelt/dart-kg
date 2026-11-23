@@ -15,11 +15,20 @@ parse 단계는 보고서 하나만 보고 행을 만들므로 "언제까지 참
 - valid_to = 같은 회사의 다음 변동일(change_on). 변동일이 있어 일 단위다. 같은 날 행이 여럿이면 같은 valid_to
 - valid_from(= change_on)은 보고서 기준일보다 늦을 수 있다. 사업보고서는 기준일 석 달 뒤에 내므로 그 사이 변동도 실린다
 
+사람 병합 (결정 0006 개정)
+- DART 원문의 오타(출생월 01↔10, 성별)로 같은 사람이 person_id 둘로 갈라진 경우, 사람이 확인한 쌍을 config/person_merges.csv에 적는다.
+  어느 id를 기준으로 삼을지는 코드가 정한다: 행이 많은 쪽, 같으면 더 최근 보고서에 나온 쪽. 재실행해도 같은 결과가 나온다
+
 "언제부터 그 관계였나"(최초 취득일, 임원 선임 시점)는 valid_from이 아니라 별도 컬럼(frst_acqs_de, tenure_start_on)이다.
 valid_from을 그 날짜로 두면 연속된 보고서의 행이 겹쳐서 시점 조회가 행을 여러 개 돌려준다 (B 단계의 설계를 E에서 고침).
 """
 
+import csv
+from pathlib import Path
+
 import duckdb
+
+MERGES_PATH = Path(__file__).resolve().parents[2] / "config" / "person_merges.csv"
 
 
 def mark_superseded(con: duckdb.DuckDBPyConnection, table: str, rcept_col: str, corp_col: str) -> int:
@@ -86,13 +95,57 @@ def chain_changes(con: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def load_person_merges(path: Path = MERGES_PATH) -> list[set[str]]:
+    """config/person_merges.csv의 쌍을 묶음(set)으로. a-b, b-c처럼 이어지면 한 묶음."""
+    if not path.exists():
+        return []
+    groups: list[set[str]] = []
+    with path.open(encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            a, b = row["person_id_a"], row["person_id_b"]
+            joined = [g for g in groups if a in g or b in g]
+            merged = {a, b}.union(*joined)
+            groups = [g for g in groups if g not in joined] + [merged]
+    return groups
+
+
+def apply_person_merges(con: duckdb.DuckDBPyConnection, groups: list[set[str]] | None = None) -> int:
+    """묶음마다 기준 person_id를 정해 executive.person_id를 그 값으로 바꾼다. 바꾼 행 수를 돌려준다.
+
+    기준 = (정정되지 않은 행 수, 가장 최근 기준일)이 큰 id. 원래 id는 nm·birth_ym·sexdstn에서 언제든 다시 계산할 수 있다.
+    """
+    if groups is None:
+        groups = load_person_merges()
+    changed = 0
+    for group in groups:
+        ids = sorted(group)
+        ranked = con.execute(
+            "SELECT person_id, count(*) AS n, max(stlm_dt) AS latest FROM executive "
+            "WHERE person_id IN (SELECT UNNEST(?)) AND superseded_by IS NULL GROUP BY 1 ORDER BY n DESC, latest DESC, person_id",
+            [ids],
+        ).fetchall()
+        if not ranked:
+            continue
+        canonical = ranked[0][0]
+        others = [i for i in ids if i != canonical]
+        if others:
+            changed += len(con.execute(
+                "UPDATE executive SET person_id = ? WHERE person_id IN (SELECT UNNEST(?)) RETURNING 1", [canonical, others]
+            ).fetchall())
+    return changed
+
+
 def rebuild_person(con: duckdb.DuckDBPyConnection) -> int:
-    """executive의 (이름, 생년월, 성별)마다 person 행 하나. 결정 0006. 행 수를 돌려준다."""
+    """executive의 (이름, 생년월, 성별)마다 person 행 하나. 결정 0006. 행 수를 돌려준다.
+
+    birth_ym·sexdstn은 person_id에서 다시 읽는다. 병합된 사람은 행마다 값이 다를 수 있어 any_value로는 결과가 흔들린다.
+    """
     con.execute("DELETE FROM person")
     con.execute(
         """
         INSERT INTO person (person_id, nm, birth_ym, sexdstn, first_seen, last_seen, corp_count, loaded_at)
-        SELECT person_id, any_value(nm), any_value(birth_ym), any_value(sexdstn),
+        SELECT person_id, any_value(nm),
+               nullif(split_part(person_id, '|', 2), '?'), nullif(split_part(person_id, '|', 3), '?'),
                min(coalesce(tenure_start_on, valid_from)), max(coalesce(valid_to, stlm_dt)),
                count(DISTINCT corp_code), now()
         FROM executive WHERE superseded_by IS NULL
@@ -115,5 +168,6 @@ def close_relations(con: duckdb.DuckDBPyConnection) -> dict:
         chain_snapshots(con, table, "corp_code")
     stats["executive_closed_by_tenure_end"] = close_executive_tenures(con)
     chain_changes(con)
+    stats["person_merged_rows"] = apply_person_merges(con)
     stats["person"] = rebuild_person(con)
     return stats
