@@ -243,12 +243,15 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
 def dedupe_changes(rows: list[dict]) -> list[dict]:
     """같은 (회사, 변동일, 주주명) 변동이 여러 보고서에 실리면 하나만 남긴다.
 
+    주주명은 법인 표기를 뗀 정규화 이름으로 비교한다. 같은 변동이 보고서마다 '하나은행', '(주)하나은행'처럼
+    다르게 적혀 둘 다 남는 일이 백필에서 실제로 있었다 (devlog 2026-11-23). 지분율이 같은 것으로 같은 사건임을 확인함.
+
     남기는 것은 접수번호가 가장 작은(=가장 먼저 보고한) 보고서의 행이다. 접수번호 앞 8자리가 접수일이라
     문자열 비교가 시간 순서와 같다. "언제 처음 알게 됐나"(기록 시간)를 보존하기 위해서다.
     """
     best: dict[tuple, dict] = {}
     for row in rows:
-        key = (row["corp_code"], row["change_on"], row["mxmm_shrholdr_nm"])
+        key = (row["corp_code"], row["change_on"], normalize_name(row["mxmm_shrholdr_nm"])[0])
         if key not in best or row["source_rcept_no"] < best[key]["source_rcept_no"]:
             best[key] = row
     return list(best.values())

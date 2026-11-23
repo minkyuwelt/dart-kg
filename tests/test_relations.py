@@ -151,6 +151,17 @@ class DedupeChangesTest(unittest.TestCase):
         self.assertEqual(by_date[date(2019, 12, 31)], "20200330001234")
         self.assertEqual(by_date[date(2022, 9, 30)], "20260619000667")
 
+    def test_same_change_with_different_corp_marks_is_one(self):
+        # 백필에서 실제로 있었던 사례: 같은 변동이 보고서마다 '하나은행', '(주)하나은행'으로 적힘
+        rows = [
+            {"corp_code": KB, "change_on": date(2017, 6, 12), "mxmm_shrholdr_nm": "(주)하나은행", "source_rcept_no": "20210517001611"},
+            {"corp_code": KB, "change_on": date(2017, 6, 12), "mxmm_shrholdr_nm": "하나은행", "source_rcept_no": "20180402000001"},
+            {"corp_code": KB, "change_on": date(2017, 6, 12), "mxmm_shrholdr_nm": "(주)외환은행", "source_rcept_no": "20240814003949"},
+        ]
+        kept = sorted(dedupe_changes(rows), key=lambda r: r["mxmm_shrholdr_nm"])
+        self.assertEqual([(r["mxmm_shrholdr_nm"], r["source_rcept_no"]) for r in kept],
+                         [("(주)외환은행", "20240814003949"), ("하나은행", "20180402000001")])  # 다른 이름은 남음
+
 
 class RebuildTest(unittest.TestCase):
     """임시 DuckDB에 원본 응답을 넣고 관계 테이블을 다시 만든다."""
