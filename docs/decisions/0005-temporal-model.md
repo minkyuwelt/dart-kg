@@ -54,7 +54,7 @@
 
 ### 사실 시간을 어디서 얻는가
 
-DART 정기보고서 주요정보 API별로, `valid_from`과 `valid_to`를 채우는 규칙이다. 필드 이름은 OpenDART 개발가이드 기준이며, **노트북에서 실제 응답으로 확인한 뒤 구현한다** (확인 필요).
+DART 정기보고서 주요정보 API별로, `valid_from`과 `valid_to`를 채우는 규칙이다. 필드 이름은 2026-11-23 노트북에서 KB금융 2025 사업보고서 실제 응답으로 확인했다 (`tests/fixtures/`, 아래 "확인 결과"). 표의 필드 이름은 모두 응답에 있었고 틀린 이름은 없었다.
 
 | 관계 | API | `valid_from` | `valid_to` 닫는 규칙 | 해상도 |
 |---|---|---|---|---|
@@ -66,11 +66,23 @@ DART 정기보고서 주요정보 API별로, `valid_from`과 `valid_to`를 채�
 - "다음 정기보고서"는 같은 회사의 사업·반기·분기보고서 중 `stlm_dt`가 바로 다음인 것이다. **보고서 하나가 수집에서 빠지면 관계가 잘못 닫히거나 늦게 닫힌다.** 그래서 닫기는 적재 때 한 번 정하지 않고, 테이블 전체를 원본 응답(`raw_api_response`)에서 다시 만들 때마다 다시 계산한다 (`investment`의 `rebuild`와 같은 방식)
 - 보고서 사이의 변동 중 공시가 날짜를 주는 것(최대주주 변동, 최초 취득일)만 일 단위다. 나머지는 "보고서 기준일에 참이었다"까지만 안다. 답변에서도 그렇게 말해야 한다 ("2025년 6월 말 기준")
 
+#### 확인 결과 (2026-11-23, KB금융 2025 사업보고서, `tests/fixtures/*_00688996_2025_11011.json`)
+
+| API | 응답 필드 | 날짜·숫자 형식 |
+|---|---|---|
+| `hyslrSttus` (3행) | `rcept_no, corp_cls, corp_code, corp_name, stock_knd, nm, relate, bsis_posesn_stock_co, bsis_posesn_stock_qota_rt, trmend_posesn_stock_co, trmend_posesn_stock_qota_rt, rm, stlm_dt` | `stlm_dt` = `2025-12-31`. 주식 수 `33,107,971`(쉼표), 지분율 `8.68`(% 없음). `nm`이 `계`인 합계 행 있음 → 제외 |
+| `hyslrChgSttus` (28행) | `rcept_no, corp_cls, corp_code, corp_name, change_on, mxmm_shrholdr_nm, posesn_stock_co, qota_rt, change_cause, rm, stlm_dt` | `change_on` = `2019년 12월 31일` (한글). `qota_rt` = `9.97%` (**% 붙음**, 현황 API와 다름). 2025 보고서에 2019~2025년 변동 28행이 모두 실림 → **보고서마다 과거 변동이 중복되므로 `change_on` + 주주명으로 중복 제거** |
+| `exctvSttus` (32행) | `rcept_no, corp_cls, corp_code, corp_name, nm, sexdstn, birth_ym, ofcps, rgist_exctv_at, fte_at, chrg_job, main_career, mxmm_shrholdr_relate, hffc_pd, tenure_end_on, stlm_dt` | `tenure_end_on` = `2026년 11월 20일`, `birth_ym` = `1961년 06월`. `hffc_pd`는 `2년 \n1개월`, `1년8개월`처럼 **줄바꿈·공백이 섞임** → 정규식으로 년·개월 추출. `chrg_job`·`main_career`에 줄바꿈 포함. 재직 **시작일 필드는 없음** (역산만 가능) |
+| `otrCprInvstmntSttus` (앞서 확인) | `investment` 테이블 참고 | `frst_acqs_de` = `2019.01.11` (점) |
+
+- **날짜 형식이 API마다 다르다:** ISO(`2025-12-31`), 한글(`2019년 12월 31일`), 점(`2019.01.11`). 공통 파서 하나로 세 형식을 모두 받는다
+- 세 API 모두 `rcept_no`를 준다. 다만 값은 **그 보고서의 최신 정정본 접수번호**였다 (아래 참고)
+
 ### 기록 시간: 정정 공시 처리
 
-- 정정 공시(`report_nm`이 `[기재정정]`으로 시작, `disclosure.rm`에 '정')가 들어오면, **같은 회사·같은 보고서 기간**의 원본 공시에서 나온 행 전부에 `superseded_by = 정정 접수번호`를 적는다. 정정 공시에서 새로 뽑은 행이 그 자리를 대신한다
+- 정정 공시(`report_nm`이 `[기재정정]`으로 시작. **`disclosure.rm`은 쓰지 않는다** — KB금융 2025 사업보고서 2차 정정의 `rm`은 '정'이 아니라 '연'이었다)가 들어오면, **같은 회사·같은 보고서 기간**의 원본 공시에서 나온 행 전부에 `superseded_by = 정정 접수번호`를 적는다. 정정 공시에서 새로 뽑은 행이 그 자리를 대신한다
 - 원본 행은 남으므로 "무엇이 정정됐는가"는 두 접수번호의 행을 비교하면 나온다 (R2)
-- 정정 공시를 어느 원본과 짝짓는지는 `rcept_no`가 아니라 **회사 + 보고서 종류 + 사업연도**로 한다. DART의 정기보고서 주요정보 API는 `bsns_year`+`reprt_code`로 조회해 최신(정정 반영) 응답을 주므로, 원본·정정 짝짓기는 `disclosure` 목록에서 한다 (확인 필요: 정정 전 응답을 API가 여전히 주는지. 안 주면 원본 행은 정정 전에 수집된 `raw_api_response`에만 남는다)
+- 정정 공시를 어느 원본과 짝짓는지는 `rcept_no`가 아니라 **회사 + 보고서 종류 + 사업연도**로 한다. DART의 정기보고서 주요정보 API는 `bsns_year`+`reprt_code`로 조회해 최신(정정 반영) 응답을 주므로, 원본·정정 짝짓기는 `disclosure` 목록에서 한다 **확인 (2026-11-23): API는 최신 정정본만 준다.** `bsns_year=2025, reprt_code=11011`로 조회한 세 API의 `rcept_no`가 모두 `20260619000667`(6월 19일 2차 정정)이었고, 원본(`20260313001191`, 3월 13일)과 1차 정정(`20260324000835`)의 응답은 받을 수 없다. 따라서 원본 행은 **정정 전에 받아 둔 `raw_api_response`에만** 남는다. 정정이 나오기 전에 받아 두려면 정기보고서 접수 직후(매일 스케줄)에 주요정보 API를 호출해야 하고, 백필로 받은 과거 보고서는 최신 정정본 하나만 있는 것을 전제로 한다
 
 ### 공통 컬럼 (Phase 2 관계 테이블 규칙)
 
