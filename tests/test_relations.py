@@ -276,15 +276,20 @@ class RebuildTest(unittest.TestCase):
     def test_rebuild_resolves_holder_against_corp_table(self):
         with connect() as con:
             con.execute("INSERT INTO corp VALUES ('00688996', 'KB금융', '105560', NULL, now())")
-            body = {"status": "000", "list": [{"rcept_no": "20260320000001", "corp_code": "00401731", "nm": "㈜KB금융지주", "relate": "본인",
-                                                "trmend_posesn_stock_qota_rt": "100", "stlm_dt": "2025-12-31"}]}
-            con.execute("INSERT INTO corp VALUES ('00000002', '케이비금융지주', NULL, NULL, now())")
+            # 한글 읽기 매칭(㈜KB손해보험 → 케이비손해보험)과 수동 매핑(KB금융지주 → 00688996, config/corp_name_overrides.csv)
+            body = {"status": "000", "list": [
+                {"rcept_no": "20260320000001", "corp_code": "00401731", "nm": "㈜KB손해보험", "relate": "본인",
+                 "trmend_posesn_stock_qota_rt": "100", "stlm_dt": "2025-12-31"},
+                {"rcept_no": "20260320000001", "corp_code": "00401731", "nm": "주식회사KB금융지주", "relate": "기타",
+                 "trmend_posesn_stock_qota_rt": "0", "stlm_dt": "2025-12-31"},
+            ]}
+            con.execute("INSERT INTO corp VALUES ('00000002', '케이비손해보험', NULL, NULL, now())")
             save_raw(con, ENDPOINTS["major_shareholder"],
                      make_request_key({"corp_code": "00401731", "bsns_year": "2025", "reprt_code": "11011"}), body)
             rebuild_relations(con)
             self.assertEqual(
-                con.execute("SELECT holder_corp_code, resolve_method, trmend_posesn_stock_qota_rt FROM major_shareholder").fetchone(),
-                ("00000002", "hangul", 100.0),
+                con.execute("SELECT holder_corp_code, resolve_method, trmend_posesn_stock_qota_rt FROM major_shareholder ORDER BY row_seq").fetchall(),
+                [("00000002", "hangul", 100.0), ("00688996", "override", 0.0)],
             )
 
 
