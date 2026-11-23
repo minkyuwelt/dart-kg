@@ -20,7 +20,7 @@ from src.collectors.report_detail import ENDPOINTS
 from src.loaders.duckdb_store import connect, save_raw
 from src.loaders.investments import ENDPOINT as INVESTMENT_ENDPOINT, rebuild_investments
 from src.loaders.relations import make_person_id, rebuild_relations
-from src.loaders.temporal import chain_changes
+from src.loaders.temporal import apply_person_merges, chain_changes, load_person_merges
 from src.pipeline.definitions import check_relations_valid_from_sane
 
 A, B = "00688996", "00401731"
@@ -240,3 +240,55 @@ class ChangeChainingTest(unittest.TestCase):
                         "'2021', '11011', DATE '2021-12-31', DATE '2022-01-27', now())", [A])
             result = check_relations_valid_from_sane(con)
         self.assertTrue(result.passed)
+
+
+class PersonMergeTest(unittest.TestCase):
+    """config/person_merges.csv로 오타 때문에 갈라진 사람을 합친다 (0006 개정)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb")})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def insert(self, con, person_id, stlm_dt, rcept, corp=A):
+        nm, birth, sex = person_id.split("|")
+        con.execute("INSERT INTO executive (source_rcept_no, row_seq, corp_code, bsns_year, reprt_code, nm, birth_ym, sexdstn, person_id, "
+                    "stlm_dt, valid_from, loaded_at) VALUES (?, 1, ?, '2025', '11011', ?, ?, ?, ?, ?, ?, now())",
+                    [rcept, corp, nm, birth, sex, person_id, stlm_dt, stlm_dt])
+
+    def test_loads_pairs_into_groups_and_chains(self):
+        path = Path(self.tmp.name) / "merges.csv"
+        path.write_text("person_id_a,person_id_b,reason\n홍길동|1970-01|남,홍길동|1970-10|남,x\n홍길동|1970-10|남,홍길동|1970-01|여,y\n", encoding="utf-8")
+        self.assertEqual(load_person_merges(path), [{"홍길동|1970-01|남", "홍길동|1970-10|남", "홍길동|1970-01|여"}])
+        self.assertEqual(load_person_merges(Path(self.tmp.name) / "none.csv"), [])
+
+    def test_canonical_is_majority_then_latest(self):
+        with connect() as con:
+            self.insert(con, "한윤철|1968-10|남", "2024-12-31", "20250301000001")
+            self.insert(con, "한윤철|1968-10|남", "2025-06-30", "20250801000001")
+            self.insert(con, "한윤철|1968-01|남", "2025-12-31", "20260301000001")
+            # 동수면 더 최근 보고서 쪽
+            self.insert(con, "민세진|1974-04|남", "2024-06-30", "20240801000001", corp=B)
+            self.insert(con, "민세진|1974-04|여", "2024-12-31", "20250301000002", corp=B)
+            changed = apply_person_merges(con, [{"한윤철|1968-10|남", "한윤철|1968-01|남"}, {"민세진|1974-04|남", "민세진|1974-04|여"}])
+            ids = con.execute("SELECT DISTINCT person_id FROM executive ORDER BY 1").fetchall()
+        self.assertEqual(changed, 2)
+        self.assertEqual(ids, [("민세진|1974-04|여",), ("한윤철|1968-10|남",)])
+
+    def test_rebuild_person_reads_attributes_from_person_id(self):
+        with connect() as con:
+            self.insert(con, "한윤철|1968-10|남", "2024-12-31", "20250301000001")
+            self.insert(con, "한윤철|1968-01|남", "2025-12-31", "20260301000001")
+            apply_person_merges(con, [{"한윤철|1968-10|남", "한윤철|1968-01|남"}])
+            from src.loaders.temporal import rebuild_person
+            self.assertEqual(rebuild_person(con), 1)
+            # 1행씩 동수 → 더 최근 보고서(2025-12-31)의 표기가 기준
+            self.assertEqual(con.execute("SELECT person_id, birth_ym, sexdstn, corp_count FROM person").fetchone(),
+                             ("한윤철|1968-01|남", "1968-01", "남", 1))
+
+    def test_real_config_file_parses(self):
+        groups = load_person_merges()
+        self.assertGreaterEqual(len(groups), 17)
+        self.assertTrue(all(len(g) >= 2 for g in groups))
