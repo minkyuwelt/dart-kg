@@ -113,7 +113,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 
    2026-11-23 실제 실행: 4,189개 파티션, API 호출 4,661건(페이지 넘김 포함), 공시 86,893건, 약 29.0분. 완료한 파티션은 Dagster에 기록되므로 중간에 멈춰도 다시 실행하면 이어서 합니다. `--from`, `--to`, `--corp`로 범위를 좁힐 수 있고, `--max-calls`(기본 8,000) 또는 DART 한도 초과 응답에서 멈춥니다.
 
-4. **매일 수집** — 화면의 Automation에서 `daily_disclosures` 스케줄을 켭니다. 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `yearly_targets`는 매년 4월 15일에 새 사업보고서로 대상을 갱신합니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
+4. **매일 수집** — 화면의 Automation에서 `targets_freshness`와 `daily_disclosures` 스케줄을 켭니다. `daily_disclosures`는 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `targets_freshness`는 매일 06:30에 수집 대상이 최신 사업보고서 기준인지 확인하고, 기준 연도가 바뀌었을 때만(보통 4월 1일, API 5건) `targets_job`을 실행합니다. 노트북이 꺼져 있던 날이 있어도 다음에 켜진 날 따라잡습니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
 
 화면 없이 터미널에서 실행할 수도 있습니다.
 

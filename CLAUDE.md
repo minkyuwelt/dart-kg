@@ -16,13 +16,14 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 3. **Phase 3 공시 RAG**: 공시 원문 청크·임베딩 → Neo4j 벡터 인덱스 → Q&A
 4. **Phase 4 지식그래프**: DuckDB → Neo4j 관계 그래프 적재 → GraphRAG (벡터로 찾은 공시 청크에서 회사·임원·지분 경로로 탐색)
 
-기술 선정 근거: `docs/decisions/0001-tech-stack.md`
+기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
 현재 단계: Phase 1
 
 ## 아키텍처 원칙
 - DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함
 - Neo4j(그래프·벡터·전문검색)는 DuckDB에서 언제든 재생성할 수 있어야 함
+- 관계 데이터(Phase 2 이후: 최대주주·임원·출자)는 이중 시간축으로 적는다: 사실 시간(`valid_from`·`valid_to`)과 기록 시간(`source_rcept_no`·`superseded_by`). 끝난 관계·정정된 공시는 지우지 않고 닫는다. 시간 값은 공시가 주는 날짜에서 규칙으로 얻고 LLM으로 추측하지 않는다 (`docs/decisions/0005-temporal-model.md`)
 - 모든 적재는 멱등성 유지: 재실행해도 중복이 생기지 않게 (예: `rcept_no` 기본키 + `ON CONFLICT`)
 - corp_code(8자리 고유번호)를 회사 식별자로 사용. 회사명으로 조인하지 않기
 - 수집·적재 로직은 Dagster에 의존하지 않는 일반 함수로 만들고, Dagster 자산은 그 함수를 호출만 한다 (CLI로도 실행 가능하게)
@@ -42,6 +43,7 @@ tests/             오프라인 테스트 (DART API를 호출하지 않음, `pyt
 dagster_home/      Dagster 인스턴스 설정 (dagster.yaml만 커밋)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록 (NNNN-제목.md)
+.github/workflows/ CI (PR마다 오프라인 테스트)
 docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
 ```
 
@@ -70,6 +72,7 @@ GitHub가 유일한 중계 지점이다. 웹과 노트북은 서로의 파일을
 - 실제 DART API 호출과 Docker 실행은 VS Code(노트북)에서만 한다. 웹 환경에는 `.env`가 없다
 - 노트북에서 고친 내용은 그날 push한다. 커밋하지 않은 변경을 남겨둔 채 작업을 끝내지 않는다
 - 웹에서 만든 코드는 노트북에서 실행 확인 전까지 "미검증"이다. PR 설명에 검증 여부를 적는다
+- PR마다 GitHub Actions(`tests`)가 오프라인 테스트와 `dagster definitions validate`를 돌린다. 체크가 실패한 PR은 병합하지 않는다. CI는 DART API를 호출하지 않으므로, 실제 API 검증은 여전히 노트북에서 한다
 
 ## 규칙
 - API 키는 `.env`의 `DART_API_KEY`로만 읽음 (`python-dotenv`). `.env`는 절대 커밋하지 않음. 새 환경변수를 추가하면 `.env.example`도 함께 갱신
