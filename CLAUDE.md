@@ -8,35 +8,44 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 - API 호출 한도(일 약 20,000건)를 넘지 않도록, 대상 회사를 늘릴 때는 호출 수를 먼저 계산할 것
 
 ## 단계
-1. **Phase 1 수집·적재**: 공시 목록·기업개황 → Airflow DAG → PostgreSQL
-2. **Phase 2 관계 데이터**: 최대주주·임원·타법인 출자 현황 테이블
-3. **Phase 3 공시 RAG**: 공시 원문 임베딩(pgvector) → Q&A
-4. **Phase 4 지식그래프**: PostgreSQL → Neo4j 적재 → GraphRAG
+1. **Phase 1 수집·적재**: 공시 목록·기업개황 → Dagster 자산 → DuckDB
+2. **Phase 2 관계 데이터**: 최대주주·임원·타법인 출자 현황 테이블 (DuckDB)
+3. **Phase 3 공시 RAG**: 공시 원문 청크·임베딩 → Neo4j 벡터 인덱스 → Q&A
+4. **Phase 4 지식그래프**: DuckDB → Neo4j 관계 그래프 적재 → GraphRAG (벡터로 찾은 공시 청크에서 회사·임원·지분 경로로 탐색)
+
+기술 선정 근거: `docs/decisions/0001-tech-stack.md`
 
 현재 단계: Phase 1
 
 ## 아키텍처 원칙
-- PostgreSQL이 원본(Source of Truth). Neo4j는 PostgreSQL에서 언제든 재생성할 수 있어야 함
+- DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함
+- Neo4j(그래프·벡터·전문검색)는 DuckDB에서 언제든 재생성할 수 있어야 함
 - 모든 적재는 멱등성 유지: 재실행해도 중복이 생기지 않게 (예: `rcept_no` 기본키 + `ON CONFLICT`)
 - corp_code(8자리 고유번호)를 회사 식별자로 사용. 회사명으로 조인하지 않기
+- 수집·적재 로직은 Dagster에 의존하지 않는 일반 함수로 만들고, Dagster 자산은 그 함수를 호출만 한다 (CLI로도 실행 가능하게)
+- DuckDB는 쓰기를 한 프로세스만 할 수 있다: Dagster에서 DuckDB에 쓰는 자산은 동시에 실행하지 않고, 노트북·탐색 코드는 `read_only=True`로 연결
 
 ## 저장소 구조
 ```
-dags/              Airflow DAG
 src/collectors/    DART API 호출
-src/loaders/       PostgreSQL 적재
-src/graph/         (Phase 4) Neo4j 적재
+src/loaders/       DuckDB 적재
+src/pipeline/      Dagster 자산·스케줄 정의
+src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
-sql/schema.sql     테이블 정의
+sql/schema.sql     DuckDB 테이블 정의
 notebooks/         탐색·실험용
+docs/decisions/    기술 결정 기록 (NNNN-제목.md)
 docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
 ```
 
 ## 개발 환경
-- 실행 환경: 학원 Windows 노트북 + Docker Desktop(WSL2). Airflow·PostgreSQL·Neo4j는 docker-compose로 실행
+- 실행 환경: 학원 Windows 노트북 + Docker Desktop(WSL2)
+- Dagster와 DuckDB는 `.venv`에서 바로 실행 (`dagster dev`). DuckDB 파일은 `data/` 아래에 두며 커밋하지 않음
+- Docker는 Neo4j에만 사용 (Phase 3부터, docker-compose)
+- 노트북에서 다른 수업 프로젝트 컨테이너가 5432·8080·7474·7687 포트를 쓰고 있음 → Docker로 띄우는 서비스의 노트북 쪽 포트는 `.env`로 바꿀 수 있게 할 것
 - 프로젝트 폴더는 WSL 파일시스템 안에 둠
 - 줄바꿈은 LF로 통일 (`.gitattributes`)
-- 노트북은 과정 종료 후 반납 → 로컬에만 남는 것이 없도록 할 것
+- 노트북은 과정 종료 후 반납 → 코드·문서는 모두 GitHub에 push. `data/`의 DuckDB 파일은 로컬에만 있지만 코드로 다시 만들 수 있어야 함 (전체 재수집 약 5,000건 추정, 하루 한도 안)
 
 ## 작업 방식
 - 웹 Claude Code: 코드·문서 작성, 브랜치와 PR 생성
@@ -59,3 +68,4 @@ GitHub가 유일한 중계 지점이다. 웹과 노트북은 서로의 파일을
 - API 키는 `.env`의 `DART_API_KEY`로만 읽음 (`python-dotenv`). `.env`는 절대 커밋하지 않음. 새 환경변수를 추가하면 `.env.example`도 함께 갱신
 - 코드 설명은 한국어로, 코드 주석보다 자세하게
 - 의미 있는 작업이 끝나면 `docs/devlog/`에 오늘 한 일, 막힌 점, 해결 방법을 짧게 기록
+- 기술(DB, 도구, 주요 라이브러리)을 추가하거나 바꿀 때는 먼저 `docs/decisions/`에 요구사항 근거와 대안 비교를 기록. "많이 쓰여서", "써 봐서/안 써 봐서"는 근거가 아님

@@ -9,30 +9,35 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
-| Phase 1 수집·적재 | 공시 목록·기업개황 수집 → Airflow DAG → PostgreSQL | 진행 중 |
+| Phase 1 수집·적재 | 공시 목록·기업개황 수집 → Dagster 자산 → DuckDB | 진행 중 |
 | Phase 2 관계 데이터 | 최대주주·임원·타법인 출자 현황 테이블 | 예정 |
-| Phase 3 공시 RAG | 공시 원문 임베딩(pgvector) → Q&A | 예정 |
-| Phase 4 지식그래프 | PostgreSQL → Neo4j 적재 → GraphRAG | 예정 |
+| Phase 3 공시 RAG | 공시 원문 청크·임베딩 → Neo4j 벡터 인덱스 → Q&A | 예정 |
+| Phase 4 지식그래프 | DuckDB → Neo4j 관계 그래프 적재 → GraphRAG | 예정 |
 
-PostgreSQL이 원본 데이터(Source of Truth)이고, Neo4j는 PostgreSQL에서 언제든 다시 만들 수 있게 설계합니다. 모든 적재는 다시 실행해도 중복이 생기지 않도록 멱등성을 유지합니다.
+DuckDB 파일이 원본 데이터(Source of Truth)이고, Neo4j는 DuckDB에서 언제든 다시 만들 수 있게 설계합니다. 모든 적재는 다시 실행해도 중복이 생기지 않도록 멱등성을 유지합니다.
 
 ## 기술 스택
 
-- **언어**: Python (requests, python-dotenv, pandas, psycopg2)
-- **워크플로**: Apache Airflow (Docker 이미지)
-- **저장소**: PostgreSQL + pgvector, Neo4j
-- **실행 환경**: Docker Desktop(WSL2) + docker-compose
+| 영역 | 기술 | 이유 |
+|---|---|---|
+| 원본 저장소 | DuckDB | 정형 테이블과 API 원본 응답을 파일 하나에 보관하고, 원본 JSON을 SQL로 다시 정규화 |
+| 파이프라인 | Dagster | 원본 → 정규화 테이블 → 그래프·임베딩으로 파생되는 구조를 자산 의존 관계로 관리 |
+| 그래프·벡터·전문검색 | Neo4j | 벡터로 찾은 공시 청크에서 회사·임원·지분 경로까지 질의 하나로 탐색 |
+| 언어 | Python (requests, python-dotenv, pandas) | |
+
+후보 비교와 자세한 근거는 [docs/decisions/0001-tech-stack.md](docs/decisions/0001-tech-stack.md)에 있습니다.
 
 ## 폴더 구조
 
 ```
-dags/              Airflow DAG
 src/collectors/    DART API 호출
-src/loaders/       PostgreSQL 적재
-src/graph/         (Phase 4) Neo4j 적재
+src/loaders/       DuckDB 적재
+src/pipeline/      Dagster 자산·스케줄 정의
+src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
-sql/               테이블 정의 (schema.sql)
+sql/               DuckDB 테이블 정의 (schema.sql)
 notebooks/         탐색·실험용
+docs/decisions/    기술 결정 기록
 docs/devlog/       날짜별 개발 일지
 ```
 
