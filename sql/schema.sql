@@ -40,3 +40,40 @@ CREATE TABLE IF NOT EXISTS disclosure (
     rm           VARCHAR,                  -- 비고 (예: '유' 유가증권시장본부 소관, '정' 정정)
     loaded_at    TIMESTAMPTZ NOT NULL
 );
+
+-- 타법인 출자현황 (정기보고서 주요정보 otrCprInvstmntSttus.json).
+-- raw_api_response에서 src/loaders/investments.py가 통째로 다시 만든다 (rebuild).
+-- 출자 대상은 이름으로만 오므로 investee_corp_code는 이름 연결 결과이고, 실패하면 NULL.
+CREATE TABLE IF NOT EXISTS investment (
+    rcept_no                   VARCHAR     NOT NULL,  -- 출자 내역이 실린 정기보고서 접수번호
+    row_seq                    INTEGER     NOT NULL,  -- 응답 안에서의 행 순서. 같은 회사가 취득 시점별로 여러 행일 수 있어 이름 대신 식별자로 씀
+    investor_corp_code         VARCHAR     NOT NULL,  -- 출자한 회사
+    bsns_year                  VARCHAR     NOT NULL,  -- 사업연도
+    reprt_code                 VARCHAR     NOT NULL,  -- 11011 사업, 11012 반기, 11013 1분기, 11014 3분기
+    inv_prm_raw                VARCHAR     NOT NULL,  -- 응답에 적힌 출자 대상 이름 그대로
+    investee_name              VARCHAR     NOT NULL,  -- 정규화한 이름 (법인 표기·각주·주식 종류 제거)
+    share_class                VARCHAR,               -- 보통주/우선주 (표시된 경우만)
+    investee_corp_code         VARCHAR,               -- 연결된 corp_code. 실패하면 NULL
+    resolve_method             VARCHAR     NOT NULL,  -- override / exact / hangul / ambiguous / not_found / override_unresolvable
+    invstmnt_purps             VARCHAR,               -- 출자 목적
+    frst_acqs_de               DATE,                  -- 최초 취득일
+    trmend_blce_qy             BIGINT,                -- 기말 보유 주식 수
+    trmend_blce_qota_rt        DOUBLE,                -- 기말 지분율(%)
+    trmend_blce_acntbk_amount  BIGINT,                -- 기말 장부가액(원)
+    stlm_dt                    DATE,                  -- 결산 기준일
+    loaded_at                  TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (rcept_no, row_seq)
+);
+
+-- 수집 대상 회사 목록. src/loaders/targets.py가 investment 테이블에서 통째로 다시 만든다.
+-- 범위 결정: docs/decisions/0002-target-scope.md (지주 4곳 + 직속 자회사)
+CREATE TABLE IF NOT EXISTS target_corp (
+    corp_code         VARCHAR     PRIMARY KEY,
+    corp_name         VARCHAR     NOT NULL,
+    role              VARCHAR     NOT NULL,  -- 'holding' 지주 / 'subsidiary' 직속 자회사
+    parent_corp_code  VARCHAR,               -- 자회사의 지주 corp_code
+    stake_pct         DOUBLE,                -- 지주의 기말 지분율(%)
+    source_rcept_no   VARCHAR,               -- 근거가 된 지주 사업보고서 접수번호
+    bsns_year         VARCHAR     NOT NULL,  -- 근거 사업연도
+    loaded_at         TIMESTAMPTZ NOT NULL
+);

@@ -4,17 +4,27 @@
     DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions
 그다음 브라우저에서 http://localhost:3000
 
-자산 구성
-    corp_codes   : corpCode.xml 전체 → corp 테이블 (파티션 없음, API 1건)
-    disclosures  : list.json → raw_api_response + disclosure 테이블
-                   파티션 = 월(month) × 회사(corp). 파티션 하나가 "한 회사의 한 달치 공시"이고 보통 API 1건
+자산 구성 (화살표는 의존 관계)
+    corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
+
+    corp_codes          : corpCode.xml 전체 → corp 테이블 (API 1건)
+    holding_investments : 지주 4곳의 최신 사업보고서 타법인 출자현황 → investment 테이블 (API 4건)
+    target_corps        : investment에서 수집 대상(지주 + 직속 자회사)을 뽑아 target_corp 테이블에 넣고,
+                          새 회사를 disclosures의 회사 파티션에 추가한다 (API 0건)
+    disclosures         : list.json → raw_api_response + disclosure 테이블
+                          파티션 = 월(month) × 회사(corp). 파티션 하나가 "한 회사의 한 달치 공시"이고 보통 API 1건
 
 왜 월 × 회사 파티션인가
-    - 일 단위로 나누면 5년 백필에 1,825일 × 4곳 = 7,300건을 호출한다. 월 단위면 60개월 × 4곳 = 240건
+    - 일 단위로 나누면 5년 백필 호출이 30배가 된다 (59곳 기준 일 단위 약 107,000건 vs 월 단위 3,540건)
     - "하나금융지주 2024년 3월만 다시 수집" 같은 재처리를 파티션 하나로 할 수 있다
     - 적재가 upsert라서 같은 파티션을 몇 번 다시 돌려도 중복이 생기지 않는다
 
-이 파일에는 수집 로직을 두지 않는다. 자산은 src/loaders/collect.py의 함수를 호출만 한다.
+왜 회사 파티션이 동적(DynamicPartitions)인가
+    - 대상 자회사는 지주의 사업보고서에서 뽑기 때문에 코드를 고치지 않아도 해마다 바뀔 수 있다
+    - target_corps가 실행될 때 새 회사를 파티션에 추가한다. 빠진 회사의 파티션은 지우지 않는다
+      (이미 수집한 공시는 남겨 두고, 매일 스케줄에서만 뺀다)
+
+이 파일에는 수집 로직을 두지 않는다. 자산은 src/loaders/의 함수를 호출만 한다.
 """
 
 import calendar
@@ -25,9 +35,10 @@ from zoneinfo import ZoneInfo
 
 import dagster as dg
 
-from src.collectors.corp_code import TARGET_CORPS, get_api_key
-from src.loaders.collect import collect_corps, collect_disclosures
+from src.collectors.corp_code import HOLDING_CORPS, get_api_key
+from src.loaders.collect import collect_corps, collect_disclosures, collect_investments
 from src.loaders.duckdb_store import connect, is_lock_error
+from src.loaders.targets import latest_business_report_year, rebuild_target_corps
 
 # DuckDB 파일 잠금에 걸렸을 때 다시 시도하는 횟수와 간격(초).
 # 노트북에서 DuckDB를 잠깐 열어 둔 경우 몇 분 뒤에는 풀리는 경우가 대부분이다.
@@ -38,8 +49,12 @@ KST = ZoneInfo("Asia/Seoul")
 
 # 2021-01부터 이번 달까지. end_offset=1이 있어야 아직 끝나지 않은 이번 달도 파티션에 포함된다.
 month_partitions = dg.MonthlyPartitionsDefinition(start_date="2021-01-01", end_offset=1, timezone="Asia/Seoul")
-corp_partitions = dg.StaticPartitionsDefinition(list(TARGET_CORPS))
+corp_partitions = dg.DynamicPartitionsDefinition(name="corp")
 disclosure_partitions = dg.MultiPartitionsDefinition({"month": month_partitions, "corp": corp_partitions})
+
+
+def today_kst() -> date:
+    return datetime.now(KST).date()
 
 
 def month_range(month_key: str, today: date) -> tuple[str, str]:
@@ -74,6 +89,12 @@ def write_connection() -> Iterator:
         yield con
 
 
+def active_target_codes() -> list[str]:
+    """target_corp 테이블에 있는 현재 수집 대상 corp_code 목록. 읽기만 하므로 read_only로 연다."""
+    with connect(read_only=True) as con:
+        return [r[0] for r in con.execute("SELECT corp_code FROM target_corp ORDER BY role, corp_code").fetchall()]
+
+
 @dg.asset(
     group_name="dart",
     description="공시 대상 전체 회사 목록(corpCode.xml) → corp 테이블. API 1건.",
@@ -82,36 +103,90 @@ def corp_codes() -> dg.MaterializeResult:
     with write_connection() as con:
         stats = collect_corps(con, get_api_key())
         found = con.execute(
-            "SELECT count(*) FROM corp WHERE corp_code IN (SELECT unnest(?::VARCHAR[]))", [list(TARGET_CORPS)]
+            "SELECT count(*) FROM corp WHERE corp_code IN (SELECT unnest(?::VARCHAR[]))", [list(HOLDING_CORPS)]
         ).fetchone()[0]
-    return dg.MaterializeResult(metadata={**stats, "targets_found": f"{found}/{len(TARGET_CORPS)}"})
+    return dg.MaterializeResult(metadata={**stats, "holdings_found": f"{found}/{len(HOLDING_CORPS)}"})
+
+
+@dg.asset(
+    group_name="dart",
+    deps=[corp_codes],
+    description="지주 4곳의 최신 사업보고서 타법인 출자현황 → investment 테이블. API 4건.",
+)
+def holding_investments() -> dg.MaterializeResult:
+    bsns_year = latest_business_report_year(today_kst())
+    with write_connection() as con:
+        stats = collect_investments(con, get_api_key(), list(HOLDING_CORPS), str(bsns_year))
+    return dg.MaterializeResult(metadata={"bsns_year": bsns_year, **stats})
+
+
+@dg.asset(
+    group_name="dart",
+    deps=[holding_investments],
+    description="수집 대상(지주 + 지분 30% 이상 직속 자회사) → target_corp 테이블, disclosures 회사 파티션 추가. API 0건.",
+)
+def target_corps(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    bsns_year = latest_business_report_year(today_kst())
+    with write_connection() as con:
+        stats = rebuild_target_corps(con, bsns_year)
+        unresolved = con.execute(
+            """
+            SELECT investee_name, resolve_method FROM investment
+            WHERE investor_corp_code IN (SELECT unnest(?::VARCHAR[])) AND bsns_year = ? AND reprt_code = '11011'
+              AND investee_corp_code IS NULL
+            """,
+            [list(HOLDING_CORPS), str(bsns_year)],
+        ).fetchall()
+    codes = active_target_codes()
+    existing = set(context.instance.get_dynamic_partitions("corp"))
+    new = sorted(set(codes) - existing)
+    if new:
+        context.instance.add_dynamic_partitions("corp", new)
+    return dg.MaterializeResult(
+        metadata={
+            **stats,
+            "new_partitions": len(new),
+            "dropped_from_targets": len(existing - set(codes)),
+            # 지주의 직접 출자 중 corp_code로 연결하지 못한 곳. config/corp_name_overrides.csv를 확인할 것
+            "unresolved": ", ".join(f"{n}({m})" for n, m in unresolved) or "없음",
+        }
+    )
+
+
+@dg.asset_check(asset=target_corps, description="지주 4곳이 모두 있고 자회사가 1곳 이상인지")
+def target_corps_complete() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        holdings, subs = con.execute(
+            "SELECT count(*) FILTER (WHERE role='holding'), count(*) FILTER (WHERE role='subsidiary') FROM target_corp"
+        ).fetchone()
+    return dg.AssetCheckResult(
+        passed=holdings == len(HOLDING_CORPS) and subs > 0, metadata={"holdings": holdings, "subsidiaries": subs}
+    )
 
 
 @dg.asset(
     group_name="dart",
     partitions_def=disclosure_partitions,
-    deps=[corp_codes],
+    deps=[target_corps],
     description="한 회사의 한 달치 공시 목록(list.json) → raw_api_response + disclosure 테이블.",
 )
 def disclosures(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
     keys = context.partition_key.keys_by_dimension
     corp_code, month = keys["corp"], keys["month"]
-    bgn_de, end_de = month_range(month, datetime.now(KST).date())
-    context.log.info(f"{TARGET_CORPS[corp_code]}({corp_code}) {bgn_de}~{end_de} 공시 목록 수집")
+    bgn_de, end_de = month_range(month, today_kst())
 
     with write_connection() as con:
+        row = con.execute("SELECT corp_name FROM corp WHERE corp_code = ?", [corp_code]).fetchone()
+        corp_name = row[0] if row else corp_code
+        context.log.info(f"{corp_name}({corp_code}) {bgn_de}~{end_de} 공시 목록 수집")
         stats = collect_disclosures(con, get_api_key(), corp_code, bgn_de, end_de)
-    return dg.MaterializeResult(
-        metadata={"corp_name": TARGET_CORPS[corp_code], "period": f"{bgn_de}~{end_de}", **stats}
-    )
+    return dg.MaterializeResult(metadata={"corp_name": corp_name, "period": f"{bgn_de}~{end_de}", **stats})
 
 
 @dg.asset_check(asset=disclosures, description="모든 공시의 corp_code가 corp 테이블에 있는지 (회사 식별자 무결성)")
 def disclosure_corp_code_exists() -> dg.AssetCheckResult:
     with connect(read_only=True) as con:
-        orphans = con.execute(
-            "SELECT count(*) FROM disclosure d ANTI JOIN corp c USING (corp_code)"
-        ).fetchone()[0]
+        orphans = con.execute("SELECT count(*) FROM disclosure d ANTI JOIN corp c USING (corp_code)").fetchone()[0]
     return dg.AssetCheckResult(passed=orphans == 0, metadata={"orphan_rows": orphans})
 
 
@@ -132,26 +207,37 @@ def disclosure_rcept_no_format() -> dg.AssetCheckResult:
     return dg.AssetCheckResult(passed=bad == 0, severity=dg.AssetCheckSeverity.WARN, metadata={"bad_rows": bad})
 
 
+targets_job = dg.define_asset_job(
+    "targets_job", selection=dg.AssetSelection.assets(corp_codes, holding_investments, target_corps)
+)
 disclosures_job = dg.define_asset_job("disclosures_job", selection=dg.AssetSelection.assets(disclosures))
+
+
+@dg.schedule(job=targets_job, cron_schedule="0 8 15 4 *", execution_timezone="Asia/Seoul")
+def yearly_targets():
+    """매년 4월 15일 08:00, 새 사업보고서(3월 말 제출)로 회사 목록과 수집 대상을 갱신한다. API 5건."""
+    return dg.RunRequest()
 
 
 @dg.schedule(job=disclosures_job, cron_schedule="0 7 * * *", execution_timezone="Asia/Seoul")
 def daily_disclosures(context: dg.ScheduleEvaluationContext):
-    """매일 07:00(KST) 이번 달 파티션을 회사별로 다시 수집한다.
+    """매일 07:00(KST) 이번 달 파티션을 대상 회사별로 다시 수집한다.
 
     매달 1~7일에는 지난달도 함께 다시 수집한다. 지난달 마지막 날 저녁에 올라온 공시나,
     노트북이 며칠 꺼져 있던 사이에 빠진 공시를 채우기 위해서다.
     일주일 넘게 꺼져 있었다면 Dagster 화면에서 해당 월 파티션을 직접 백필한다.
 
-    API 호출: 하루 4건 (1~7일에는 8건)
+    API 호출: 하루 대상 회사 수만큼 (59곳 기준 59건, 1~7일에는 118건)
     """
     today = context.scheduled_execution_time.astimezone(KST).date()
     this_month = today.replace(day=1)
     months = [this_month]
     if today.day <= 7:
         months.append((this_month - timedelta(days=1)).replace(day=1))
+    # 파티션에는 있지만 대상에서 빠진 회사(자회사 매각 등)는 매일 수집하지 않는다
+    targets = set(active_target_codes()) & set(context.instance.get_dynamic_partitions("corp"))
     for month in months:
-        for corp_code in TARGET_CORPS:
+        for corp_code in sorted(targets):
             yield dg.RunRequest(
                 run_key=f"{today.isoformat()}|{month.isoformat()}|{corp_code}",
                 partition_key=dg.MultiPartitionKey({"month": month.isoformat(), "corp": corp_code}),
@@ -159,10 +245,10 @@ def daily_disclosures(context: dg.ScheduleEvaluationContext):
 
 
 defs = dg.Definitions(
-    assets=[corp_codes, disclosures],
-    asset_checks=[disclosure_corp_code_exists, disclosure_rcept_no_format],
-    jobs=[disclosures_job],
-    schedules=[daily_disclosures],
+    assets=[corp_codes, holding_investments, target_corps, disclosures],
+    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format],
+    jobs=[targets_job, disclosures_job],
+    schedules=[yearly_targets, daily_disclosures],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)
     executor=dg.in_process_executor,
 )

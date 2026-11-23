@@ -3,7 +3,10 @@
 DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프로 만들고, 자연어 질문에 근거 공시와 함께 답하는 개인 프로젝트.
 
 ## 범위
-- 대상: 4대 금융지주(KB금융, 신한지주, 하나금융지주, 우리금융지주)와 자회사
+- 대상: 4대 금융지주(KB금융, 신한지주, 하나금융지주, 우리금융지주)와 직속 자회사 (2025 기준 59곳, `docs/decisions/0002-target-scope.md`)
+  - 대상 목록은 코드에 적지 않는다. 지주의 최신 사업보고서 타법인 출자현황에서 `target_corp` 테이블로 뽑는다
+  - 해외 자회사·펀드·손자회사는 수집 대상이 아니고, 모회사 출자 데이터에 그래프 노드로만 들어간다
+  - 출자 대상 이름 → corp_code 연결에서 후보가 여럿이면 추측하지 말고, 근거를 확인해 `config/corp_name_overrides.csv`에 적는다
 - 데이터 출처: OpenDART API (https://opendart.fss.or.kr)
 - API 호출 한도(일 약 20,000건)를 넘지 않도록, 대상 회사를 늘릴 때는 호출 수를 먼저 계산할 것
 
@@ -30,6 +33,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 src/collectors/    DART API 호출
 src/loaders/       DuckDB 적재
 src/pipeline/      Dagster 자산·스케줄 정의
+config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_overrides.csv)
 src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 sql/schema.sql     DuckDB 테이블 정의

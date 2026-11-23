@@ -31,9 +31,11 @@ from src.collectors.dart_client import get_raw
 
 CORP_CODE_ENDPOINT = "corpCode.xml"
 
-# 대상 회사: corp_code → 기대하는 회사명(corpCode.xml의 corp_name).
+# 4대 금융지주: corp_code → 기대하는 회사명(corpCode.xml의 corp_name).
 # 2026-11-23 노트북에서 실제 corpCode.xml로 확인한 값.
-TARGET_CORPS = {
+# 자회사는 여기에 적지 않는다. 지주의 최신 사업보고서 타법인 출자현황에서 자동으로 뽑아
+# target_corp 테이블에 둔다 (src/loaders/targets.py, docs/decisions/0002-target-scope.md).
+HOLDING_CORPS = {
     "00688996": "KB금융",
     "00382199": "신한지주",
     "00547583": "하나금융지주",
@@ -94,7 +96,7 @@ def main() -> None:
 
     print(f"{'회사명':<10} {'corp_code':<10} {'stock_code':<10} modify_date")
     problems = 0
-    for corp_code, expected_name in TARGET_CORPS.items():
+    for corp_code, expected_name in HOLDING_CORPS.items():
         corp = corps.get(corp_code)
         if corp is None:
             problems += 1
