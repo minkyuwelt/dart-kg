@@ -25,10 +25,11 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
-import requests
 from dotenv import load_dotenv
 
-CORP_CODE_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
+from src.collectors.dart_client import get_raw
+
+CORP_CODE_ENDPOINT = "corpCode.xml"
 
 # 대상 회사: corp_code → 기대하는 회사명(corpCode.xml의 corp_name).
 # 2026-11-23 노트북에서 실제 corpCode.xml로 확인한 값.
@@ -50,9 +51,11 @@ def get_api_key() -> str:
 
 
 def download_corp_code_xml(api_key: str) -> bytes:
-    """corpCode.xml ZIP을 받아 메모리에서 풀고 XML 바이트를 돌려준다."""
-    response = requests.get(CORP_CODE_URL, params={"crtfc_key": api_key}, timeout=60)
-    response.raise_for_status()
+    """corpCode.xml ZIP을 받아 메모리에서 풀고 XML 바이트를 돌려준다.
+
+    HTTP 호출은 dart_client.get_raw를 거친다. 실패했을 때 에러 메시지에서 API 키가 가려진다.
+    """
+    response = get_raw(CORP_CODE_ENDPOINT, api_key)
 
     buffer = io.BytesIO(response.content)
     # 키가 틀렸거나 한도를 넘으면 ZIP 대신 오류 메시지(XML/JSON)가 온다.

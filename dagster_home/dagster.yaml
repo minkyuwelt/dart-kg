@@ -1,0 +1,11 @@
+# Dagster 인스턴스 설정. DAGSTER_HOME=$PWD/dagster_home 으로 실행할 때 읽힌다.
+# 실행 기록·로그 등 나머지 파일은 이 폴더에 생기지만 .gitignore로 커밋하지 않는다.
+
+# DuckDB는 한 파일에 쓰기 연결을 여는 프로세스가 하나뿐이어야 한다.
+# 백필로 파티션 여러 개를 한꺼번에 실행해도 run이 하나씩 차례로 돌게 한다.
+concurrency:
+  runs:
+    max_concurrent_runs: 1
+
+telemetry:
+  enabled: false
