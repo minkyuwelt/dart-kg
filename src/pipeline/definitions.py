@@ -169,15 +169,23 @@ def target_corps(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
     )
 
 
-@dg.asset_check(asset=target_corps, description="지주 4곳이 모두 있고 자회사가 1곳 이상인지")
+@dg.asset_check(asset=target_corps, description="지주 4곳이 모두 있고, 지주마다 자회사가 1곳 이상인지")
 def target_corps_complete() -> dg.AssetCheckResult:
+    # 전체 자회사 수만 보면 한 지주의 자회사가 통째로 빠져도 통과한다. 지주별로 센다.
     with connect(read_only=True) as con:
-        holdings, subs = con.execute(
-            "SELECT count(*) FILTER (WHERE role='holding'), count(*) FILTER (WHERE role='subsidiary') FROM target_corp"
-        ).fetchone()
-    return dg.AssetCheckResult(
-        passed=holdings == len(HOLDING_CORPS) and subs > 0, metadata={"holdings": holdings, "subsidiaries": subs}
-    )
+        rows = con.execute(
+            """
+            SELECT h.code,
+                   EXISTS (SELECT 1 FROM target_corp t WHERE t.role = 'holding' AND t.corp_code = h.code) AS present,
+                   (SELECT count(*) FROM target_corp t WHERE t.role = 'subsidiary' AND t.parent_corp_code = h.code) AS subs
+            FROM unnest(?::VARCHAR[]) AS h(code)
+            ORDER BY 1
+            """,
+            [list(HOLDING_CORPS)],
+        ).fetchall()
+    per_holding = {HOLDING_CORPS[code]: subs for code, _, subs in rows}
+    passed = all(present and subs > 0 for _, present, subs in rows)
+    return dg.AssetCheckResult(passed=passed, metadata={"subsidiaries_by_holding": dg.MetadataValue.json(per_holding)})
 
 
 @dg.asset(
@@ -229,10 +237,39 @@ targets_job = dg.define_asset_job(
 disclosures_job = dg.define_asset_job("disclosures_job", selection=dg.AssetSelection.assets(disclosures))
 
 
-@dg.schedule(job=targets_job, cron_schedule="0 8 15 4 *", execution_timezone="Asia/Seoul")
-def yearly_targets():
-    """매년 4월 15일 08:00, 새 사업보고서(3월 말 제출)로 회사 목록과 수집 대상을 갱신한다. API 5건."""
-    return dg.RunRequest()
+def latest_target_bsns_year(instance: dg.DagsterInstance) -> int | None:
+    """가장 최근 target_corps 실행이 메타데이터로 남긴 기준 사업연도. 실행 기록이 없으면 None.
+
+    target_codes_from_instance와 같은 이유로 DuckDB를 열지 않고 Dagster 인스턴스에서 읽는다.
+    """
+    event = instance.get_latest_materialization_event(target_corps.key)
+    if event is None or event.asset_materialization is None:
+        return None
+    value = event.asset_materialization.metadata.get("bsns_year")
+    return int(value.value) if value is not None else None
+
+
+@dg.schedule(job=targets_job, cron_schedule="30 6 * * *", execution_timezone="Asia/Seoul")
+def targets_freshness(context: dg.ScheduleEvaluationContext):
+    """매일 06:30(KST), 수집 대상이 최신 사업보고서 기준인지 확인하고 아니면 targets_job을 실행한다.
+
+    예전에는 매년 4월 15일 한 번만 돌았다(yearly_targets). Dagster는 놓친 스케줄을 따라잡지 않아서
+    그날 노트북이 꺼져 있으면 1년 동안 작년 목록으로 수집하게 된다. 그래서 매일 확인하되,
+    실제 실행은 기준 연도가 바뀌었을 때만 한다 (보통 4월 1일, 1년에 한 번, API 5건).
+
+    - 실행 기록이 없으면(새 환경) 바로 실행한다
+    - 4월 초에 아직 사업보고서를 내지 않은 지주가 있으면 target_corps가 실패하고(IncompleteTargetsError)
+      기존 목록이 유지된다. run_key에 날짜가 들어 있어 다음 날 다시 시도한다
+    - DuckDB는 열지 않는다 (CLAUDE.md 아키텍처 원칙)
+    """
+    today = context.scheduled_execution_time.astimezone(KST).date()
+    wanted = latest_business_report_year(today)
+    current = latest_target_bsns_year(context.instance)
+    if current is not None and current >= wanted:
+        yield dg.SkipReason(f"수집 대상이 이미 {current} 사업보고서 기준입니다.")
+        return
+    context.log.info(f"수집 대상 기준 연도 {current} → {wanted} 갱신 요청")
+    yield dg.RunRequest(run_key=f"targets|{wanted}|{today.isoformat()}")
 
 
 @dg.schedule(job=disclosures_job, cron_schedule="0 7 * * *", execution_timezone="Asia/Seoul")
@@ -273,7 +310,7 @@ defs = dg.Definitions(
     assets=[corp_codes, holding_investments, target_corps, disclosures],
     asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format],
     jobs=[targets_job, disclosures_job],
-    schedules=[yearly_targets, daily_disclosures],
+    schedules=[targets_freshness, daily_disclosures],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)
     executor=dg.in_process_executor,
 )
