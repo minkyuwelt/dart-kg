@@ -36,9 +36,8 @@ from src.loaders.periodic_reports import periodic_reports_of, report_partition_k
 from src.loaders.relations import rebuild_relations
 from src.pipeline.definitions import (
     FIRST_REPORT_YEAR,
+    RELATION_CHECKS,
     relations,
-    relations_source_known,
-    relations_valid_from_sane,
     report_details,
     report_partitions,
     target_codes_from_instance,
@@ -80,12 +79,13 @@ def rebuild_and_check(instance: dg.DagsterInstance, con: duckdb.DuckDBPyConnecti
     instance.report_runless_asset_event(
         dg.AssetMaterialization(
             asset_key=relations.key,
-            metadata={"investment": inv["rows"], **{k: v for k, v in rel.items() if k != "holder_by_method"},
+            metadata={"investment": inv["rows"], "investment_superseded": inv["investment_superseded"],
+                      **{k: v for k, v in rel.items() if k != "holder_by_method"},
                       "holder_by_method": dg.MetadataValue.json(rel["holder_by_method"]), "source": "src.pipeline.backfill_reports"},
         )
     )
     results = []
-    for check in (relations_source_known, relations_valid_from_sane):
+    for check in RELATION_CHECKS:
         spec = next(iter(check.check_specs))
         result = check()
         metadata = {k: v.value if hasattr(v, "value") else v for k, v in (result.metadata or {}).items()}

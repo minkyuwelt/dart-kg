@@ -111,27 +111,31 @@ class ParseFixtureTest(unittest.TestCase):
         self.assertEqual(first["change_cause"], "장내매매")
         self.assertTrue(all(r["source_rcept_no"] == "20260619000667" for r in rows))
 
-    def test_executives_backdate_valid_from_by_tenure(self):
+    def test_executives_estimate_tenure_start_by_tenure(self):
         rows = parse_executives(REQUEST_KEY, fixture("exctvSttus"))
         self.assertEqual(len(rows), 32)
         chairman = next(r for r in rows if r["nm"] == "양종희")
         self.assertEqual(chairman["birth_ym"], "1961-06")
+        self.assertEqual(chairman["person_id"], "양종희|1961-06|남")
         self.assertEqual((chairman["ofcps"], chairman["rgist_exctv_at"], chairman["fte_at"]), ("회장", "사내이사", "상근"))
         self.assertEqual(chairman["hffc_pd_raw"], "2년 \n1개월")
         self.assertEqual(chairman["hffc_months"], 25)
-        self.assertEqual(chairman["valid_from"], date(2023, 11, 30))  # 2025-12-31 - 25개월
-        self.assertEqual(chairman["valid_from_method"], "stlm_dt_minus_hffc_pd")
+        self.assertEqual(chairman["valid_from"], date(2025, 12, 31))  # 보고서 기준일 (스냅샷 체인)
+        self.assertEqual(chairman["tenure_start_on"], date(2023, 11, 30))  # 2025-12-31 - 25개월
+        self.assertEqual(chairman["tenure_start_method"], "stlm_dt_minus_hffc_pd")
         self.assertEqual(chairman["tenure_end_on"], date(2026, 11, 20))
         self.assertIsNone(chairman["mxmm_shrholdr_relate"])  # '-'
         self.assertIn("대표이사", chairman["chrg_job"])
-        # 모든 행이 재직기간을 읽었고, 기준일보다 앞선 시작일을 가진다
-        self.assertTrue(all(r["valid_from_method"] == "stlm_dt_minus_hffc_pd" for r in rows))
-        self.assertTrue(all(r["valid_from"] < r["stlm_dt"] for r in rows))
+        # 모든 행이 재직기간을 읽었고, 선임 시점이 기준일보다 앞선다
+        self.assertTrue(all(r["tenure_start_method"] == "stlm_dt_minus_hffc_pd" for r in rows))
+        self.assertTrue(all(r["tenure_start_on"] < r["stlm_dt"] for r in rows))
 
-    def test_executive_without_tenure_falls_back_to_stlm_dt(self):
+    def test_executive_without_tenure_has_no_start_estimate(self):
         body = {"status": "000", "list": [{"rcept_no": "20260101000001", "corp_code": KB, "nm": "홍길동", "hffc_pd": "-", "stlm_dt": "2025-12-31"}]}
         (row,) = parse_executives(REQUEST_KEY, body)
-        self.assertEqual((row["valid_from"], row["valid_from_method"], row["hffc_months"]), (date(2025, 12, 31), "stlm_dt", None))
+        self.assertEqual((row["valid_from"], row["tenure_start_on"], row["tenure_start_method"], row["hffc_months"]),
+                         (date(2025, 12, 31), None, None, None))
+        self.assertEqual(row["person_id"], "홍길동|?|?")
 
 
 class DedupeChangesTest(unittest.TestCase):
@@ -188,9 +192,10 @@ class RebuildTest(unittest.TestCase):
             )
             self.assertEqual(con.execute("SELECT count(*) FROM executive WHERE valid_to IS NOT NULL OR superseded_by IS NOT NULL").fetchone()[0], 0)
             self.assertEqual(
-                con.execute("SELECT valid_from, tenure_end_on FROM executive WHERE nm = '양종희'").fetchone(),
-                (date(2023, 11, 30), date(2026, 11, 20)),
+                con.execute("SELECT valid_from, tenure_start_on, tenure_end_on FROM executive WHERE nm = '양종희'").fetchone(),
+                (date(2025, 12, 31), date(2023, 11, 30), date(2026, 11, 20)),
             )
+            self.assertEqual(first["person"], 32)
 
     def test_rebuild_keeps_each_report_version_once(self):
         """같은 보고서를 파라미터 키와 rcept_no 키로 두 번 저장해도 한 번만, 정정본(다른 rcept_no)은 따로 남는다."""

@@ -17,8 +17,8 @@
     report_details      : (Phase 2) 한 회사의 한 정기보고서에서 주요정보 4종(출자·최대주주·변동·임원) 원본 저장
                           파티션 = 회사(corp) × 보고서(report: '2025-11011' = 사업연도-보고서종류). API 4건.
                           disclosure 목록에 그 보고서가 없으면 API를 부르지 않고 건너뛴다 (0건)
-    relations           : (Phase 2) 원본 전체에서 investment·major_shareholder·major_shareholder_change·executive
-                          테이블을 다시 만든다. API 0건. 시간 닫기(valid_to)는 아직 없다 (0005)
+    relations           : (Phase 2) 원본 전체에서 investment·major_shareholder·major_shareholder_change·executive·person
+                          테이블을 다시 만들고 시간을 닫는다(valid_to·superseded_by, 0005). API 0건
 
 왜 월 × 회사 파티션인가
     - 일 단위로 나누면 5년 백필 호출이 30배가 된다 (59곳 기준 일 단위 약 107,000건 vs 월 단위 3,540건)
@@ -297,13 +297,14 @@ def report_details(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
 @dg.asset(
     group_name="dart",
     deps=[report_details, holding_investments],
-    description="(Phase 2) 원본 전체에서 관계 테이블(investment·최대주주·변동·임원)을 다시 만든다. API 0건.",
+    description="(Phase 2) 원본 전체에서 관계 테이블(investment·최대주주·변동·임원·person)을 다시 만들고 시간을 닫는다. API 0건.",
 )
 def relations() -> dg.MaterializeResult:
     with write_connection() as con:
         inv = rebuild_investments(con)
         rel = rebuild_relations(con)
-    return dg.MaterializeResult(metadata={"investment": inv["rows"], **{k: v for k, v in rel.items() if k != "holder_by_method"},
+    return dg.MaterializeResult(metadata={"investment": inv["rows"], "investment_superseded": inv["investment_superseded"],
+                                          **{k: v for k, v in rel.items() if k != "holder_by_method"},
                                           "holder_by_method": dg.MetadataValue.json(rel["holder_by_method"])})
 
 
@@ -330,6 +331,36 @@ def relations_valid_from_sane() -> dg.AssetCheckResult:
             for t in RELATION_TABLES
         }
     return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+
+
+@dg.asset_check(asset=relations, description="닫힌 구간이 거꾸로가 아니고(valid_to > valid_from), 정정된 행은 열려 있지 않은지")
+def relations_intervals_sane() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        bad = {
+            t: con.execute(f"SELECT count(*) FROM {t} WHERE (valid_to IS NOT NULL AND valid_to <= valid_from) "
+                           f"OR (superseded_by IS NOT NULL AND valid_to IS NOT NULL)").fetchone()[0]
+            for t in (*RELATION_TABLES, "investment")
+        }
+    return dg.AssetCheckResult(passed=sum(bad.values()) == 0, metadata={"bad_rows": dg.MetadataValue.json(bad)})
+
+
+@dg.asset_check(asset=relations, description="현재 상태 뷰에서 같은 키의 행이 하나뿐인지 (시점 조회가 행 하나를 돌려주는 전제)")
+def relations_current_unique() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        dup = {
+            "executive": con.execute("SELECT count(*) FROM (SELECT corp_code, person_id, ofcps FROM executive_current "
+                                     "GROUP BY 1, 2, 3 HAVING count(*) > 1)").fetchone()[0],
+            "major_shareholder": con.execute("SELECT count(*) FROM (SELECT corp_code, nm, stock_knd FROM major_shareholder_current "
+                                             "GROUP BY 1, 2, 3 HAVING count(*) > 1)").fetchone()[0],
+            # 현재 행은 회사마다 가장 최근 보고서 하나에서만 나와야 한다
+            "reports_per_corp": con.execute("SELECT count(*) FROM (SELECT corp_code FROM major_shareholder_current "
+                                            "GROUP BY 1 HAVING count(DISTINCT stlm_dt) > 1)").fetchone()[0],
+        }
+    return dg.AssetCheckResult(passed=sum(dup.values()) == 0, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"duplicates": dg.MetadataValue.json(dup)})
+
+
+RELATION_CHECKS = (relations_source_known, relations_valid_from_sane, relations_intervals_sane, relations_current_unique)
 
 
 targets_job = dg.define_asset_job(
@@ -461,8 +492,7 @@ def daily_relations(context: dg.ScheduleEvaluationContext):
 
 defs = dg.Definitions(
     assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations],
-    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format,
-                  relations_source_known, relations_valid_from_sane],
+    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS],
     jobs=[targets_job, disclosures_job, report_details_job, relations_job],
     schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)

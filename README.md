@@ -127,6 +127,23 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 
    이후에는 Automation에서 `daily_report_details`(07:30, 그날 새로 접수된 정기보고서만 수집)와 `daily_relations`(08:30, 관계 테이블 재생성)를 켭니다.
 
+6. **(Phase 2) 관계 데이터 조회** — 관계 테이블(`investment`, `major_shareholder`, `major_shareholder_change`, `executive`)의 행은 "보고서 기준일(`valid_from`)부터 다음 보고서 기준일(`valid_to`)까지 참"입니다. 정정된 행은 `superseded_by`에 정정본 접수번호가 있습니다([0005](docs/decisions/0005-temporal-model.md)). 사람은 `person_id`(이름|생년월|성별, [0006](docs/decisions/0006-person-identity.md))로 묶입니다.
+
+   ```python
+   from src.loaders.duckdb_store import connect
+   with connect(read_only=True) as con:
+       # 지금 KB금융 임원 (현재 상태 뷰: *_current)
+       now = con.sql("SELECT nm, ofcps, source_rcept_no FROM executive_current WHERE corp_code = '00688996'").df()
+       # 2023년 3월 31일 기준 신한은행 최대주주 (시점 조회)
+       then = con.sql("""
+           SELECT nm, trmend_posesn_stock_qota_rt, source_rcept_no FROM major_shareholder
+           WHERE corp_code = '00149293' AND valid_from <= DATE '2023-03-31'
+             AND (valid_to IS NULL OR valid_to > DATE '2023-03-31') AND superseded_by IS NULL
+       """).df()
+       # 두 회사 이상에서 임원인 사람 (겸직 후보)
+       multi = con.sql("SELECT person_id, corp_count FROM person WHERE corp_count >= 2").df()
+   ```
+
 화면 없이 터미널에서 실행할 수도 있습니다.
 
 ```bash

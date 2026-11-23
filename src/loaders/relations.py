@@ -1,11 +1,11 @@
 """정기보고서 주요정보 원본 응답 → 관계 테이블 3개 (major_shareholder, major_shareholder_change, executive).
 
 적재는 두 단계다 (docs/decisions/0005-temporal-model.md).
-1) parse_*  : 응답 하나를 행으로 바꾼다. 사실 시간의 시작(valid_from)만 채운다
-2) close_*  : 테이블 전체를 보고 다음 보고서와 비교해 valid_to·superseded_by를 채운다 (Phase 2 E 단계, 아직 없음)
+1) parse_*  : 응답 하나를 행으로 바꾼다. 사실 시간의 시작(valid_from = 보고서 기준일)만 채운다
+2) close    : 테이블 전체를 보고 다음 보고서와 비교해 valid_to·superseded_by를 채우고 person을 만든다 (src/loaders/temporal.py)
 
-이 모듈은 1)과 "원본에서 통째로 다시 만들기(rebuild)"를 맡는다. investment 테이블과 같은 방식이라
-파서 규칙을 고친 뒤 rebuild만 다시 돌리면 되고, API는 다시 부르지 않는다.
+이 모듈은 1)과 "원본에서 통째로 다시 만들기(rebuild)"를 맡고, rebuild 끝에 2)를 부른다. investment 테이블과
+같은 방식이라 파서 규칙을 고친 뒤 rebuild만 다시 돌리면 되고, API는 다시 부르지 않는다.
 
 응답 형식에서 확인한 것 (tests/fixtures/*_00688996_2025_11011.json, 2026-11-23)
 
@@ -18,7 +18,8 @@
 | 재직기간        | '2년 \\n1개월', '1년8개월', '9개월', '-'           | parse_period_months → 25, 20, 9, None  |
 | 합계 행         | 최대주주 현황 nm='계' (relate 키 없음)            | 제외                                   |
 | 변동 누적       | 2025 보고서에 2019년 변동까지 28행                | (회사, 변동일, 주주명)으로 중복 제거. 처음 보고한 보고서를 source로 |
-| 임원 시작일     | 없음. 재직기간(월)만 있음                          | valid_from = 기준일 - 재직기간(월). 월 단위 근사 |
+| 임원 시작일     | 없음. 재직기간(월)만 있음                          | tenure_start_on = 기준일 - 재직기간(월). 월 단위 근사. valid_from은 기준일 |
+| 사람 식별       | 이름·성별·생년월                                   | person_id = '이름|생년월|성별' (결정 0006)     |
 
 실행 (API 호출 없음):
     python -m src.loaders.relations rebuild
@@ -35,6 +36,7 @@ import pandas as pd
 from src.collectors.report_detail import ENDPOINTS
 from src.loaders.duckdb_store import connect, raw_bodies
 from src.loaders.investments import build_name_index, load_overrides, normalize_name, resolve, to_number
+from src.loaders.temporal import close_relations
 
 DATE_PATTERNS = (
     re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$"),  # 2025-12-31
@@ -185,11 +187,16 @@ def parse_major_shareholder_changes(request_key: str, body: dict) -> list[dict]:
     return rows
 
 
+def make_person_id(nm: str, birth_ym: str | None, sexdstn: str | None) -> str:
+    """사람 식별자 '양종희|1961-06|남'. 생년월·성별이 없으면 '?' (결정 0006)."""
+    return f"{nm}|{birth_ym or '?'}|{sexdstn or '?'}"
+
+
 def parse_executives(request_key: str, body: dict) -> list[dict]:
     """임원 현황 응답 → executive 행.
 
-    선임일 필드가 없어서 valid_from은 보고서 기준일에서 재직기간(월)을 뺀 날짜다 (월 단위 근사).
-    재직기간을 못 읽으면 기준일을 그대로 쓴다. 어느 쪽인지 valid_from_method에 남긴다.
+    valid_from은 보고서 기준일이다 (스냅샷 체인, temporal.py 참고). 선임 시점은 별도 컬럼 tenure_start_on에
+    기준일에서 재직기간(월)을 뺀 근사값으로 둔다. 재직기간을 못 읽으면 NULL.
     """
     params = _report_params(request_key)
     rows = []
@@ -200,9 +207,10 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
         stlm_dt = parse_date(item.get("stlm_dt"))
         months = parse_period_months(item.get("hffc_pd"))
         if stlm_dt is not None and months is not None:
-            valid_from, method = shift_months(stlm_dt, -months), "stlm_dt_minus_hffc_pd"
+            tenure_start, method = shift_months(stlm_dt, -months), "stlm_dt_minus_hffc_pd"
         else:
-            valid_from, method = stlm_dt, "stlm_dt"
+            tenure_start, method = None, None
+        birth_ym, sexdstn = parse_year_month(item.get("birth_ym")), _text(item.get("sexdstn"))
         rows.append(
             {
                 "source_rcept_no": item["rcept_no"],
@@ -211,8 +219,9 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
                 "bsns_year": params["bsns_year"],
                 "reprt_code": params["reprt_code"],
                 "nm": nm,
-                "sexdstn": _text(item.get("sexdstn")),
-                "birth_ym": parse_year_month(item.get("birth_ym")),
+                "sexdstn": sexdstn,
+                "birth_ym": birth_ym,
+                "person_id": make_person_id(nm, birth_ym, sexdstn),
                 "ofcps": _text(item.get("ofcps")),
                 "rgist_exctv_at": _text(item.get("rgist_exctv_at")),
                 "fte_at": _text(item.get("fte_at")),
@@ -221,10 +230,11 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
                 "mxmm_shrholdr_relate": _text(item.get("mxmm_shrholdr_relate")),
                 "hffc_pd_raw": _text(item.get("hffc_pd")),
                 "hffc_months": months,
+                "tenure_start_on": tenure_start,
+                "tenure_start_method": method,
                 "tenure_end_on": parse_date(item.get("tenure_end_on")),
                 "stlm_dt": stlm_dt,
-                "valid_from": valid_from,
-                "valid_from_method": method,
+                "valid_from": stlm_dt,
             }
         )
     return rows
@@ -271,14 +281,14 @@ MAJOR_SHAREHOLDER_CHANGE_COLUMNS = [
 EXECUTIVE_COLUMNS = [
     "source_rcept_no", "row_seq", "corp_code", "bsns_year", "reprt_code", "nm", "sexdstn", "birth_ym", "ofcps",
     "rgist_exctv_at", "fte_at", "chrg_job", "main_career", "mxmm_shrholdr_relate", "hffc_pd_raw", "hffc_months",
-    "tenure_end_on", "stlm_dt", "valid_from", "valid_from_method",
+    "tenure_start_on", "tenure_start_method", "tenure_end_on", "person_id", "stlm_dt", "valid_from",
 ]
 
 
 def rebuild_relations(con: duckdb.DuckDBPyConnection) -> dict:
-    """raw_api_response의 주요정보 응답 전체로 관계 테이블 3개를 다시 만든다 (API 호출 없음).
+    """raw_api_response의 주요정보 응답 전체로 관계 테이블 3개와 person을 다시 만든다 (API 호출 없음).
 
-    valid_to·superseded_by는 여기서 채우지 않는다 (close 단계, 0005). 다시 만들면 NULL로 돌아간다.
+    행을 넣은 뒤 같은 트랜잭션에서 닫기(valid_to·superseded_by, src/loaders/temporal.py)까지 한다.
     """
     index = build_name_index(con)
     overrides = load_overrides()
@@ -303,6 +313,7 @@ def rebuild_relations(con: duckdb.DuckDBPyConnection) -> dict:
             ),
             "executive": _replace_table(con, "executive", executives, EXECUTIVE_COLUMNS),
         }
+        counts.update(close_relations(con))
         con.commit()
     except Exception:
         con.rollback()

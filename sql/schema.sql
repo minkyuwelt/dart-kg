@@ -61,9 +61,16 @@ CREATE TABLE IF NOT EXISTS investment (
     trmend_blce_qota_rt        DOUBLE,                -- 기말 지분율(%)
     trmend_blce_acntbk_amount  BIGINT,                -- 기말 장부가액(원)
     stlm_dt                    DATE,                  -- 결산 기준일
+    valid_from                 DATE,                  -- = stlm_dt (0005 스냅샷 체인. 최초 취득일은 frst_acqs_de)
+    valid_to                   DATE,                  -- 같은 출자 회사의 다음 보고서 기준일 (닫기 단계)
+    superseded_by              VARCHAR,               -- 같은 보고서의 최신 정정본 접수번호 (닫기 단계)
     loaded_at                  TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (rcept_no, row_seq)
 );
+-- 이미 만들어진 파일에 컬럼을 더한다 (Phase 2 E에서 추가. 값은 rebuild가 채운다)
+ALTER TABLE investment ADD COLUMN IF NOT EXISTS valid_from DATE;
+ALTER TABLE investment ADD COLUMN IF NOT EXISTS valid_to DATE;
+ALTER TABLE investment ADD COLUMN IF NOT EXISTS superseded_by VARCHAR;
 
 -- 수집 대상 회사 목록. src/loaders/targets.py가 investment 테이블에서 통째로 다시 만든다.
 -- 범위 결정: docs/decisions/0002-target-scope.md (지주 4곳 + 직속 자회사)
@@ -83,7 +90,9 @@ CREATE TABLE IF NOT EXISTS target_corp (
 -- 시간 컬럼은 docs/decisions/0005-temporal-model.md의 이중 시간축:
 --   valid_from / valid_to      사실이 참이었던 기간 (valid_to NULL = 아직 유효)
 --   source_rcept_no / superseded_by  어느 공시로 알게 됐고, 어느 정정 공시가 대체했는가 (NULL = 대체되지 않음)
--- valid_to·superseded_by는 "닫기" 단계에서 채운다 (아직 구현 전). rebuild 직후에는 모두 NULL이다.
+-- valid_to·superseded_by는 "닫기" 단계(src/loaders/temporal.py)가 rebuild 끝에 채운다.
+--   valid_from = 보고서 기준일(stlm_dt), valid_to = 같은 회사의 다음 보고서 기준일 (스냅샷 체인)
+--   superseded_by = 같은 보고서의 최신 정정본 접수번호. 조회할 때는 superseded_by IS NULL만 본다 (아래 *_current 뷰)
 -- 주요정보 API는 보고서의 최신 정정본만 주므로, 백필한 과거 보고서는 정정본 하나만 있다.
 
 -- 최대주주 현황 (hyslrSttus.json). 보고서 기준일(stlm_dt)에 참이었던 최대주주와 지분율.
@@ -105,8 +114,8 @@ CREATE TABLE IF NOT EXISTS major_shareholder (
     rm                          VARCHAR,
     stlm_dt                     DATE,                  -- 보고서 기준일
     valid_from                  DATE,                  -- = stlm_dt
-    valid_to                    DATE,                  -- 다음 보고서에 없으면 그 보고서의 stlm_dt (닫기 단계)
-    superseded_by               VARCHAR,               -- 정정 공시 접수번호 (닫기 단계)
+    valid_to                    DATE,                  -- 같은 회사의 다음 보고서 기준일 (닫기 단계)
+    superseded_by               VARCHAR,               -- 같은 보고서의 최신 정정본 접수번호 (닫기 단계)
     loaded_at                   TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (source_rcept_no, row_seq)
 );
@@ -133,8 +142,8 @@ CREATE TABLE IF NOT EXISTS major_shareholder_change (
     PRIMARY KEY (corp_code, change_on, mxmm_shrholdr_nm)
 );
 
--- 임원 현황 (exctvSttus.json). 사람 식별자(person)는 결정 0006(예정)에서 정한다.
--- 선임일 필드가 없어 valid_from은 기준일에서 재직기간(월)을 뺀 근사값이다 (valid_from_method에 표시).
+-- 임원 현황 (exctvSttus.json). 사람 식별자 person_id = 이름|생년월|성별 (docs/decisions/0006-person-identity.md).
+-- 선임일 필드가 없어 tenure_start_on은 기준일에서 재직기간(월)을 뺀 근사값이다 (tenure_start_method에 표시).
 CREATE TABLE IF NOT EXISTS executive (
     source_rcept_no       VARCHAR     NOT NULL,
     row_seq               INTEGER     NOT NULL,
@@ -152,12 +161,39 @@ CREATE TABLE IF NOT EXISTS executive (
     mxmm_shrholdr_relate  VARCHAR,               -- 최대주주와의 관계
     hffc_pd_raw           VARCHAR,               -- 재직기간 원문 ('2년 \n1개월')
     hffc_months           INTEGER,               -- 재직기간(월)
+    tenure_start_on       DATE,                  -- 선임 시점 근사: stlm_dt - hffc_months (월 단위). 못 구하면 NULL
+    tenure_start_method   VARCHAR,               -- stlm_dt_minus_hffc_pd / NULL
     tenure_end_on         DATE,                  -- 임기 만료일
+    person_id             VARCHAR,               -- 이름|생년월|성별 (person 테이블)
     stlm_dt               DATE,                  -- 보고서 기준일
-    valid_from            DATE,                  -- stlm_dt - hffc_months (월 단위 근사) 또는 stlm_dt
-    valid_from_method     VARCHAR     NOT NULL,  -- stlm_dt_minus_hffc_pd / stlm_dt
-    valid_to              DATE,                  -- 다음 보고서에 없으면 그 stlm_dt, tenure_end_on이 더 이르면 그 날짜 (닫기 단계)
+    valid_from            DATE,                  -- = stlm_dt
+    valid_to              DATE,                  -- 다음 보고서 기준일. 다음 보고서에 없고 tenure_end_on이 더 이르면 그 날짜 (닫기 단계)
     superseded_by         VARCHAR,
     loaded_at             TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (source_rcept_no, row_seq)
 );
+-- B 단계(PR #17)로 만들어진 파일 이전: valid_from_method를 없애고 선임 시점·사람 식별자 컬럼을 더한다
+ALTER TABLE executive DROP COLUMN IF EXISTS valid_from_method;
+ALTER TABLE executive ADD COLUMN IF NOT EXISTS tenure_start_on DATE;
+ALTER TABLE executive ADD COLUMN IF NOT EXISTS tenure_start_method VARCHAR;
+ALTER TABLE executive ADD COLUMN IF NOT EXISTS person_id VARCHAR;
+
+-- 사람. executive의 (이름, 생년월, 성별) 조합마다 한 행. 닫기 단계가 executive에서 다시 만든다 (결정 0006).
+-- 같은 조합이 다른 사람일 가능성은 아주 낮지만 0이 아니다. 그 경우는 발견하면 수동 분리 규칙을 0006에 적는다.
+CREATE TABLE IF NOT EXISTS person (
+    person_id    VARCHAR     PRIMARY KEY,  -- '양종희|1961-06|남'
+    nm           VARCHAR     NOT NULL,
+    birth_ym     VARCHAR,                  -- 'YYYY-MM'. 없으면 person_id에 '?'
+    sexdstn      VARCHAR,
+    first_seen   DATE,                     -- 가장 이른 선임 시점(근사) 또는 보고서 기준일
+    last_seen    DATE,                     -- 가장 늦은 valid_to 또는 보고서 기준일
+    corp_count   INTEGER,                  -- 임원으로 나온 회사 수 (2 이상이면 겸직 후보)
+    loaded_at    TIMESTAMPTZ NOT NULL
+);
+
+-- 현재 상태 뷰: 아직 유효하고(valid_to NULL) 정정되지 않은(superseded_by NULL) 행만.
+-- 시점 조회는 WHERE valid_from <= d AND (valid_to IS NULL OR valid_to > d) AND superseded_by IS NULL (README 참고)
+CREATE OR REPLACE VIEW investment_current AS SELECT * FROM investment WHERE valid_to IS NULL AND superseded_by IS NULL;
+CREATE OR REPLACE VIEW major_shareholder_current AS SELECT * FROM major_shareholder WHERE valid_to IS NULL AND superseded_by IS NULL;
+CREATE OR REPLACE VIEW major_shareholder_change_current AS SELECT * FROM major_shareholder_change WHERE valid_to IS NULL AND superseded_by IS NULL;
+CREATE OR REPLACE VIEW executive_current AS SELECT * FROM executive WHERE valid_to IS NULL AND superseded_by IS NULL;

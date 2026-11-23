@@ -34,6 +34,7 @@ import duckdb
 import pandas as pd
 
 from src.loaders.duckdb_store import REPO_ROOT, connect, raw_bodies
+from src.loaders.temporal import close_investments
 
 ENDPOINT = "otrCprInvstmntSttus.json"
 OVERRIDES_PATH = REPO_ROOT / "config" / "corp_name_overrides.csv"
@@ -168,16 +169,21 @@ def rebuild_investments(con: duckdb.DuckDBPyConnection) -> dict:
             con.execute(
                 """
                 INSERT INTO investment
+                    (rcept_no, row_seq, investor_corp_code, bsns_year, reprt_code, inv_prm_raw, investee_name, share_class,
+                     investee_corp_code, resolve_method, invstmnt_purps, frst_acqs_de,
+                     trmend_blce_qy, trmend_blce_qota_rt, trmend_blce_acntbk_amount, stlm_dt, valid_from, loaded_at)
                 SELECT rcept_no, row_seq, investor_corp_code, bsns_year, reprt_code, inv_prm_raw, investee_name, share_class,
                        investee_corp_code, resolve_method, invstmnt_purps,
                        TRY_STRPTIME(NULLIF(frst_acqs_de, '-'), '%Y.%m.%d')::DATE,
                        trmend_blce_qy::BIGINT, trmend_blce_qota_rt, trmend_blce_acntbk_amount::BIGINT,
                        TRY_CAST(NULLIF(stlm_dt, '') AS DATE),
+                       TRY_CAST(NULLIF(stlm_dt, '') AS DATE),  -- valid_from = 보고서 기준일 (0005)
                        now()
                 FROM incoming_investment
                 """
             )
             con.unregister("incoming_investment")
+        closed = close_investments(con)  # valid_to·superseded_by (src/loaders/temporal.py)
         con.commit()
     except Exception:
         con.rollback()
@@ -185,7 +191,7 @@ def rebuild_investments(con: duckdb.DuckDBPyConnection) -> dict:
     summary = con.execute(
         "SELECT resolve_method, count(*) FROM investment GROUP BY 1 ORDER BY 2 DESC"
     ).fetchall()
-    return {"rows": len(df), "by_method": dict(summary)}
+    return {"rows": len(df), "by_method": dict(summary), **closed}
 
 
 if __name__ == "__main__":
