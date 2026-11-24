@@ -124,6 +124,27 @@ def parse_tree(data: bytes) -> tuple[ET.Element, str]:
             return root, "lxml"
 
 
+def explain_failure(data: bytes) -> tuple[str, int, str] | None:
+    """2단계(전처리 + 내장 파서)가 왜 실패하는지. 돌려주는 값: (오류 종류, 줄 번호, 그 줄의 문제 지점 앞뒤 글자).
+
+    3단계(lxml)로 간 파일의 원인을 모아 전처리 규칙을 추가하는 데 쓴다 (0007 "다시 판단할 조건").
+    2단계가 성공하면 None.
+    """
+    fixed = escape_stray(data)
+    try:
+        ET.fromstring(fixed)
+        return None
+    except ET.ParseError as e:
+        lineno, col = e.position
+        kind = re.sub(r":\s*line \d+, column \d+$", "", str(e))
+        lines = fixed.split(b"\n")
+        line = lines[lineno - 1] if 0 < lineno <= len(lines) else b""
+        # 열 번호는 글자 기준, 줄은 바이트. 한글이 섞이면 어긋나므로 글자로 바꾼 뒤 자른다
+        text = line.decode("utf-8", errors="replace")
+        snippet = text[max(0, col - 60):col + 60]
+        return kind, lineno, snippet
+
+
 def clean_text(elem: ET.Element) -> str:
     """요소 안 모든 글자를 모아 공백을 하나로 줄인다. 서식 태그(SPAN, TE 등)는 벗겨진다."""
     return WS_RE.sub(" ", "".join(elem.itertext())).strip()

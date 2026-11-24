@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from src.loaders.document_parser import escape_stray, parse_document_xml, parse_table, parse_tree
-from src.loaders.documents import rebuild_sections, save_document
+from src.loaders.document_parser import escape_stray, explain_failure, parse_document_xml, parse_table, parse_tree
+from src.loaders.documents import rebuild_sections, save_document, why_lxml
 from src.loaders.duckdb_store import connect
 from tests.test_documents import make_zip
 
@@ -212,6 +212,12 @@ class LenientParsingTest(unittest.TestCase):
         self.assertEqual(pf.parser, "lxml")
         self.assertEqual([p for s in pf.sections for p in s.paragraphs], ["닫히지 않음"])
 
+    def test_explain_failure_points_at_offending_line(self):
+        self.assertIsNone(explain_failure(LENIENT_XML.encode("utf-8")))  # 2단계로 되는 파일은 원인 없음
+        kind, lineno, snippet = explain_failure(BROKEN_XML)
+        self.assertEqual((kind, lineno), ("mismatched tag", 1))
+        self.assertIn("</BODY>", snippet)
+
 
 class RebuildSectionsTest(unittest.TestCase):
     def setUp(self):
@@ -235,6 +241,9 @@ class RebuildSectionsTest(unittest.TestCase):
             note_count = con.execute("SELECT count(*) FROM document_section WHERE is_note").fetchone()[0]
             tables = con.execute("SELECT tables FROM document_section WHERE title = '1. 회사의 개요'").fetchone()[0]
             partial = rebuild_sections(con, ["20250314000001"])
+            reasons = why_lxml(con)
+        self.assertEqual(list(reasons), ["mismatched tag"])
+        self.assertEqual([(r, f, line) for r, f, line, _ in reasons["mismatched tag"]], [("20250314000001", "20250314000001_00001.xml", 1)])
         self.assertEqual(first, second)
         self.assertEqual((first["documents"], first["files"], first["files_failed"], first["sections"], first["tables"]), (2, 4, 0, 9 + 2 + 2 + 1, 1))
         self.assertEqual(first["by_parser"], {"etree": 3, "lxml": 1})
