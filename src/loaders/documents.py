@@ -13,6 +13,10 @@ data/는 .gitignore에 있어 커밋되지 않는다. 노트북을 잃으면 백
 CLI (저장소 루트에서, API 호출 없음):
     python -m src.loaders.documents inspect 20240318000xxx   # 저장된 ZIP의 파일 목록·인코딩·XML 앞부분 출력
     python -m src.loaders.documents status                   # 회사별 정기보고서 수 대비 원문 보관 수
+    python -m src.loaders.documents tree 20240318000xxx      # 한 원문의 섹션 트리를 파싱해 출력 (DB에 쓰지 않음)
+    python -m src.loaders.documents parse                    # 저장된 ZIP 전체 → document_section·document_parse 재생성
+
+파싱 규칙은 src/loaders/document_parser.py.
 """
 
 import hashlib
@@ -27,6 +31,7 @@ import duckdb
 from dotenv import load_dotenv
 
 from src.collectors.document import ZipEntry, inspect_zip
+from src.loaders.document_parser import ParsedFile, parse_document_xml, section_rows
 from src.loaders.duckdb_store import REPO_ROOT, connect
 from src.loaders.periodic_reports import periodic_reports_of
 
@@ -124,6 +129,81 @@ def read_xml_head(rcept_no: str, entry_name: str | None = None, nbytes: int = 15
     return target, head.decode("utf-8", errors="replace")
 
 
+def parse_zip(rcept_no: str, zip_bytes: bytes) -> tuple[list[ParsedFile], list[tuple[str, str]]]:
+    """ZIP 안 모든 XML을 파싱한다. 돌려주는 값: (성공한 파일들, [(파일 이름, 오류 메시지)]).
+
+    본문과 첨부를 모두 파싱한다. 첨부(감사보고서 등)의 주석도 근거 문서가 될 수 있다 (0002).
+    깨진 XML은 그 파일만 실패로 남기고 나머지는 계속한다.
+    """
+    parsed, failed = [], []
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for name in sorted(zf.namelist()):
+            if not name.lower().endswith(".xml"):
+                continue
+            try:
+                parsed.append(parse_document_xml(name, zf.read(name)))
+            except Exception as e:  # ParseError 등. 파일 하나의 실패가 전체를 멈추지 않게
+                failed.append((name, f"{type(e).__name__}: {str(e)[:300]}"))
+    return parsed, failed
+
+
+def rebuild_sections(con: duckdb.DuckDBPyConnection, rcept_nos: list[str] | None = None) -> dict:
+    """document 테이블의 ZIP을 모두 읽어 document_section·document_parse를 다시 만든다. API 호출 없음.
+
+    rcept_nos를 주면 그 원문만 다시 만든다(그 접수번호의 기존 행은 지움). 없으면 전체 재생성.
+    """
+    if rcept_nos is None:
+        rows = con.execute("SELECT rcept_no FROM document ORDER BY rcept_no").fetchall()
+        rcept_nos = [r[0] for r in rows]
+    stats = {"documents": len(rcept_nos), "files": 0, "files_failed": 0, "sections": 0, "tables": 0, "missing_zip": 0}
+    con.begin()
+    try:
+        if rcept_nos:
+            con.execute("DELETE FROM document_section WHERE rcept_no IN (SELECT unnest(?::VARCHAR[]))", [rcept_nos])
+            con.execute("DELETE FROM document_parse WHERE rcept_no IN (SELECT unnest(?::VARCHAR[]))", [rcept_nos])
+        for rcept_no in rcept_nos:
+            path = document_path(rcept_no)
+            if not path.exists():
+                stats["missing_zip"] += 1
+                con.execute("INSERT INTO document_parse VALUES (?, ?, false, NULL, NULL, NULL, NULL, NULL, ?, now())",
+                            [rcept_no, "", f"ZIP 없음: {path}"])
+                continue
+            parsed, failed = parse_zip(rcept_no, path.read_bytes())
+            for pf in parsed:
+                rows = section_rows(rcept_no, pf)
+                if rows:
+                    con.executemany("INSERT INTO document_section VALUES (" + ",".join("?" * 18) + ")", rows)
+                n_tables = sum(len(s.tables) for s in pf.sections)
+                n_chars = sum(len(s.text) for s in pf.sections)
+                con.execute("INSERT INTO document_parse VALUES (?, ?, true, ?, ?, ?, ?, ?, NULL, now())",
+                            [rcept_no, pf.file_name, pf.doc_kind, pf.doc_kind_name, len(pf.sections), n_tables, n_chars])
+                stats["files"] += 1; stats["sections"] += len(pf.sections); stats["tables"] += n_tables
+            for name, err in failed:
+                con.execute("INSERT INTO document_parse VALUES (?, ?, false, NULL, NULL, NULL, NULL, NULL, ?, now())",
+                            [rcept_no, name, err])
+                stats["files"] += 1; stats["files_failed"] += 1
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    return stats
+
+
+def print_tree(rcept_no: str, file_name: str | None = None) -> None:
+    """한 원문을 파싱해 섹션 트리를 출력한다 (DB에 쓰지 않음). 노트북에서 파서 결과를 눈으로 확인하는 용도."""
+    parsed, failed = parse_zip(rcept_no, document_path(rcept_no).read_bytes())
+    for name, err in failed:
+        print(f"실패 {name}: {err}")
+    for pf in parsed:
+        if file_name and pf.file_name != file_name:
+            continue
+        print(f"\n=== {pf.file_name}  [{pf.doc_kind}] {pf.doc_kind_name}  {pf.company_name}  섹션 {len(pf.sections)}")
+        for s in pf.sections:
+            mark = "" if s.explicit else "·"
+            note = " (주석)" if s.is_note else ""
+            print(f"{'  ' * s.depth}{mark}{s.title[:50]}{note}  [문단 {len(s.paragraphs)}, 표 {len(s.tables)}, {len(s.text):,}자]")
+
+
 def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
     """회사별: 공시 목록의 정기보고서 접수번호 수, 원문 보관 수."""
     return con.execute(
@@ -144,7 +224,7 @@ def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
 
 
 def main(argv: list[str]) -> None:
-    usage = "사용법: python -m src.loaders.documents inspect <rcept_no> [entry_name] | status"
+    usage = "사용법: python -m src.loaders.documents inspect <rcept_no> [entry_name] | status | tree <rcept_no> [file_name] | parse [rcept_no ...]"
     if not argv:
         sys.exit(usage)
     if argv[0] == "inspect" and len(argv) in (2, 3):
@@ -168,6 +248,14 @@ def main(argv: list[str]) -> None:
             print(f"{name:<14}{code:<10}{listed:>8}{stored:>6}{(nbytes or 0) / 1e6:>8.1f}")
             total_listed += listed; total_stored += stored; total_bytes += nbytes or 0
         print(f"{'합계':<24}{total_listed:>8}{total_stored:>6}{total_bytes / 1e6:>8.1f}")
+    elif argv[0] == "tree" and len(argv) in (2, 3):
+        print_tree(argv[1], argv[2] if len(argv) == 3 else None)
+    elif argv[0] == "parse":
+        with connect() as con:
+            stats = rebuild_sections(con, argv[1:] or None)
+        print(stats)
+        if stats["files_failed"]:
+            print(f"실패한 파일이 {stats['files_failed']}개 있습니다. SELECT * FROM document_parse WHERE NOT ok 로 확인하세요.")
     else:
         sys.exit(usage)
 

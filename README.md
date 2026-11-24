@@ -248,6 +248,13 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    python -m src.loaders.documents status                         # 회사별 보관 현황
    ```
 
+9. **(Phase 3) 원문 파싱** — 저장된 ZIP의 XML(본문 + 첨부)을 섹션(목차 항목) 단위로 풀어 `document_section`에, 파일별 성공·실패를 `document_parse`에 적습니다. 표는 문장으로 펴지 않고 2차원 배열(JSON)로 둡니다. API 호출 없음. 규칙은 `src/loaders/document_parser.py`.
+
+   ```bash
+   python -m src.loaders.documents tree 20260313001191     # 한 원문의 섹션 트리를 눈으로 확인 (DB에 쓰지 않음)
+   python -m src.loaders.documents parse                   # 저장된 ZIP 전체 재생성
+   ```
+
 화면 없이 터미널에서 실행할 수도 있습니다.
 
 ```bash
@@ -263,6 +270,7 @@ python -m src.loaders.investments rebuild   # 원본 응답에서 investment 테
 python -m src.loaders.collect report_details 00688996 2025 11011   # (Phase 2) 한 보고서의 주요정보 4종 원본 저장 (API 4건)
 python -m src.loaders.relations rebuild      # (Phase 2) 원본에서 최대주주·변동·임원 테이블 재생성 (API 호출 없음)
 python -m src.loaders.collect document 20240318000xxx   # (Phase 3) 한 공시의 원문 ZIP 저장 (API 1건)
+python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에서 섹션 테이블 재생성 (API 호출 없음)
 ```
 
 > DuckDB는 파일을 프로세스 단위로 잠급니다. 노트북에서 읽기 전용으로 열어 둔 연결도 파이프라인의 쓰기를 막습니다. 탐색할 때는 아래처럼 열고 블록이 끝나면 바로 닫으세요. 파이프라인이 잠금에 걸리면 5분 간격으로 최대 3번 다시 시도합니다.
