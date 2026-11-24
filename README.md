@@ -152,6 +152,7 @@ docs/devlog/       날짜별 개발 일지
 
    ```bash
    pip install -r requirements.txt
+   # 임베딩 모델까지 돌리려면 (노트북, GPU): pip install -r requirements-ml.txt
    ```
 
 3. **스크립트 실행** — 저장소 루트에서 실행하면 4대 금융지주의 corp_code가 출력됩니다. (API 1건 호출)
@@ -272,6 +273,16 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    python -m src.loaders.chunks stats                                 # 전략별 조각 수·길이 분포
    python -m src.loaders.chunks show 20260313000815 --section "임원"   # 조각을 눈으로 확인
    python -m eval.run --retrieval-only --retriever chunk:section --label section   # 전략별 hit@5·MRR
+   ```
+
+12. **(Phase 3) 임베딩 비교** — 조각을 벡터로 바꿔 "뜻이 비슷한" 조각을 찾습니다. 모델 셋(`kure-v3` / `kure-v1` / `bge-m3`)은 모두 로컬이라 돈이 들지 않고, 노트북 GPU에서만 돕니다. 재순위(`--rerank nano`)와 회사 필터(`--filter corp`)는 선택 단계입니다. 근거는 `docs/decisions/0009-embedding.md`.
+
+   ```bash
+   pip install -r requirements-ml.txt                                   # 노트북 전용 (torch, sentence-transformers. 2GB 이상)
+   python -m src.rag.embedding build --model kure-v1 --strategy section_path   # 조각 임베딩 → chunk_embedding (해시 바뀐 것만 다시)
+   python -m src.rag.embedding stats
+   python -m eval.run --retrieval-only --retriever dense:kure-v1:section_path --label kure-v1
+   python -m eval.run --retrieval-only --retriever dense:kure-v1:section_path --filter corp --rerank nano --label kure-v1-corp-rerank
    ```
 
 화면 없이 터미널에서 실행할 수도 있습니다.

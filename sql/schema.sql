@@ -285,3 +285,16 @@ CREATE TABLE IF NOT EXISTS chunk (
     built_at      TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (strategy, rcept_no, file_name, seq)
 );
+
+-- 조각 임베딩 (0009 실험). 모델마다 행이 따로 있고 옛 모델 행도 남는다 — Neo4j에는 채택한 모델 하나만 올린다.
+-- text_hash는 임베딩할 때의 chunk.text_hash. 조각이 다시 만들어져 해시가 바뀐 것만 다시 계산한다 (멱등, 재실행 비용 최소).
+-- vector는 가변 길이 FLOAT 목록. 검색은 list_cosine_similarity (DuckDB 안 전수 비교. 조각 4만 × 1024차원은 1초 안쪽).
+CREATE TABLE IF NOT EXISTS chunk_embedding (
+    chunk_id     VARCHAR     NOT NULL,
+    model_name   VARCHAR     NOT NULL,     -- 설정 이름 (kure-v3 / kure-v1 / bge-m3), HF 모델 id는 src/rag/embedding.py
+    text_hash    VARCHAR     NOT NULL,
+    dim          INTEGER     NOT NULL,
+    vector       FLOAT[]     NOT NULL,
+    embedded_at  TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (chunk_id, model_name)
+);
