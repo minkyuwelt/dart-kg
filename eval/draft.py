@@ -41,14 +41,16 @@ class Template:
     title_re: str       # 섹션 제목 정규식 (본문 파일에서 찾음)
     question: str       # {corp} {year} 자리 채움
     answer_hint: str    # 뷰어에서 무엇을 확인해 적을지
+    parent_re: str | None = None  # 제목이 섹션이 아니라 소제목일 때 대신 찾을 감싸는 섹션의 제목 정규식
 
 
 TEMPLATES = [
-    Template("largest_holder", "정형표", r"최대주주 및 특수관계인의 주식\s*소유", "{year}년 말 기준 {corp}의 최대주주는 누구이고 지분율은 몇 %인가?", "최대주주 이름과 기말 지분율"),
+    # 최대주주·직원 현황은 목차 항목이 아니라 소제목(ATOC="N")인 보고서가 대부분 (2026-11-25 실측: 81개 후보 중 0개) → 감싸는 섹션으로 대신
+    Template("largest_holder", "정형표", r"최대주주 및 특수관계인의 주식\s*소유", "{year}년 말 기준 {corp}의 최대주주는 누구이고 지분율은 몇 %인가?", "최대주주 이름과 기말 지분율", parent_re=r"주주에 관한 사항"),
     Template("ceo", "정형표", r"^\d+\.\s*임원(?:\s*및 직원 등)?의 현황|^\d+\.\s*임원\s*현황", "{year}년 사업보고서 기준 {corp}의 대표이사는 누구인가?", "임원 현황 표의 대표이사 이름"),
     Template("dividend", "정형표", r"배당에 관한 사항", "{corp}의 {year}년 주당 현금배당금은 얼마인가?", "배당 표의 주당 현금배당금(보통주)"),
     Template("investments", "정형표", r"타법인\s*출자", "{year}년 말 기준 {corp}가 출자한 회사 중 기말 장부가액이 가장 큰 곳은 어디인가?", "타법인 출자현황 표에서 장부가액 최대 행"),
-    Template("employees", "정형표", r"^\d+\.\s*직원 등의 현황|직원 현황", "{year}년 말 기준 {corp}의 직원 수는 몇 명인가?", "직원 현황 표의 합계"),
+    Template("employees", "정형표", r"^\d+\.\s*직원 등의 현황|직원 현황", "{year}년 말 기준 {corp}의 직원 수는 몇 명인가?", "직원 현황 표의 합계", parent_re=r"임원 및 직원 등의 현황"),
     Template("auditor", "정형표", r"회계감사인의 명칭|감사인에 관한 사항|외부감사", "{corp}의 {year}년 재무제표를 감사한 외부감사인은 어디인가?", "회계감사인 명칭"),
     Template("business", "서술", r"^\d+\.\s*사업의 개요", "{corp}의 주요 사업 부문은 무엇인가?", "사업의 개요 첫 문단의 부문 나열"),
     Template("credit_risk", "서술", r"금융위험의 관리|위험관리", "{corp}는 신용위험을 어떻게 측정하고 관리하는가?", "신용위험 관리 문단 요지(2~3문장)"),
@@ -103,13 +105,17 @@ def latest_reports(con: duckdb.DuckDBPyConnection, corp_codes: list[str] | None 
     return [dict(zip(("corp_code", "corp_name", "role", "rcept_no", "year", "year_rank"), r)) for r in rows]
 
 
-def find_section(con: duckdb.DuckDBPyConnection, rcept_no: str, title_re: str) -> tuple[str, int] | None:
-    """본문 파일에서 제목이 정규식에 맞고 내용이 있는 첫 섹션의 (경로, 섹션 번호). 없으면 None."""
+def find_section(con: duckdb.DuckDBPyConnection, rcept_no: str, title_re: str, shallowest: bool = False) -> tuple[str, int] | None:
+    """본문 파일에서 제목이 정규식에 맞고 내용이 있는 섹션의 (경로, 섹션 번호). 없으면 None.
+
+    기본은 가장 깊은 섹션(가장 구체적인 항목). 감싸는 섹션을 찾을 때(shallowest)는 가장 얕은 것 — 소제목 내용은 그 섹션 자체에 있다.
+    """
+    order = "depth ASC" if shallowest else "depth DESC"
     row = con.execute(
-        """
+        f"""
         SELECT path, section_id FROM document_section
         WHERE rcept_no = ? AND file_name = ? || '.xml' AND regexp_matches(title, ?) AND (char_count > 0 OR table_count > 0)
-        ORDER BY depth DESC, section_id LIMIT 1
+        ORDER BY {order}, section_id LIMIT 1
         """,
         [rcept_no, rcept_no, title_re],
     ).fetchone()
@@ -131,7 +137,7 @@ def draft_questions(con: duckdb.DuckDBPyConnection, corp_codes: list[str] | None
         if rep["year_rank"] == 2:
             templates = [t for t in templates if t.key in TIMEPOINT_KEYS]
         for t in templates:
-            found = find_section(con, rep["rcept_no"], t.title_re)
+            found = find_section(con, rep["rcept_no"], t.title_re) or (t.parent_re and find_section(con, rep["rcept_no"], t.parent_re, shallowest=True))
             if not found:
                 continue
             path, _ = found
