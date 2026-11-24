@@ -22,6 +22,9 @@ RTX 4070 노트북 8GB(2026-11-24 `nvidia-smi` 확인)라 1.1B 모델까지 로�
 입력 길이는 1,024토큰으로 제한한다(조각이 1,000자 ≈ 600토큰이라 충분. 길이를 줄이면 빨라짐). 벡터는 정규화해 저장(코사인 = 내적).
 `--fp16`(16비트 계산)은 속도 변수: 2026-11-24 kure-v1 fp32가 RTX 4070 노트북에서 **1,000개당 50초**(37,821개 ≈ 32분, 30만 조각이면 4시간,
 kure-v3는 8시간 어림)라 하루 밤 경계에 걸린다. fp16으로 2배 안팎 빨라지는지, hit@5가 같은지를 함께 잰다.
+fp32일 때 GPU 전력이 상한 90W의 절반(40W)에 머문 것은 fp32 계산이 텐서 코어를 쓰지 않기 때문이라, fp16은 2배보다 더 빨라질 수 있다.
+
+배치 크기(`--batch`)는 8GB VRAM에 맞춘다: fp32 배치 32는 긴 조각 구간에서 메모리를 넘겨 7배 느려졌다(아래 검증 결과 1단계). 기본값 8.
 
 ### 2. 재순위 (선택 단계)
 
@@ -51,14 +54,15 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_
 
 1단계 — 모델 고르기 (`section_path`):
 ```
-python -m src.rag.embedding build --model kure-v1 --strategy section_path
+python -m src.rag.embedding build --model kure-v1 --strategy section_path                  # fp32 기준선 (끝남)
 python -m eval.run --retrieval-only --retriever dense:kure-v1:section_path --label kure-v1
-python -m src.rag.embedding build --model bge-m3 --strategy section_path
+python -m src.rag.embedding build --model bge-m3 --strategy section_path --fp16 --batch 16  # fp16 속도 확인
 python -m eval.run --retrieval-only --retriever dense:bge-m3:section_path --label bge-m3
-python -m src.rag.embedding build --model kure-v3 --strategy section_path
+python -m src.rag.embedding build --model kure-v3 --strategy section_path --fp16 --batch 8  # 1.1B라 fp16이어도 배치 8
 python -m eval.run --retrieval-only --retriever dense:kure-v3:section_path --label kure-v3
 ```
-각 build 출력의 "1,000개당 N초"를 함께 기록한다 (188개 보고서 30만 조각 → 몇 시간인지 어림).
+각 build 출력의 "1,000개당 N초"를 함께 기록한다 (188개 보고서 30만 조각 → 몇 시간인지 어림). 최근 구간 속도가 누적의 몇 배로
+튀면 메모리 넘침이니 `nvidia-smi --query-gpu=memory.used,memory.total --format=csv`를 보고 배치를 줄인다.
 
 2단계 — 꼬리표가 임베딩에서도 도움이 되나 (1단계에서 고른 모델로 `section`):
 ```
@@ -76,7 +80,30 @@ python -m eval.run --retrieval-only --retriever chunk:section_path --filter corp
 
 ## 검증 결과
 
-(노트북 실행 뒤 기록. 표: 모델 × 전략 × 필터 × 재순위 → hit@5 공시/섹션, MRR, 임베딩 1,000개당 초, 질문당 검색 시간)
+조각: 0008 2차의 24개 보고서 37,821개(`section_path`). 질문: ready 41개 중 근거가 있는 36개(`없음` 5개는 검색 점수에서 빠짐).
+비교 기준(같은 조각, 키워드 검색 `chunk:section_path`): hit@5 공시 0.750 / 섹션 0.444.
+
+### 1단계 — 모델 (2026-11-24)
+
+| 모델 | 정밀도·배치 | 1,000개당 초 | hit@5 공시 | hit@5 섹션 | MRR 공시 | MRR 섹션 | 비고 |
+|---|---|---|---|---|---|---|---|
+| kure-v1 | fp32 · 32→8 | 50~54 (정상 구간) | **0.972** | 0.556 | 0.972 | 0.391 | 틀린 1개는 p2-q1(2023년 1분기 보고서 미수집 — 검색 문제 아님) |
+| bge-m3 | fp16 · 16 | | | | | | |
+| kure-v3 | fp16 · 8 | | | | | | |
+
+유형별(kure-v1): 서술 7개 공시 1.000/섹션 0.714, 시점 10개 0.900/0.500, 정형표 19개 1.000/0.526.
+
+읽는 법: 보고서 24개짜리 말뭉치라 "공시 맞추기"는 쉬운 편이다(키워드도 0.75). 모델 차이는 **섹션** 점수에서 봐야 한다.
+임베딩만으로 키워드보다 공시 +0.22, 섹션 +0.11.
+
+**메모리 넘침 사건**: fp32 배치 32로 돌리다 24,832개 지점부터 구간 속도가 1,000개당 380초로 떨어졌다(누적 평균 50→104초).
+`nvidia-smi` 온도 55도·클럭 2,565MHz·사용률 100%는 정상이었고 메모리가 7,925/8,188MiB였다. 긴 표 조각이 모인 배치가 VRAM을 넘겨
+Windows가 일반 RAM으로 넘긴 것. Ctrl+C 뒤 배치 8로 이어 돌리니 남은 9,917개가 54초/1,000개(537초). 배치마다 커밋하므로 끊어도 손실 없음.
+→ 기본 배치 8, 진행 줄에 최근 구간 속도 추가.
+
+### 2단계 — 전략 / 3단계 — 보조 단계
+
+(기록 예정)
 
 ## 다시 판단할 조건
 
