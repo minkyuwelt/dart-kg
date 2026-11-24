@@ -14,15 +14,26 @@
 - 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `TU`는 단위, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개
 - 무시: IMAGE/IMG/IMG-CAPTION, PGBRK, COL/COLGROUP. 그 밖의 모르는 태그는 안으로 들어가 글자만 모은다
 
-파서 라이브러리는 파이썬 내장 xml.etree.ElementTree다 (후보 비교는 docs/devlog/2026-11-24.md).
-엄격해서 깨진 파일은 통째로 실패하는데, 실패는 기록만 하고 넘어간다. 실패율이 높으면 lxml(recover)로 바꾸되,
-"글자 → 트리"를 만드는 parse_tree() 한 함수만 바꾸면 되게 분리해 두었다.
+파서는 세 단계다 (docs/decisions/0007-xml-parser.md). 2026-11-24 노트북에서 사업보고서 187건을 내장 파서만으로
+돌렸을 때 파일 458개 중 436개(95%)가 실패했다. 원인은 XML 규칙을 어긴 그대로의 `<`와 `&`
+(본문 `<P><당기말></P>`, 표 안 `S&P`)였다. DART 원문은 이름만 XML이고 실제로는 HTML처럼 느슨하다.
+  1. etree         내장 xml.etree.ElementTree 그대로 (엄격)
+  2. etree+escape  엔티티가 아닌 `&` → `&amp;`, 태그 이름이 될 수 없는 글자가 따라오는 `<` → `&lt;`로 바꾼 뒤 1
+                   (`<당기말>`을 글자로 살린다. lxml 복구만 쓰면 모르는 태그로 보고 글자를 버릴 수 있다)
+  3. lxml          lxml.etree의 recover 모드. 닫히지 않은 태그 등 전처리로 못 잡는 것
+어느 단계에서 성공했는지를 document_parse.parser에 남겨 단계별 건수를 알 수 있게 한다.
+"글자 → 트리"는 parse_tree() 한 함수다.
 """
 
 import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+
+try:
+    from lxml import etree as lxml_etree
+except ImportError:  # 설치 안 됐으면 3단계를 건너뛴다
+    lxml_etree = None
 
 SECTION_RE = re.compile(r"^SECTION-(\d+)$")
 IGNORED_TAGS = {"IMAGE", "IMG", "IMG-CAPTION", "PGBRK", "COL", "COLGROUP", "SUMMARY", "EXTRACTION", "FORMULA-VERSION"}
@@ -73,11 +84,35 @@ class ParsedFile:
     doc_kind_name: str | None  # DOCUMENT-NAME 글자 (예: 연결감사보고서)
     company_name: str | None
     sections: list[Section]
+    parser: str = "etree"      # 어느 단계에서 파싱됐나: etree / etree+escape / lxml
 
 
-def parse_tree(data: bytes) -> ET.Element:
-    """바이트 → 요소 트리. 라이브러리를 바꿀 때 이 함수만 바꾼다."""
-    return ET.fromstring(data)
+# 엔티티(&amp; &#60; &#x3C;)가 아닌 `&`
+STRAY_AMP_RE = re.compile(rb"&(?!(?:[A-Za-z][A-Za-z0-9]*|#\d+|#x[0-9A-Fa-f]+);)")
+# 태그 이름·닫는 태그·주석·선언(`<a` `</a` `<!` `<?`)이 아닌 `<` (예: `<당기말>`, `< 10%`)
+STRAY_LT_RE = re.compile(rb"<(?![A-Za-z_/!?])")
+
+
+def escape_stray(data: bytes) -> bytes:
+    """XML 규칙을 어긴 그대로의 `&`와 `<`를 엔티티로 바꾼다. 정상 파일은 그대로다."""
+    return STRAY_LT_RE.sub(b"&lt;", STRAY_AMP_RE.sub(b"&amp;", data))
+
+
+def parse_tree(data: bytes) -> tuple[ET.Element, str]:
+    """바이트 → (요소 트리, 성공한 단계). 단계는 모듈 설명 참고. 셋 다 실패하면 마지막 예외를 올린다."""
+    try:
+        return ET.fromstring(data), "etree"
+    except ET.ParseError as first:
+        try:
+            return ET.fromstring(escape_stray(data)), "etree+escape"
+        except ET.ParseError as second:
+            if lxml_etree is None:
+                raise second from first
+            parser = lxml_etree.XMLParser(recover=True, huge_tree=True)
+            root = lxml_etree.fromstring(escape_stray(data), parser)
+            if root is None:
+                raise second from first
+            return root, "lxml"
 
 
 def clean_text(elem: ET.Element) -> str:
@@ -107,7 +142,7 @@ def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Tab
     for r, (tr, is_header) in enumerate(row_elems):
         row: list[str] = []
         c = 0
-        cells = [td for td in tr if td.tag in ("TD", "TH")]
+        cells = [td for td in tr if isinstance(td.tag, str) and td.tag in ("TD", "TH")]
         for td in cells:
             while (r, c) in pending:
                 row.append(pending.pop((r, c)))
@@ -168,7 +203,7 @@ class _Walker:
     def walk(self, elem: ET.Element, caption: str | None = None, unit: str | None = None) -> None:
         for child in elem:
             tag = child.tag
-            if tag in IGNORED_TAGS:
+            if not isinstance(tag, str) or tag in IGNORED_TAGS:  # lxml은 주석·처리 지시도 자식으로 준다
                 continue
             m = SECTION_RE.match(tag)
             if m:
@@ -220,7 +255,7 @@ def _without(elem: ET.Element, skip: ET.Element | None) -> list[ET.Element]:
 
 def parse_document_xml(file_name: str, data: bytes) -> ParsedFile:
     """원문 XML 한 파일 → ParsedFile. 깨진 XML이면 xml.etree.ElementTree.ParseError가 올라온다."""
-    root = parse_tree(data)
+    root, method = parse_tree(data)
     name_el = root.find("DOCUMENT-NAME")
     company_el = root.find("COMPANY-NAME")
     body = root.find("BODY")
@@ -233,6 +268,7 @@ def parse_document_xml(file_name: str, data: bytes) -> ParsedFile:
         doc_kind_name=clean_text(name_el) if name_el is not None else None,
         company_name=clean_text(company_el) if company_el is not None else None,
         sections=walker.sections,
+        parser=method,
     )
 
 

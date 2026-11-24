@@ -61,7 +61,7 @@ def run(args: argparse.Namespace) -> int:
             return 0
 
         api_key = get_api_key()
-        calls = done = 0
+        calls = done = no_file = 0
         total_bytes = 0
         failures: list[tuple[str, str]] = []
         consecutive_failures = 0
@@ -85,13 +85,16 @@ def run(args: argparse.Namespace) -> int:
                 continue
             consecutive_failures = 0
             calls += stats["api_calls"]
+            if stats.get("no_file"):
+                no_file += 1  # [첨부정정] 등 본문 원문이 없는 공시. 기록되어 다음 백필에서 빠진다
+                continue
             done += 1
             total_bytes += stats["file_size"]
             if i % 25 == 0 or i == len(plan):
                 print(f"  {i:,}/{len(plan):,} 원문, {total_bytes / 1e6:,.0f}MB, {(time.monotonic() - started) / 60:.1f}분", flush=True)
 
         print(f"종료: {stop_reason}")
-        print(f"저장 {done:,}개 ({total_bytes / 1e6:,.0f}MB), API 호출 {calls:,}건, 실패 {len(failures)}개")
+        print(f"저장 {done:,}개 ({total_bytes / 1e6:,.0f}MB), 원문 없음(014) {no_file}개, API 호출 {calls:,}건, 실패 {len(failures)}개")
         for rcept_no, err in failures[:10]:
             print(f"  실패 {rcept_no}: {err}")
     return 0 if stop_reason == "완료" and not failures else 1

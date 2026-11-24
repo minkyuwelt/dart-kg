@@ -250,5 +250,12 @@ CREATE TABLE IF NOT EXISTS document_parse (
     char_count     BIGINT,
     error          VARCHAR,
     parsed_at      TIMESTAMPTZ NOT NULL,
+    parser         VARCHAR,                  -- 성공한 단계: etree / etree+escape / lxml (0007). 실패면 NULL
     PRIMARY KEY (rcept_no, file_name)
 );
+ALTER TABLE document_parse ADD COLUMN IF NOT EXISTS parser VARCHAR;
+
+-- document.status: DART 응답 status. '000' 정상, '014' 파일 없음 ([첨부정정]처럼 본문 원문이 없는 공시).
+-- 014인 행은 file_path가 빈 문자열이고, 백필이 다시 호출하지 않도록 기록만 남긴다.
+ALTER TABLE document ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT '000';
+ALTER TABLE document ADD COLUMN IF NOT EXISTS message VARCHAR;
