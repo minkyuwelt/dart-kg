@@ -27,11 +27,12 @@ import sys
 import duckdb
 
 from src.collectors.corp_code import download_corp_code_xml, get_api_key, parse_corps
+from src.collectors.dart_client import DartApiError
 from src.collectors.disclosure_list import fetch_disclosures, make_request_key, parse_disclosures
 from src.collectors.document import fetch_document
 from src.collectors.investment import fetch_investments
 from src.collectors.report_detail import ENDPOINTS, fetch_report_detail
-from src.loaders.documents import save_document
+from src.loaders.documents import save_document, save_missing_document
 from src.loaders.duckdb_store import connect, save_raw, upsert_corps, upsert_disclosures
 from src.loaders.investments import rebuild_investments
 
@@ -123,8 +124,16 @@ def collect_report_details(
 
 
 def collect_document(con: duckdb.DuckDBPyConnection, api_key: str, rcept_no: str) -> dict:
-    """한 공시의 원문 ZIP을 받아 파일로 저장하고 document 테이블에 적는다. API 1건 (Phase 3)."""
-    zip_bytes = fetch_document(api_key, rcept_no)
+    """한 공시의 원문 ZIP을 받아 파일로 저장하고 document 테이블에 적는다. API 1건 (Phase 3).
+
+    DART가 '파일이 존재하지 않습니다'(014)를 주면([첨부정정] 등) 실패가 아니라 "원문 없음"으로 기록한다.
+    """
+    try:
+        zip_bytes = fetch_document(api_key, rcept_no)
+    except DartApiError as e:
+        if e.status == "014":
+            return {"api_calls": 1, **save_missing_document(con, rcept_no, e.status, str(e))}
+        raise
     return {"api_calls": 1, **save_document(con, rcept_no, zip_bytes)}
 
 

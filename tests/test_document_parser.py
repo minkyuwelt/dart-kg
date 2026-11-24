@@ -5,7 +5,8 @@
 2) 문단: 서식 태그 벗김, 공백 정리, 빈 문단 제외. 소제목(ATOC="N")은 문단이자 표 캡션
 3) 표: THEAD 행 수, TE 글자, TU 단위, COLSPAN/ROWSPAN 값 복제
 4) 주석 섹션 표시, 첨부 파일의 문서 종류
-5) rebuild_sections: ZIP 전체 재생성, 깨진 파일은 document_parse에 기록, 다시 돌려도 행 수 같음
+5) rebuild_sections: ZIP 전체 재생성, 어느 파서 단계로 성공했는지 기록, 다시 돌려도 행 수 같음
+6) 파서 3단계 (0007): 정상 → etree, 그대로의 `<`·`&` → etree+escape(글자 보존), 닫히지 않은 태그 → lxml
 """
 
 import os
@@ -14,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from src.loaders.document_parser import parse_document_xml, parse_table, parse_tree
+from src.loaders.document_parser import escape_stray, parse_document_xml, parse_table, parse_tree
 from src.loaders.documents import rebuild_sections, save_document
 from src.loaders.duckdb_store import connect
 from tests.test_documents import make_zip
@@ -153,9 +154,42 @@ class ParseDocumentXmlTest(unittest.TestCase):
         self.assertEqual([s.title for s in att.sections], ["감 사 보 고 서", "독립된 감사인의 감사보고서"])
 
     def test_rowspan_spanning_into_later_rows(self):
-        table = parse_tree(b"""<TABLE><TR><TD ROWSPAN="3"><TE>A</TE></TD><TD><TE>1</TE></TD></TR>
+        table, _ = parse_tree(b"""<TABLE><TR><TD ROWSPAN="3"><TE>A</TE></TD><TD><TE>1</TE></TD></TR>
             <TR><TD><TE>2</TE></TD></TR><TR><TD><TE>3</TE></TD></TR></TABLE>""")
         self.assertEqual(parse_table(table, None, None).rows, [["A", "1"], ["A", "2"], ["A", "3"]])
+
+
+LENIENT_XML = """<?xml version="1.0" encoding="utf-8"?>
+<DOCUMENT><DOCUMENT-NAME ACODE="11011">사업보고서</DOCUMENT-NAME><BODY>
+<SECTION-1><TITLE ATOC="Y" ATOCID="1">주석</TITLE>
+<P><당기말></P>
+<P>신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &amp;는 그대로.</P>
+<TABLE><TR><TD><TE>S&P</TE></TD><TD><TE>Fitch</TE></TD></TR></TABLE>
+</SECTION-1></BODY></DOCUMENT>"""
+
+
+class LenientParsingTest(unittest.TestCase):
+    """2026-11-24 노트북 실측: 내장 파서만으로는 458개 중 436개 실패 (`<당기말>`, `S&P`). 0007의 3단계."""
+
+    def test_escape_stray_keeps_valid_markup(self):
+        self.assertEqual(escape_stray(b"<P>a &amp; b &#60; &#x3C; <!-- c --></P>"), b"<P>a &amp; b &#60; &#x3C; <!-- c --></P>")
+        self.assertEqual(escape_stray("<P>S&P <당기말> < 10%</P>".encode("utf-8")),
+                         "<P>S&amp;P &lt;당기말&gt; &lt; 10%</P>".encode("utf-8").replace(b"&gt;", b">"))
+
+    def test_clean_file_uses_etree(self):
+        self.assertEqual(parse_document_xml("a.xml", MAIN_XML.encode("utf-8")).parser, "etree")
+
+    def test_stray_lt_and_amp_parsed_with_text_preserved(self):
+        pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
+        self.assertEqual(pf.parser, "etree+escape")
+        [section] = [s for s in pf.sections if s.title == "주석"]
+        self.assertEqual(section.paragraphs, ["<당기말>", "신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &는 그대로."])
+        self.assertEqual(section.tables[0].rows, [["S&P", "Fitch"]])
+
+    def test_unclosed_tag_falls_back_to_lxml(self):
+        pf = parse_document_xml("c.xml", BROKEN_XML)
+        self.assertEqual(pf.parser, "lxml")
+        self.assertEqual([p for s in pf.sections for p in s.paragraphs], ["닫히지 않음"])
 
 
 class RebuildSectionsTest(unittest.TestCase):
@@ -176,19 +210,20 @@ class RebuildSectionsTest(unittest.TestCase):
             first = rebuild_sections(con)
             second = rebuild_sections(con)  # 다시 돌려도 같은 결과
             n_sections = con.execute("SELECT count(*) FROM document_section").fetchone()[0]
-            parse_rows = con.execute("SELECT rcept_no, file_name, ok, doc_kind_name, section_count, table_count FROM document_parse ORDER BY 1, 2").fetchall()
+            parse_rows = con.execute("SELECT rcept_no, file_name, ok, doc_kind_name, section_count, table_count, parser FROM document_parse ORDER BY 1, 2").fetchall()
             note_count = con.execute("SELECT count(*) FROM document_section WHERE is_note").fetchone()[0]
             tables = con.execute("SELECT tables FROM document_section WHERE title = '1. 회사의 개요'").fetchone()[0]
             partial = rebuild_sections(con, ["20250314000001"])
         self.assertEqual(first, second)
-        self.assertEqual((first["documents"], first["files"], first["files_failed"], first["sections"], first["tables"]), (2, 4, 1, 9 + 2 + 2, 1))
-        self.assertEqual(n_sections, 13)
+        self.assertEqual((first["documents"], first["files"], first["files_failed"], first["sections"], first["tables"]), (2, 4, 0, 9 + 2 + 2 + 1, 1))
+        self.assertEqual(first["by_parser"], {"etree": 3, "lxml": 1})
+        self.assertEqual(n_sections, 14)
         self.assertEqual(parse_rows, [
-            ("20250314000001", "20250314000001.xml", True, "연결감사보고서", 2, 0),
-            ("20250314000001", "20250314000001_00001.xml", False, None, None, None),
-            ("20260313001191", "20260313001191.xml", True, "사업보고서", 9, 1),
-            ("20260313001191", "20260313001191_00761.xml", True, "연결감사보고서", 2, 0),
+            ("20250314000001", "20250314000001.xml", True, "연결감사보고서", 2, 0, "etree"),
+            ("20250314000001", "20250314000001_00001.xml", True, None, 1, 0, "lxml"),  # 닫히지 않은 태그 → lxml 복구
+            ("20260313001191", "20260313001191.xml", True, "사업보고서", 9, 1, "etree"),
+            ("20260313001191", "20260313001191_00761.xml", True, "연결감사보고서", 2, 0, "etree"),
         ])
         self.assertEqual(note_count, 3)
         self.assertIn('"header_rows": 2', tables)
-        self.assertEqual((partial["documents"], partial["files_failed"]), (1, 1))
+        self.assertEqual((partial["documents"], partial["by_parser"]), (1, {"etree": 1, "lxml": 1}))

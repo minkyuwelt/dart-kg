@@ -81,6 +81,24 @@ def save_document(con: duckdb.DuckDBPyConnection, rcept_no: str, zip_bytes: byte
             "xml_encoding": ",".join(xml_encodings) or None, "sha256": sha256[:12]}
 
 
+def save_missing_document(con: duckdb.DuckDBPyConnection, rcept_no: str, status: str, message: str | None) -> dict:
+    """DART가 '파일 없음'(014) 등으로 원문을 주지 않은 접수번호를 기록한다. 다음 백필이 다시 부르지 않게 하기 위해서다.
+
+    2026-11-24 확인: 사업보고서 190건 중 3건이 014였고 모두 [첨부정정]이었다. 첨부만 고친 정정 공시는 본문 원문이 따로 없다.
+    """
+    con.execute(
+        """
+        INSERT INTO document (rcept_no, corp_code, report_nm, file_path, file_size, sha256, entry_count, entries, xml_encoding,
+                              fetched_at, status, message)
+        SELECT ?, d.corp_code, d.report_nm, '', 0, '', 0, '[]', NULL, now(), ?, ?
+        FROM (SELECT 1) one LEFT JOIN disclosure d ON d.rcept_no = ?
+        ON CONFLICT (rcept_no) DO UPDATE SET status = excluded.status, message = excluded.message, fetched_at = excluded.fetched_at
+        """,
+        [rcept_no, status, message, rcept_no],
+    )
+    return {"rcept_no": rcept_no, "status": status, "file_size": 0, "no_file": True}
+
+
 def missing_documents(con: duckdb.DuckDBPyConnection, corp_codes: list[str], from_year: int,
                       reprt_codes: set[str] | None = None) -> list[dict]:
     """공시 목록의 정기보고서 중 원문이 아직 없는 것. 최근 접수가 먼저.
@@ -153,9 +171,10 @@ def rebuild_sections(con: duckdb.DuckDBPyConnection, rcept_nos: list[str] | None
     rcept_nos를 주면 그 원문만 다시 만든다(그 접수번호의 기존 행은 지움). 없으면 전체 재생성.
     """
     if rcept_nos is None:
-        rows = con.execute("SELECT rcept_no FROM document ORDER BY rcept_no").fetchall()
+        rows = con.execute("SELECT rcept_no FROM document WHERE status = '000' ORDER BY rcept_no").fetchall()
         rcept_nos = [r[0] for r in rows]
-    stats = {"documents": len(rcept_nos), "files": 0, "files_failed": 0, "sections": 0, "tables": 0, "missing_zip": 0}
+    stats = {"documents": len(rcept_nos), "files": 0, "files_failed": 0, "sections": 0, "tables": 0, "missing_zip": 0,
+             "by_parser": {}}
     con.begin()
     try:
         if rcept_nos:
@@ -165,7 +184,7 @@ def rebuild_sections(con: duckdb.DuckDBPyConnection, rcept_nos: list[str] | None
             path = document_path(rcept_no)
             if not path.exists():
                 stats["missing_zip"] += 1
-                con.execute("INSERT INTO document_parse VALUES (?, ?, false, NULL, NULL, NULL, NULL, NULL, ?, now())",
+                con.execute("INSERT INTO document_parse (rcept_no, file_name, ok, error, parsed_at) VALUES (?, ?, false, ?, now())",
                             [rcept_no, "", f"ZIP 없음: {path}"])
                 continue
             parsed, failed = parse_zip(rcept_no, path.read_bytes())
@@ -175,11 +194,13 @@ def rebuild_sections(con: duckdb.DuckDBPyConnection, rcept_nos: list[str] | None
                     con.executemany("INSERT INTO document_section VALUES (" + ",".join("?" * 18) + ")", rows)
                 n_tables = sum(len(s.tables) for s in pf.sections)
                 n_chars = sum(len(s.text) for s in pf.sections)
-                con.execute("INSERT INTO document_parse VALUES (?, ?, true, ?, ?, ?, ?, ?, NULL, now())",
-                            [rcept_no, pf.file_name, pf.doc_kind, pf.doc_kind_name, len(pf.sections), n_tables, n_chars])
+                con.execute("""INSERT INTO document_parse (rcept_no, file_name, ok, doc_kind, doc_kind_name, section_count, table_count,
+                                                           char_count, parsed_at, parser) VALUES (?, ?, true, ?, ?, ?, ?, ?, now(), ?)""",
+                            [rcept_no, pf.file_name, pf.doc_kind, pf.doc_kind_name, len(pf.sections), n_tables, n_chars, pf.parser])
                 stats["files"] += 1; stats["sections"] += len(pf.sections); stats["tables"] += n_tables
+                stats["by_parser"][pf.parser] = stats["by_parser"].get(pf.parser, 0) + 1
             for name, err in failed:
-                con.execute("INSERT INTO document_parse VALUES (?, ?, false, NULL, NULL, NULL, NULL, NULL, ?, now())",
+                con.execute("INSERT INTO document_parse (rcept_no, file_name, ok, error, parsed_at) VALUES (?, ?, false, ?, now())",
                             [rcept_no, name, err])
                 stats["files"] += 1; stats["files_failed"] += 1
         con.commit()
@@ -197,7 +218,7 @@ def print_tree(rcept_no: str, file_name: str | None = None) -> None:
     for pf in parsed:
         if file_name and pf.file_name != file_name:
             continue
-        print(f"\n=== {pf.file_name}  [{pf.doc_kind}] {pf.doc_kind_name}  {pf.company_name}  섹션 {len(pf.sections)}")
+        print(f"\n=== {pf.file_name}  [{pf.doc_kind}] {pf.doc_kind_name}  {pf.company_name}  섹션 {len(pf.sections)}  파서 {pf.parser}")
         for s in pf.sections:
             mark = "" if s.explicit else "·"
             note = " (주석)" if s.is_note else ""
@@ -217,7 +238,7 @@ def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
                sum(doc.file_size) AS bytes
         FROM target_corp t
         LEFT JOIN periodic p ON p.corp_code = t.corp_code
-        LEFT JOIN document doc ON doc.rcept_no = p.rcept_no
+        LEFT JOIN document doc ON doc.rcept_no = p.rcept_no AND doc.status = '000'
         GROUP BY ALL ORDER BY listed DESC, t.corp_name
         """
     ).fetchall()

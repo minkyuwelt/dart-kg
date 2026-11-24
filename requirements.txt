@@ -5,3 +5,4 @@ pandas
 duckdb==1.5.6
 dagster==1.13.25
 dagster-webserver==1.13.25
+lxml==6.1.2  # 원문 XML 복구 파싱 (docs/decisions/0007-xml-parser.md)

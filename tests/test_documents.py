@@ -17,6 +17,7 @@ from unittest import mock
 
 from src.collectors.dart_client import DartApiError, DartRateLimitError
 from src.collectors.document import fetch_document, inspect_zip
+from src.loaders.collect import collect_document
 from src.loaders.documents import document_path, missing_documents, read_xml_head, save_document
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_report_details import disclosure_row
@@ -104,6 +105,20 @@ class SaveDocumentTest(unittest.TestCase):
         self.assertEqual(rows, [("20240318000001", KB, "사업보고서 (2023.12)", len(zip2), 2, "euc-kr,utf-8")])
         self.assertEqual(document_path("20240318000001").read_bytes(), zip2)
         self.assertTrue(str(document_path("20240318000001")).startswith(self.tmp.name))
+
+    def test_no_file_014_is_recorded_and_skipped_next_time(self):
+        # 2026-11-24 노트북: [첨부정정] 3건이 014 '파일이 존재하지 않습니다' → 실패가 아니라 "원문 없음"으로 기록
+        body = '{"status":"014","message":"파일이 존재하지 않습니다."}'.encode("utf-8")
+        with connect() as con:
+            upsert_disclosures(con, [disclosure_row("20250318001303", "[첨부정정]사업보고서 (2024.12)", "20250318")])
+            with mock.patch("src.collectors.document.get_raw", return_value=FakeResponse(body)):
+                stats = collect_document(con, "KEY", "20250318001303")
+            row = con.execute("SELECT status, file_path, corp_code FROM document WHERE rcept_no = '20250318001303'").fetchone()
+            remaining = missing_documents(con, [KB], 2021)
+        self.assertEqual((stats["api_calls"], stats["no_file"], stats["status"]), (1, True, "014"))
+        self.assertEqual(row, ("014", "", KB))
+        self.assertEqual(remaining, [])
+        self.assertFalse(document_path("20250318001303").exists())
 
     def test_read_xml_head_decodes_declared_encoding(self):
         with connect() as con:
