@@ -259,3 +259,29 @@ ALTER TABLE document_parse ADD COLUMN IF NOT EXISTS parser VARCHAR;
 -- 014인 행은 file_path가 빈 문자열이고, 백필이 다시 호출하지 않도록 기록만 남긴다.
 ALTER TABLE document ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT '000';
 ALTER TABLE document ADD COLUMN IF NOT EXISTS message VARCHAR;
+
+-- 조각(청킹). document_section에서 src/loaders/chunks.py가 전략별로 다시 만든다 (rebuild, 같은 전략·접수번호를 지우고 다시 넣음).
+-- 전략(strategy)은 0008 실험 변수: fixed(섹션 무시 고정 분할) / section(섹션 단위, 표는 따로) / section_path(section + 꼬리표).
+-- text는 사람이 읽는 본문, embed_text는 임베딩에 넣는 글(section_path만 앞에 "회사명 | 보고서 | 섹션 경로"가 붙음).
+-- text_hash는 embed_text의 해시 — 재임베딩할 때 바뀐 조각만 다시 계산하기 위한 것 (6번 PR).
+CREATE TABLE IF NOT EXISTS chunk (
+    chunk_id      VARCHAR     NOT NULL,     -- '{strategy}:{rcept_no}:{file_name}:{seq}' (Neo4j 노드 키로도 쓴다)
+    strategy      VARCHAR     NOT NULL,
+    rcept_no      VARCHAR     NOT NULL,
+    file_name     VARCHAR     NOT NULL,
+    seq           INTEGER     NOT NULL,     -- 파일 안 조각 순서 (0부터)
+    section_id    INTEGER     NOT NULL,     -- 조각이 시작하는 document_section.section_id
+    corp_code     VARCHAR,
+    corp_name     VARCHAR,                  -- 공시 당시 회사명 (표시용)
+    report_nm     VARCHAR,                  -- 예: '사업보고서 (2025.12)'
+    path          VARCHAR     NOT NULL,     -- 섹션 경로
+    is_note       BOOLEAN     NOT NULL,     -- 재무제표 주석 아래인가 (실험에서 빼 볼 수 있게)
+    kind          VARCHAR     NOT NULL,     -- 'text' | 'table'
+    table_index   INTEGER,                  -- 표 조각이면 섹션 안 몇 번째 표인지 (0부터)
+    text          VARCHAR     NOT NULL,
+    embed_text    VARCHAR     NOT NULL,
+    char_count    INTEGER     NOT NULL,
+    text_hash     VARCHAR     NOT NULL,
+    built_at      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (strategy, rcept_no, file_name, seq)
+);

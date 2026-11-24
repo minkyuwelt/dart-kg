@@ -65,7 +65,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Phase 3 평가 세트 실행")
     ap.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
     ap.add_argument("--retrieval-only", action="store_true", help="검색만 측정 (LLM 호출 없음)")
-    ap.add_argument("--retriever", default="keyword", help="검색 방식 (keyword)")
+    ap.add_argument("--retriever", default="keyword", help="검색 방식 (keyword | chunk:fixed | chunk:section | chunk:section_path)")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--label", default="", help="결과 파일 이름에 붙일 설정 이름")
     args = ap.parse_args(argv)
