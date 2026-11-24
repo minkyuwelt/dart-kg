@@ -165,6 +165,12 @@ LENIENT_XML = """<?xml version="1.0" encoding="utf-8"?>
 <P><당기말></P>
 <P>신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &amp;는 그대로.</P>
 <TABLE><TR><TD><TE>S&P</TE></TD><TD><TE>Fitch</TE></TD></TR></TABLE>
+<TABLE><TR><TH COLSPAN="8" ENG="" KB Insurance Co., Ltd "">㈜KB라이프생명보험</TH></TR></TABLE>
+</SECTION-1>
+<SECTION-1><TITLE ATOC="Y" ATOCID="2">3. 연결재무제표 주석</TITLE>
+<TITLE ATOC="Y" ATOCID="241">1. 지배기업의 개요 (연결)</TITLE>
+<TABLE ACLASS="NORMAL"><TBODY><TR><TD><P>지배기업은 2008년 설립되었습니다.</P><P>본점은 서울입니다.</P></TD></TR></TBODY></TABLE>
+<TABLE><TR><TD><TE></TE></TD></TR></TABLE>
 </SECTION-1></BODY></DOCUMENT>"""
 
 
@@ -179,12 +185,27 @@ class LenientParsingTest(unittest.TestCase):
     def test_clean_file_uses_etree(self):
         self.assertEqual(parse_document_xml("a.xml", MAIN_XML.encode("utf-8")).parser, "etree")
 
+    def test_attr_quotes_fixed_but_normal_attrs_untouched(self):
+        self.assertEqual(escape_stray(b'<TH WIDTH="951" COLSPAN="8" ENG="" KB Insurance Co., Ltd "">x</TH>'),
+                         b'<TH WIDTH="951" COLSPAN="8" ENG="&quot; KB Insurance Co., Ltd &quot;">x</TH>')
+        self.assertEqual(escape_stray(b'<TITLE ATOC="Y" ATOCID="2" ENG="I. Company Overview">t</TITLE>'),
+                         b'<TITLE ATOC="Y" ATOCID="2" ENG="I. Company Overview">t</TITLE>')
+
     def test_stray_lt_and_amp_parsed_with_text_preserved(self):
         pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
         self.assertEqual(pf.parser, "etree+escape")
         [section] = [s for s in pf.sections if s.title == "주석"]
-        self.assertEqual(section.paragraphs, ["<당기말>", "신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &는 그대로."])
-        self.assertEqual(section.tables[0].rows, [["S&P", "Fitch"]])
+        self.assertEqual(section.paragraphs, ["<당기말>", "신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &는 그대로.",
+                                              "㈜KB라이프생명보험"])  # 칸 하나짜리 표(속성 따옴표 깨진 것)는 문단으로
+        self.assertEqual([t.rows for t in section.tables], [[["S&P", "Fitch"]]])
+
+    def test_single_cell_table_is_text_box(self):
+        # DART는 재무제표 주석 본문을 칸 하나짜리 표 안에 넣는다 → 표가 아니라 문단으로
+        pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
+        [note] = [s for s in pf.sections if s.title.startswith("1. 지배기업")]
+        self.assertEqual(note.paragraphs, ["지배기업은 2008년 설립되었습니다.", "본점은 서울입니다."])
+        self.assertEqual(note.tables, [])  # 빈 글상자도 표로 세지 않음
+        self.assertTrue(note.is_note)
 
     def test_unclosed_tag_falls_back_to_lxml(self):
         pf = parse_document_xml("c.xml", BROKEN_XML)

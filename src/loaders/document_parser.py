@@ -91,11 +91,20 @@ class ParsedFile:
 STRAY_AMP_RE = re.compile(rb"&(?!(?:[A-Za-z][A-Za-z0-9]*|#\d+|#x[0-9A-Fa-f]+);)")
 # 태그 이름·닫는 태그·주석·선언(`<a` `</a` `<!` `<?`)이 아닌 `<` (예: `<당기말>`, `< 10%`)
 STRAY_LT_RE = re.compile(rb"<(?![A-Za-z_/!?])")
+# 속성값 안의 따옴표. 예: ENG="" KB Insurance Co., Ltd "" (2026-11-24 KB 사업보고서 143,619번째 줄).
+# 값의 끝은 "따옴표 뒤에 태그 끝(> />) 또는 다음 속성(NAME=")이 오는 자리"로 본다. 그 전의 따옴표는 값의 일부다.
+ATTR_VALUE_RE = re.compile(rb'(\s[A-Za-z_][A-Za-z0-9_\-]*=)"((?:[^<>"]|"(?!\s*(?:/?>|[A-Za-z_][A-Za-z0-9_\-]*=")))*)"')
+
+
+def _fix_attr_quotes(m: re.Match) -> bytes:
+    name, value = m.group(1), m.group(2)
+    return name + b'"' + value.replace(b'"', b"&quot;") + b'"' if b'"' in value else m.group(0)
 
 
 def escape_stray(data: bytes) -> bytes:
-    """XML 규칙을 어긴 그대로의 `&`와 `<`를 엔티티로 바꾼다. 정상 파일은 그대로다."""
-    return STRAY_LT_RE.sub(b"&lt;", STRAY_AMP_RE.sub(b"&amp;", data))
+    """XML 규칙을 어긴 그대로의 `&`, `<`, 속성값 안 따옴표를 엔티티로 바꾼다. 정상 파일은 그대로다."""
+    data = STRAY_LT_RE.sub(b"&lt;", STRAY_AMP_RE.sub(b"&amp;", data))
+    return ATTR_VALUE_RE.sub(_fix_attr_quotes, data)
 
 
 def parse_tree(data: bytes) -> tuple[ET.Element, str]:
@@ -239,10 +248,27 @@ class _Walker:
             elif tag == "TABLE-GROUP":
                 self.walk(child, caption, unit)
             elif tag == "TABLE":
-                self.current().tables.append(parse_table(child, caption, unit))
+                cells = [td for td in child.iter() if isinstance(td.tag, str) and td.tag in ("TD", "TH")]
+                if len(cells) <= 1:
+                    # 칸이 하나뿐인 표는 표가 아니라 글상자다. DART는 재무제표 주석 본문을 이렇게 쓴다
+                    # (2026-11-24 확인: "1. 지배기업의 개요" 본문 전체가 TD 하나 안에 있었음). 문단으로 취급한다
+                    for text in _box_paragraphs(cells[0]) if cells else []:
+                        self.current().paragraphs.append(text)
+                else:
+                    self.current().tables.append(parse_table(child, caption, unit))
                 caption = None
             else:
                 self.walk(child, caption, unit)
+
+
+def _box_paragraphs(cell: ET.Element) -> list[str]:
+    """글상자(칸 하나짜리 표)의 칸 안 글자를 문단 목록으로. P가 있으면 P 단위로, 없으면 통째로 하나."""
+    ps = [clean_text(p) for p in cell.iter("P")]
+    ps = [p for p in ps if p]
+    if ps:
+        return ps
+    text = clean_text(cell)
+    return [text] if text else []
 
 
 def _attr(elem: ET.Element | None, name: str) -> str | None:
