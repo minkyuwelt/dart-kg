@@ -109,7 +109,7 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 |---|---|---|
 | Phase 1 수집·적재 | 공시 목록·기업개황 수집 → Dagster 자산 → DuckDB | 완료 (일일 스케줄 운영 중) |
 | Phase 2 관계 데이터 | 최대주주·임원·타법인 출자 현황 테이블 (이중 시간축, 사람 식별) | 완료 (2021~2026년 보고서 618개, 임원 15,546행, 사람 1,693명) |
-| Phase 3 공시 RAG | 공시 원문 청크·임베딩 → Neo4j 벡터 인덱스 → Q&A | 예정 |
+| Phase 3 공시 RAG | 공시 원문 청크·임베딩 → Neo4j 벡터 인덱스 → Q&A | 진행 중 (계획: [docs/plans/phase3.md](docs/plans/phase3.md)) |
 | Phase 4 지식그래프 | DuckDB → Neo4j 관계 그래프 적재 → GraphRAG | 예정 |
 
 DuckDB 파일이 원본 데이터(Source of Truth)이고, Neo4j는 DuckDB에서 언제든 다시 만들 수 있게 설계합니다. 모든 적재는 다시 실행해도 중복이 생기지 않도록 멱등성을 유지합니다.
@@ -238,6 +238,16 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    python notebooks/phase2_questions.py --out notebooks/phase2_questions_result.txt
    ```
 
+8. **(Phase 3) 공시 원문 수집** — 정기보고서 원문 ZIP을 `data/documents/{rcept_no}.zip`에 보관하고 `document` 테이블에 메타데이터를 적습니다. 보고서 1건 = API 1건. 먼저 1건만 받아 ZIP 안 파일과 인코딩을 확인한 뒤 백필합니다. 정정본은 접수번호가 달라 각각 받습니다.
+
+   ```bash
+   python -m src.loaders.collect document 20240318000xxx          # 1건 (API 1건)
+   python -m src.loaders.documents inspect 20240318000xxx         # ZIP 안 파일 목록·인코딩·XML 앞부분 (API 없음)
+   python -m src.pipeline.backfill_documents --dry-run            # 계획만
+   python -m src.pipeline.backfill_documents --kind 11011         # 사업보고서만 (약 150건)
+   python -m src.loaders.documents status                         # 회사별 보관 현황
+   ```
+
 화면 없이 터미널에서 실행할 수도 있습니다.
 
 ```bash
@@ -252,6 +262,7 @@ python -m src.loaders.collect investments 2025 00688996 00382199
 python -m src.loaders.investments rebuild   # 원본 응답에서 investment 테이블 재생성 (API 호출 없음)
 python -m src.loaders.collect report_details 00688996 2025 11011   # (Phase 2) 한 보고서의 주요정보 4종 원본 저장 (API 4건)
 python -m src.loaders.relations rebuild      # (Phase 2) 원본에서 최대주주·변동·임원 테이블 재생성 (API 호출 없음)
+python -m src.loaders.collect document 20240318000xxx   # (Phase 3) 한 공시의 원문 ZIP 저장 (API 1건)
 ```
 
 > DuckDB는 파일을 프로세스 단위로 잠급니다. 노트북에서 읽기 전용으로 열어 둔 연결도 파이프라인의 쓰기를 막습니다. 탐색할 때는 아래처럼 열고 블록이 끝나면 바로 닫으세요. 파이프라인이 잠금에 걸리면 5분 간격으로 최대 3번 다시 시도합니다.

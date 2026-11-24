@@ -16,6 +16,9 @@ Dagster 자산은 이 함수들을 호출만 한다. 그래서 같은 작업을 
     # 원본에서 관계 테이블 다시 만들기 (API 0건)
     python -m src.loaders.relations rebuild
 
+    # 한 공시의 원문 ZIP 저장 (API 1건, Phase 3). 저장 후 형식 확인: python -m src.loaders.documents inspect <rcept_no>
+    python -m src.loaders.collect document 20240318000xxx
+
 Dagster가 도는 중에는 DuckDB 쓰기 잠금이 겹치므로 CLI를 함께 실행하지 않는다.
 """
 
@@ -25,8 +28,10 @@ import duckdb
 
 from src.collectors.corp_code import download_corp_code_xml, get_api_key, parse_corps
 from src.collectors.disclosure_list import fetch_disclosures, make_request_key, parse_disclosures
+from src.collectors.document import fetch_document
 from src.collectors.investment import fetch_investments
 from src.collectors.report_detail import ENDPOINTS, fetch_report_detail
+from src.loaders.documents import save_document
 from src.loaders.duckdb_store import connect, save_raw, upsert_corps, upsert_disclosures
 from src.loaders.investments import rebuild_investments
 
@@ -117,12 +122,19 @@ def collect_report_details(
     }
 
 
+def collect_document(con: duckdb.DuckDBPyConnection, api_key: str, rcept_no: str) -> dict:
+    """한 공시의 원문 ZIP을 받아 파일로 저장하고 document 테이블에 적는다. API 1건 (Phase 3)."""
+    zip_bytes = fetch_document(api_key, rcept_no)
+    return {"api_calls": 1, **save_document(con, rcept_no, zip_bytes)}
+
+
 def main(argv: list[str]) -> None:
     usage = (
         "사용법: python -m src.loaders.collect corps"
         " | disclosures <corp_code> <bgn_de> <end_de>"
         " | investments <bsns_year> <corp_code> [<corp_code> ...]"
         " | report_details <corp_code> <bsns_year> <reprt_code>"
+        " | document <rcept_no>"
     )
     if not argv:
         sys.exit(usage)
@@ -136,6 +148,8 @@ def main(argv: list[str]) -> None:
             print(collect_investments(con, api_key, argv[2:], argv[1]))
         elif argv[0] == "report_details" and len(argv) == 4:
             print(collect_report_details(con, api_key, *argv[1:]))
+        elif argv[0] == "document" and len(argv) == 2:
+            print(collect_document(con, api_key, argv[1]))
         else:
             sys.exit(usage)
 
