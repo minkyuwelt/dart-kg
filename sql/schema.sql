@@ -213,3 +213,42 @@ CREATE TABLE IF NOT EXISTS document (
     xml_encoding  VARCHAR,                  -- XML 선언의 encoding (여러 개면 쉼표로)
     fetched_at    TIMESTAMPTZ NOT NULL
 );
+
+-- 원문 XML을 섹션(목차 항목) 단위로 풀어 놓은 것. src/loaders/document_parser.py가 ZIP에서 통째로 다시 만든다 (rebuild).
+-- 조각(청킹)은 이 테이블만 읽는다. 표는 문장으로 펴지 않고 2차원 배열(JSON)로 둔다 — 펴는 방식은 청킹 실험(0007)의 변수.
+CREATE TABLE IF NOT EXISTS document_section (
+    rcept_no           VARCHAR  NOT NULL,
+    file_name          VARCHAR  NOT NULL,  -- ZIP 안 파일 이름. 본문 {rcept_no}.xml, 첨부 {rcept_no}_{코드}.xml
+    doc_kind           VARCHAR,            -- DOCUMENT-NAME의 ACODE (문서 종류 코드)
+    doc_kind_name      VARCHAR,            -- 예: 사업보고서, 연결감사보고서
+    section_id         INTEGER  NOT NULL,  -- 파일 안 등장 순서 (1부터)
+    parent_section_id  INTEGER,
+    depth              INTEGER  NOT NULL,  -- SECTION-n의 n. 표지 0. 섹션 태그 없는 제목은 감싸는 깊이+1
+    atoc_id            VARCHAR,            -- 목차 번호 (유일하지 않음, 참고용)
+    aid                VARCHAR,            -- 항목 코드 (예: CEO-CERT)
+    assoc_note         VARCHAR,            -- 항목 코드 (예: D-0-1-1-0)
+    title              VARCHAR  NOT NULL,
+    path               VARCHAR  NOT NULL,  -- 'I. 회사의 개요 > 1. 회사의 개요'
+    is_note            BOOLEAN  NOT NULL,  -- 재무제표 주석 아래인가
+    explicit_section   BOOLEAN  NOT NULL,  -- SECTION 태그로 열린 섹션인가
+    text               VARCHAR  NOT NULL,  -- 문단을 줄바꿈으로 이은 것 (빈 문단 제외)
+    tables             JSON     NOT NULL,  -- [{caption, unit, header_rows, rows: [[...]]}]
+    char_count         INTEGER  NOT NULL,
+    table_count        INTEGER  NOT NULL,
+    PRIMARY KEY (rcept_no, file_name, section_id)
+);
+
+-- 파일 단위 파싱 결과. 깨진 파일은 ok=false와 error로 남겨 실패율을 품질 검사로 본다 (100% 파싱이 목표가 아님).
+CREATE TABLE IF NOT EXISTS document_parse (
+    rcept_no       VARCHAR     NOT NULL,
+    file_name      VARCHAR     NOT NULL,
+    ok             BOOLEAN     NOT NULL,
+    doc_kind       VARCHAR,
+    doc_kind_name  VARCHAR,
+    section_count  INTEGER,
+    table_count    INTEGER,
+    char_count     BIGINT,
+    error          VARCHAR,
+    parsed_at      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (rcept_no, file_name)
+);
