@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from src.loaders.document_parser import Table, escape_stray, explain_failure, is_prose_table, normalize_encoding, parse_document_xml, parse_table, parse_tree
-from src.loaders.documents import rebuild_sections, save_document, why_lxml
+from src.loaders.documents import raw_context, rebuild_sections, save_document, why_lxml
 from src.loaders.duckdb_store import connect
 from tests.test_documents import make_zip
 
@@ -202,6 +202,8 @@ class LenientParsingTest(unittest.TestCase):
     def test_tag_like_korean_text_is_escaped_but_real_tags_kept(self):
         # `<NICE신용평가>` `<KB금융지주>`: 영문 뒤에 한글이 붙어 태그처럼 보이지만 글자 (why-lxml 22개)
         self.assertEqual(escape_stray("<P><NICE신용평가>-장기</P>".encode("utf-8")), "<P>&lt;NICE신용평가>-장기</P>".encode("utf-8"))
+        # 이름 뒤 공백이 와도 속성 이름이 아니면 글자 (why-lxml 3차: `<upside 시나리오>`)
+        self.assertEqual(escape_stray('<TD COLSPAN="7"><upside 시나리오></TD>'.encode("utf-8")), '<TD COLSPAN="7">&lt;upside 시나리오></TD>'.encode("utf-8"))
         self.assertEqual(escape_stray(b'<SECTION-1><TD COLSPAN="2"/><BR/>\n<P>\n</P></SECTION-1>'),
                          b'<SECTION-1><TD COLSPAN="2"/><BR/>\n<P>\n</P></SECTION-1>')
         pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
@@ -250,6 +252,12 @@ class LenientParsingTest(unittest.TestCase):
         pf = parse_document_xml("c.xml", BROKEN_XML)
         self.assertEqual(pf.parser, "lxml")
         self.assertEqual([p for s in pf.sections for p in s.paragraphs], ["닫히지 않음"])
+
+    def test_raw_context_shows_lines_around_match(self):
+        found = raw_context(MAIN_XML.encode("cp949"), "회사의 개요", around=1)
+        self.assertEqual(len(found), 3)
+        self.assertIn("회사의 개요", found[1][1])
+        self.assertEqual(raw_context(b"<A/>", "none"), [])
 
     def test_explain_failure_points_at_offending_line(self):
         self.assertIsNone(explain_failure(LENIENT_XML.encode("utf-8")))  # 2단계로 되는 파일은 원인 없음

@@ -93,8 +93,9 @@ class ParsedFile:
 STRAY_AMP_RE = re.compile(rb"&(?!(?:[A-Za-z][A-Za-z0-9]*|#\d+|#x[0-9A-Fa-f]+);)")
 # 진짜 태그(`<NAME ` `<NAME>` `<NAME/>` `</NAME>` `<!` `<?`)가 아닌 `<`. 예: `<당기말>`, `< 10%`,
 # 그리고 영문 뒤에 한글이 붙은 `<NICE신용평가>` `<KB금융지주>` (2026-11-24 why-lxml: 22개 파일). 태그 이름은 ASCII만이라
-# 이름 뒤에 공백·`>`·`/`가 오지 않으면 글자로 본다 (한글은 바이트가 0x80 이상이어서 [\s>/]에 걸리지 않음)
-STRAY_LT_RE = re.compile(rb"<(?![A-Za-z_][A-Za-z0-9_\-.:]*(?:[\s>/]|$)|/[A-Za-z_][A-Za-z0-9_\-.:]*\s*>|[!?])", re.MULTILINE)
+# 이름 뒤에 `>`·`/`·"공백 + 속성 이름"이 오지 않으면 글자로 본다 (한글은 바이트가 0x80 이상이어서 영문 범위에 걸리지 않음)
+# 3차(why-lxml 20개): `<upside 시나리오>`는 이름 뒤에 공백이 와서 태그로 보였다. 공백 뒤에는 속성 이름(영문)이나 `>` `/`가 와야 태그다
+STRAY_LT_RE = re.compile(rb"<(?![A-Za-z_][A-Za-z0-9_\-.:]*(?:\s+[A-Za-z_]|\s*/?>|\s*$)|/[A-Za-z_][A-Za-z0-9_\-.:]*\s*>|[!?])", re.MULTILINE)
 # 속성값 안의 따옴표. 예: ENG="" KB Insurance Co., Ltd "" (2026-11-24 KB 사업보고서 143,619번째 줄).
 # 값의 끝은 "따옴표 뒤에 태그 끝(> />) 또는 다음 속성(NAME=")이 오는 자리"로 본다. 그 전의 따옴표는 값의 일부다.
 ATTR_VALUE_RE = re.compile(rb'(\s[A-Za-z_][A-Za-z0-9_\-]*=)"((?:[^<>"]|"(?!\s*(?:/?>|[A-Za-z_][A-Za-z0-9_\-]*=")))*)"')
@@ -334,6 +335,14 @@ def is_prose_table(table: Table) -> bool:
         return False
     numeric = sum(1 for c in cells if NUMERIC_CELL_RE.match(c))
     return numeric / len(cells) <= 0.2 and sum(map(len, cells)) / len(cells) >= 15
+
+
+def table_stats(table: Table) -> dict:
+    """글-표 판별에 쓰는 수치. section CLI가 표마다 출력해 기준(15자, 20%)이 맞는지 눈으로 보는 용도."""
+    cells = [c for r in table.rows for c in dict.fromkeys(r) if c]
+    numeric = sum(1 for c in cells if NUMERIC_CELL_RE.match(c))
+    return {"cells": len(cells), "avg_len": round(sum(map(len, cells)) / len(cells), 1) if cells else 0.0,
+            "numeric_ratio": round(numeric / len(cells), 2) if cells else 0.0}
 
 
 def prose_rows(table: Table) -> list[str]:

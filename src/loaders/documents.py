@@ -17,6 +17,7 @@ CLI (저장소 루트에서, API 호출 없음):
     python -m src.loaders.documents parse                    # 저장된 ZIP 전체 → document_section·document_parse 재생성
     python -m src.loaders.documents why-lxml [rcept_no ...]  # lxml(3단계)로 간 파일들의 2단계 실패 원인을 종류별로 모아 출력
     python -m src.loaders.documents section <rcept_no> <file_name> <제목 일부>  # 한 섹션의 문단·표 모양 출력
+    python -m src.loaders.documents raw <rcept_no> <file_name> <찾을 글자> [앞뒤 줄 수]  # 원문 XML에서 그 글자가 있는 줄 앞뒤 출력
 
 파싱 규칙은 src/loaders/document_parser.py.
 """
@@ -33,7 +34,7 @@ import duckdb
 from dotenv import load_dotenv
 
 from src.collectors.document import ZipEntry, inspect_zip
-from src.loaders.document_parser import ParsedFile, explain_failure, parse_document_xml, section_rows
+from src.loaders.document_parser import ParsedFile, explain_failure, normalize_encoding, parse_document_xml, section_rows, table_stats
 from src.loaders.duckdb_store import REPO_ROOT, connect
 from src.loaders.periodic_reports import periodic_reports_of
 
@@ -232,7 +233,7 @@ def why_lxml(con: duckdb.DuckDBPyConnection, rcept_nos: list[str] | None = None)
 
     원인별 건수가 많은 것부터 전처리 규칙을 추가하면 lxml 비율이 내려간다 (0007). API 호출 없음.
     """
-    sql = "SELECT rcept_no, file_name FROM document_parse WHERE parser = 'lxml'"
+    sql = "SELECT rcept_no, file_name FROM document_parse WHERE parser LIKE 'lxml%'"  # lxml, lxml+cp949
     params: list = []
     if rcept_nos:
         sql += " AND rcept_no IN (" + ",".join("?" * len(rcept_nos)) + ")"
@@ -266,9 +267,31 @@ def print_section(rcept_no: str, file_name: str, title_part: str, max_rows: int 
                 print(f"  문단: {p[:120]}")
             for i, t in enumerate(s.tables, 1):
                 ncols = max((len(r) for r in t.rows), default=0)
-                print(f"  표 {i}: {len(t.rows)}행 × {ncols}열, 머리행 {t.header_rows}, 캡션 {t.caption!r}, 단위 {t.unit!r}")
+                st = table_stats(t)
+                print(f"  표 {i}: {len(t.rows)}행 × {ncols}열, 머리행 {t.header_rows}, 캡션 {t.caption!r}, 단위 {t.unit!r},"
+                      f" 글자 칸 {st['cells']}개 평균 {st['avg_len']}자, 숫자 칸 비율 {st['numeric_ratio']}")
                 for r in t.rows[:max_rows]:
                     print("    | " + " | ".join(c[:40] for c in r[:6]) + (" | …" if len(r) > 6 else ""))
+
+
+def raw_context(data: bytes, needle: str, around: int = 3) -> list[tuple[int, str]]:
+    """원문 XML에서 needle이 처음 나오는 줄의 앞뒤 around줄을 (줄 번호, 글자)로. 파서 규칙을 정할 때 실물을 보는 용도."""
+    text = normalize_encoding(data)[0].decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if needle in line:
+            lo, hi = max(0, i - around), min(len(lines), i + around + 1)
+            return [(n + 1, lines[n]) for n in range(lo, hi)]
+    return []
+
+
+def print_raw(rcept_no: str, file_name: str, needle: str, around: int = 3) -> None:
+    with zipfile.ZipFile(document_path(rcept_no)) as zf:
+        found = raw_context(zf.read(file_name), needle, around)
+    if not found:
+        print(f"'{needle}'이(가) {file_name}에 없습니다")
+    for lineno, line in found:
+        print(f"{lineno:>7}: {line[:300]}")
 
 
 def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
@@ -292,7 +315,8 @@ def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
 
 def main(argv: list[str]) -> None:
     usage = ("사용법: python -m src.loaders.documents inspect <rcept_no> [entry_name] | status | tree <rcept_no> [file_name]"
-             " | parse [rcept_no ...] | why-lxml [rcept_no ...] | section <rcept_no> <file_name> <제목 일부>")
+             " | parse [rcept_no ...] | why-lxml [rcept_no ...] | section <rcept_no> <file_name> <제목 일부>"
+             " | raw <rcept_no> <file_name> <찾을 글자> [앞뒤 줄 수]")
     if not argv:
         sys.exit(usage)
     if argv[0] == "inspect" and len(argv) in (2, 3):
@@ -335,6 +359,8 @@ def main(argv: list[str]) -> None:
                 print(f"  {rcept_no} {file_name} {lineno}번째 줄: {snippet}")
     elif argv[0] == "section" and len(argv) == 4:
         print_section(argv[1], argv[2], argv[3])
+    elif argv[0] == "raw" and len(argv) in (4, 5):
+        print_raw(argv[1], argv[2], argv[3], int(argv[4]) if len(argv) == 5 else 3)
     else:
         sys.exit(usage)
 
