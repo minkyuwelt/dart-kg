@@ -6,7 +6,8 @@
 전략 (계획 phase3.md (B)의 ①②③)
 - fixed:        섹션을 무시하고 파일 전체 글(표는 문장으로 편 것 포함)을 이어서 1,000자마다 자른다. 기본선.
 - section:      섹션 하나가 조각의 울타리. 짧으면 통째로, 길면 문단 경계에서 1,000자 안팎으로 묶고 앞 조각의 마지막 문단을 겹친다.
-                표는 글과 따로 조각으로 만든다 (표 하나가 길면 행 단위로 나눔). 표는 쪼개도 행은 쪼개지 않는다.
+                표는 글과 따로 조각으로 만든다. 같은 섹션의 작은 표들은 1,000자까지 한 조각으로 묶고, 긴 표는 행 단위로 나눈다
+                (행은 쪼개지 않음). → pack_tables
 - section_path: section과 같은 조각에, 임베딩용 글(embed_text) 앞에 "회사명 | 보고서 | 섹션 경로"를 붙인다.
                 짧은 조각이 문맥을 가지게 하려는 것. 저장되는 text는 section과 같다.
 
@@ -190,15 +191,45 @@ def chunk_sections(meta: DocMeta, sections: list[SectionData], strategy: str, ma
         for body in pack(paras, max_chars, overlap=1):
             embed = f"{_tag(meta, s.path)}\n{body}" if strategy == "section_path" else body
             chunks.append(Chunk(strategy, len(chunks), s.section_id, s.path, s.is_note, "text", body, embed))
-        for ti, t in enumerate(s.tables):
-            head, lines = table_to_lines(t)
-            if not lines:
-                continue
-            for body in pack(lines, max_chars - len(head) - 1, overlap=0):
-                body = f"{head}\n{body}"
-                embed = f"{_tag(meta, s.path)}\n{body}" if strategy == "section_path" else body
-                chunks.append(Chunk(strategy, len(chunks), s.section_id, s.path, s.is_note, "table", body, embed, table_index=ti))
+        for ti, body in pack_tables(s.tables, max_chars):
+            embed = f"{_tag(meta, s.path)}\n{body}" if strategy == "section_path" else body
+            chunks.append(Chunk(strategy, len(chunks), s.section_id, s.path, s.is_note, "table", body, embed, table_index=ti))
     return chunks
+
+
+def pack_tables(tables: list[dict], max_chars: int) -> list[tuple[int, str]]:
+    """한 섹션의 표들 → (첫 표 번호, 조각 글) 목록.
+
+    표 하나가 한도 안이면 표 전체가 단위 하나, 넘으면 행 묶음마다 "[표] …" 머리를 붙인 단위 여러 개로 나눈다 (행은 쪼개지 않음).
+    그 단위들을 다시 한도까지 이어 붙인다 — **작은 표 여러 개가 한 조각**이 된다. 1차 실험(2026-11-24, 25개 보고서)에서 표마다
+    조각을 만들었더니 표 조각이 43,217개(전체의 87%)이고 200자 미만이 11,119개였다. 기준일 표("(기준일 : 2025.12.31)") 같은
+    한 줄짜리 표가 조각 하나씩 차지한 것. 같은 섹션의 표는 같은 주제이므로 함께 묶어도 문맥이 어긋나지 않는다.
+    """
+    units: list[tuple[int, str]] = []
+    for ti, t in enumerate(tables):
+        head, lines = table_to_lines(t)
+        if not lines:
+            continue
+        whole = head + "\n" + "\n".join(lines)
+        if len(whole) <= max_chars:
+            units.append((ti, whole))
+        else:
+            for body in pack(lines, max_chars - len(head) - 1, overlap=0):
+                units.append((ti, f"{head}\n{body}"))
+    out: list[tuple[int, str]] = []
+    cur: list[str] = []
+    cur_ti = 0
+    size = 0
+    for ti, text in units:
+        if cur and size + 1 + len(text) > max_chars:
+            out.append((cur_ti, "\n".join(cur)))
+            cur, size = [], 0
+        if not cur:
+            cur_ti = ti
+        cur.append(text); size += len(text) + 1
+    if cur:
+        out.append((cur_ti, "\n".join(cur)))
+    return out
 
 
 def _chunk_fixed(sections: list[SectionData], max_chars: int) -> list[Chunk]:
