@@ -243,6 +243,20 @@ class ReviewTest(unittest.TestCase):
         self.assertTrue(any("KB금융지주는 금융지주회사입니다." in p for p in printed))  # 원문이 화면에 나옴
         self.assertEqual(pending(self.questions, self.draft, None, None)[0].id, "d002")  # 다음 실행은 남은 것부터
 
+    def test_long_paragraph_is_wrapped_not_truncated_and_e_changes_evidence_section(self):
+        long = "첫 문장입니다. " * 60 + "공정가치 서열체계 수준 1은 활성시장의 공시가격입니다."
+        insert_sections(self.con, [(KB_2025, 9, "III. 재무 > 12-A. 금융자산과 금융부채의 공정가치", long, [])])
+        lines = section_preview(self.con, KB_2025, "12-A. 금융자산과 금융부채의 공정가치")
+        self.assertTrue(all(len(l) <= 320 for l in lines))
+        self.assertIn("수준 1은 활성시장의 공시가격", "".join(lines))  # 끝까지 보인다
+        todo = pending(self.questions, self.draft, None, "d002")
+        answers = iter(["e 12-A. 금융자산과 금융부채의 공정가치", "3수준으로 나눈다"])
+        printed = []
+        review(self.con, self.questions, self.draft, todo, input_fn=lambda _: next(answers), print_fn=printed.append)
+        [q] = [q for q in load_questions(self.questions) if q.id == "d002"]
+        self.assertEqual((q.status, q.evidence_section), ("ready", "12-A. 금융자산과 금융부채의 공정가치"))
+        self.assertTrue(any("수준 1은" in p for p in printed))  # 바뀐 섹션의 원문이 바로 뜬다
+
     def test_none_type_accepts_only_y_and_quit_stops(self):
         todo = pending(self.questions, self.draft, "없음", None)
         answers = iter(["있음", "q"])

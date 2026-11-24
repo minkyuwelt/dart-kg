@@ -11,6 +11,7 @@
   정답 글자 → 그 질문을 ready로 바꿔 questions.jsonl에 붙이고(후보 파일에서는 지움) 다음으로
   Enter     → 건너뛰기 (후보로 남음)
   m         → 원문 더 보기
+  e <섹션>   → 근거 섹션 바꾸기 (틀이 짚은 섹션에 답이 없고 다른 섹션에 있을 때. locate로 찾은 경로의 일부를 붙인다)
   d         → 이 후보 삭제 (질문이 어색하거나 답이 없을 때)
   q         → 종료
 "없음" 유형은 원문이 없으므로 뷰어의 본문 검색으로 확인한 뒤 y를 치면 ready가 된다.
@@ -56,12 +57,29 @@ def section_preview(con: duckdb.DuckDBPyConnection, rcept_no: str, section: str 
     path, text, tables = rows[0]
     out = [f"[{path}]"]
     if text:
-        out.extend(text.split("\n"))
+        for para in text.split("\n"):  # 긴 문단(주석 회계정책은 수천 자 한 덩어리)은 잘라서 여러 줄로 — 끊어서 숨기지 않는다
+            out.extend(wrap(para))
     for i, t in enumerate(json.loads(tables), 1):
         out.append(f"<표 {i}>" + (f" {t['caption']}" if t.get("caption") else "") + (f" {t['unit']}" if t.get("unit") else ""))
         for row in t["rows"]:
             cells = [c for c in dict.fromkeys(row)]  # 병합으로 복제된 칸은 한 번만
             out.append("  " + " | ".join(c if c else "·" for c in cells))
+    return out
+
+
+WRAP_CHARS = 300
+
+
+def wrap(text: str, width: int = WRAP_CHARS) -> list[str]:
+    """글을 width 글자 안팎으로 자른다. 문장 끝(마침표 뒤 공백)에서 자르고, 없으면 그냥 자른다."""
+    out, rest = [], text
+    while len(rest) > width:
+        cut = rest.rfind(". ", width // 2, width)
+        cut = cut + 2 if cut > 0 else width
+        out.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        out.append(rest)
     return out
 
 
@@ -148,12 +166,22 @@ def review(con, questions_path: Path, draft_path: Path, todo: list[Question], in
             shown = _show(preview, 0, print_fn)
         while True:
             try:
-                raw = input_fn("정답 (Enter=건너뛰기, m=더 보기, d=삭제, q=종료): ").strip()
+                raw = input_fn("정답 (Enter=건너뛰기, m=더 보기, e <섹션>=근거 바꾸기, d=삭제, q=종료): ").strip()
             except EOFError:
                 raw = "q"
             if raw == "q":
                 print_fn(f"\n저장됨 {stats['accepted']}개, 삭제 {stats['dropped']}개, 건너뜀 {stats['skipped']}개. 남은 후보는 다음에 이어서.")
                 return stats
+            if raw.startswith("e ") or raw == "e":
+                part = raw[2:].strip()
+                if not part:
+                    print_fn("예: e 12-A. 금융자산과 금융부채의 공정가치   (섹션 경로의 일부. locate로 찾은 경로를 붙이면 됨)")
+                    continue
+                q.evidence_section = part
+                preview = section_preview(con, q.evidence_rcept_no[0], part) if q.evidence_rcept_no else []
+                print_fn(f"근거 섹션을 바꿨습니다: {part}")
+                shown = _show(preview, 0, print_fn)
+                continue
             if raw == "m":
                 if shown >= len(preview):
                     print_fn("(원문 끝)")
@@ -188,7 +216,7 @@ def _show(preview: list[str], start: int, print_fn) -> int:
     chars, i = 0, start
     while i < len(preview) and chars < PREVIEW_CHARS and i - start < PREVIEW_ROWS:
         line = preview[i]
-        print_fn(line[:400] + (" …" if len(line) > 400 else ""))
+        print_fn(line)
         chars += len(line)
         i += 1
     if i < len(preview):
