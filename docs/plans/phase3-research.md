@@ -52,6 +52,18 @@
 4. LLM으로 조각 문맥을 생성하는 방식은 1차에서 하지 않는다 (근거: 독립 평가에서 이득 미미, 비용 큼)
 5. 노트북에서 확인할 것 추가: VRAM(KURE-v3 1.1B), arXiv 원문 4편 확인, KorFinMTEB 접근
 
+## 5. Phase 4 참고: FIBO (금융 업계 표준 온톨로지)
+
+FIBO(Financial Industry Business Ontology, EDM Council)는 법인·소유·지배·역할 같은 금융 개념을 OWL로 정의한 표준 어휘다. 소유 모듈(`owns`, `hasOwningParty`, `isOwnedBy`), 지배 모듈(`hasControllingParty`, 지배 = "직접·간접으로 경영과 정책을 지시할 권한의 보유")이 우리 Phase 2 데이터(최대주주·출자·임원)와 같은 영역이고, 소유·지배 관계에 시작·종료 시점과 지분율을 붙이는 것도 표준에 들어가 있다(0005와 같은 방향).
+
+**판단: Phase 4 그래프 스키마의 참고 어휘로만 쓴다. 통째로 채택하지 않는다.**
+- 형식이 다르다. FIBO는 RDF/OWL 트리플, 우리는 Neo4j 속성 그래프. 트리플을 그대로 올리면(Statement·Resource·Predicate 범용 노드) F4의 경로 질의가 길어진다
+- 크기가 다르다. 수천 클래스 중 우리가 쓰는 것은 노드 3종·관계 5종 안팎
+- 한국 공시 개념(최대주주, 특수관계인, 사외이사, 금융지주회사법상 자회사 30%)이 1:1로 대응되지 않는다. 억지로 맞추면 "공시가 준 값을 규칙으로 옮긴다"는 원칙이 깨진다
+- 인용할 요구사항이 없다. 다른 기관과 데이터를 교환해야 할 때 생기는 요구인데 범위 밖이다
+
+**Phase 4 계획에 반영할 것:** 그래프 스키마 결정 문서에 "우리 노드·관계 ↔ FIBO 용어 대응표"를 한 절로 넣는다 (대응 없는 한국 고유 개념은 '대응 없음'으로). 사실(공시 그대로) / 파생(규칙 계산: 간접 지분율·지배 판정·겸직 네트워크) / 해석(LLM 판단) 세 층을 나누고, 파생 관계마다 `derived_from`·`rule`을 붙인다.
+
 ## 출처
 
 - KURE GitHub: https://github.com/nlpai-lab/KURE
@@ -63,4 +75,5 @@
 - Hwang 외. TWICE (KorFinMTEB). ICLR 2025. https://arxiv.org/abs/2502.07131
 - From BM25 to Corrective RAG: Benchmarking Retrieval Strategies for Text-and-Table Documents. https://arxiv.org/abs/2604.01733
 - Anthropic, Introducing Contextual Retrieval (2024 블로그)
+- FIBO 소유·지배 모듈: https://spec.edmcouncil.org/fibo/ (FND/OwnershipAndControl, BE/OwnershipAndControl)
 - 청킹 벤치마크 블로그(Chroma, FloTorch, Vecta 인용): https://www.premai.io/blog/rag-chunking-strategies-the-2026-benchmark-guide/

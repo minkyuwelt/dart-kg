@@ -197,3 +197,19 @@ CREATE OR REPLACE VIEW investment_current AS SELECT * FROM investment WHERE vali
 CREATE OR REPLACE VIEW major_shareholder_current AS SELECT * FROM major_shareholder WHERE valid_to IS NULL AND superseded_by IS NULL;
 CREATE OR REPLACE VIEW major_shareholder_change_current AS SELECT * FROM major_shareholder_change WHERE valid_to IS NULL AND superseded_by IS NULL;
 CREATE OR REPLACE VIEW executive_current AS SELECT * FROM executive WHERE valid_to IS NULL AND superseded_by IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- Phase 3 공시 원문. ZIP 파일은 디스크(DOCUMENTS_PATH, 기본 data/documents/{rcept_no}.zip)에 두고
+-- 여기에는 메타데이터만 적는다 (src/loaders/documents.py). 정정본은 접수번호가 다르므로 행도 따로다.
+CREATE TABLE IF NOT EXISTS document (
+    rcept_no      VARCHAR     PRIMARY KEY,  -- 공시 접수번호 (document.xml 요청 파라미터)
+    corp_code     VARCHAR,                  -- disclosure에서 가져옴 (목록에 없으면 NULL)
+    report_nm     VARCHAR,
+    file_path     VARCHAR     NOT NULL,     -- 저장소 루트 기준 상대 경로 (루트 밖이면 절대 경로)
+    file_size     BIGINT      NOT NULL,     -- ZIP 바이트 수
+    sha256        VARCHAR     NOT NULL,     -- ZIP 해시. 다시 받았을 때 내용이 바뀌었는지 확인
+    entry_count   INTEGER     NOT NULL,     -- ZIP 안 파일 수
+    entries       JSON        NOT NULL,     -- [{name, size, encoding}] ZIP 안 파일 목록
+    xml_encoding  VARCHAR,                  -- XML 선언의 encoding (여러 개면 쉼표로)
+    fetched_at    TIMESTAMPTZ NOT NULL
+);
