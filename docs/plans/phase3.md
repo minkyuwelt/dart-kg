@@ -192,7 +192,7 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
 | 1 | `docs/phase3-plan` (이 문서) | 계획 작성 | — | — |
 | 2 | `feat/document-collect` | `collectors/document.py`, `document` 테이블, CLI `collect document <rcept_no>`, 백필 스크립트(`--dry-run`) | **사업보고서 1건 받아 ZIP 열어 보기** → XML 파일 이름·인코딩·크기를 devlog에 기록 | 응답 형식이 예상과 다르면 2번 PR 안에서 고침 |
 | 3 | `feat/document-parse` | XML → 섹션 트리 파서 + 테스트(실제 XML 1건을 fixture로, 개인정보 없는 섹션만) | 보고서 10개 파싱, 섹션 수·빈 섹션·표 비율 확인 | DART XML 변형이 많으면 보고서 종류별로 fixture 추가 |
-| 4 | `feat/eval-set` | `eval/questions.jsonl` 틀 + Phase 2 질문 5개 + `eval/run.py --retrieval-only` 골격 | **사용자가 질문 25개를 DART 뷰어 보며 추가** | — |
+| 4 | `feat/eval-set` | `eval/questions.jsonl` 틀(근거는 접수번호 + 섹션 경로) + `eval/run.py --retrieval-only`(키워드 기본선 포함, 바로 숫자가 나옴) + `eval/draft.py`(접수번호·섹션을 데이터에서 채운 질문 후보, 정답은 비움) + `eval/locate.py` + Phase 2 질문 4개(phase 3/4 표시) | **사용자가 후보 중 30개를 골라 DART 뷰어에서 정답 확인** (정형표 10 · 서술 10 · 시점 5 · 없음 5), 기본선 실행 | 2026-11-25 설계 변경: 질문은 코드가 초안을 만들고 사람은 정답만 확인 (사용자 결정) |
 | 5 | `feat/chunking` + 0008 초안 | 청킹 2~3가지 구현, `chunk` 테이블 | 사업보고서 30개 청킹, 조각 수·길이 분포 | — |
 | 6 | `feat/embedding-poc` + 0009 | 임베딩 함수(모델 교체 가능), `chunk_embedding` 테이블, 재순위 함수, 비교 스크립트 | **모델 3~4개 × 청킹 3개 × 재순위 유/무 hit@5, GPU 시간** → 0008·0009 확정 | VRAM 부족이면 KURE-v1, 그래도 느리면 API 임베딩 |
 | 7 | `chore/neo4j-compose` + 0001 개정 | docker-compose, `.env.example`, `text_normalize.py`, 0004 스크립트 리팩터 | 컨테이너 기동, 포트 확인 | 포트 충돌 → `.env` |

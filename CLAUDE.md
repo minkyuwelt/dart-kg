@@ -41,6 +41,7 @@ src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 sql/schema.sql     DuckDB 테이블 정의
 tests/             오프라인 테스트 (DART API를 호출하지 않음, `python -m unittest discover -s tests -t .`)
+eval/              (Phase 3) 평가 세트: questions.jsonl, run.py, 검색 함수(retrievers/), 질문 초안 도구. 정답은 사람이 뷰어에서 확인한 것만
 dagster_home/      Dagster 인스턴스 설정 (dagster.yaml만 커밋)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록 (NNNN-제목.md)

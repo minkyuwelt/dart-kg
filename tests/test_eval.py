@@ -1,0 +1,181 @@
+"""평가 세트 도구 테스트: 질문 형식, 지표, 키워드 기본선, 근거 섹션 찾기, 후보 초안. DART API를 호출하지 않는다."""
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from eval.draft import draft_questions, seed_questions
+from eval.locate import locate
+from eval.metrics import Hit, hit_at_k, reciprocal_rank, score_question, summarize
+from eval.questions import NO_ANSWER, QuestionFormatError, load_questions, parse_question
+from eval.retrievers.keyword import KeywordRetriever, tokenize
+from eval.run import evaluate
+from src.collectors.corp_code import HOLDING_CORPS
+from src.loaders.duckdb_store import connect, upsert_disclosures
+from tests.test_report_details import disclosure_row
+
+KB = next(iter(HOLDING_CORPS))  # 지주 하나
+SHINHAN_BANK = "00149293"
+KB_2025, KB_2024, SHB_2023Q1 = "20260313001191", "20250314000111", "20230515000222"
+
+
+def ready(**over) -> dict:
+    base = {"id": "q001", "question": "2025년 말 기준 KB금융지주의 최대주주는?", "type": "정형표", "phase": 3, "status": "ready",
+            "answer": "국민연금공단 8.4%", "evidence_rcept_no": [KB_2025], "evidence_section": "최대주주", "source": "test"}
+    base.update(over)
+    return base
+
+
+class QuestionFormatTest(unittest.TestCase):
+    def test_ready_requires_answer_and_evidence(self):
+        self.assertEqual(parse_question(ready()).id, "q001")
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(answer=None))
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(evidence_rcept_no=[]))
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(evidence_rcept_no=["123"]))  # 14자리 아님
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(type="기타"))
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(phase=5))
+
+    def test_none_type_has_no_evidence_and_fixed_answer(self):
+        self.assertTrue(parse_question(ready(type="없음", answer=NO_ANSWER, evidence_rcept_no=[])).is_ready)
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(type="없음", answer=NO_ANSWER))  # 근거가 있으면 안 됨
+        with self.assertRaises(QuestionFormatError):
+            parse_question(ready(type="없음", answer="몰라요", evidence_rcept_no=[]))
+
+    def test_draft_may_be_empty_and_file_skips_comments_and_duplicate_ids(self):
+        self.assertFalse(parse_question(ready(status="draft", answer=None, evidence_rcept_no=[])).is_ready)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "q.jsonl"
+            p.write_text("# 주석\n\n" + json.dumps(ready()) + "\n" + json.dumps(ready(id="q002", status="draft")) + "\n", encoding="utf-8")
+            qs = load_questions(p)
+            self.assertEqual([q.id for q in qs], ["q001", "q002"])
+            p.write_text(json.dumps(ready()) + "\n" + json.dumps(ready()) + "\n", encoding="utf-8")
+            with self.assertRaises(QuestionFormatError):
+                load_questions(p)
+
+    def test_committed_questions_file_is_valid(self):
+        qs = load_questions()
+        self.assertGreaterEqual(len(qs), 5)
+        self.assertTrue(all(q.type == "없음" and q.answer == NO_ANSWER for q in qs if q.id.startswith("n")))
+
+
+class MetricsTest(unittest.TestCase):
+    HITS = [Hit("A", "A.xml", 1, "I. 개요 > 1. 회사의 개요", 5.0), Hit("B", "B.xml", 3, "VII. 주주 > 1. 최대주주", 4.0),
+            Hit("B", "B.xml", 9, "VIII. 임원", 3.0)]
+
+    def test_hit_and_rr_at_doc_and_section_level(self):
+        self.assertEqual(hit_at_k(self.HITS, ["B"], 1), 0)
+        self.assertEqual(hit_at_k(self.HITS, ["B"], 2), 1)
+        self.assertEqual(reciprocal_rank(self.HITS, ["B"]), 0.5)
+        self.assertEqual(reciprocal_rank(self.HITS, ["B"], "임원"), 1 / 3)  # 맞는 보고서, 엉뚱한 섹션은 건너뜀
+        self.assertEqual(reciprocal_rank(self.HITS, ["Z"]), 0.0)
+        s = score_question(self.HITS, ["B"], "임원", k=2)
+        self.assertEqual((s["hit_doc"], s["hit_section"], s["first_rank_doc"]), (1, 0, 2))
+
+    def test_summarize_averages(self):
+        s = summarize([{"hit_doc": 1, "hit_section": 0, "rr_doc": 1.0, "rr_section": 0.0},
+                       {"hit_doc": 0, "hit_section": 0, "rr_doc": 0.0, "rr_section": 0.0}])
+        self.assertEqual((s["n"], s["hit_doc"], s["hit_section"], s["mrr_doc"]), (2, 0.5, 0.0, 0.5))
+        self.assertEqual(summarize([])["n"], 0)
+
+
+class TokenizeTest(unittest.TestCase):
+    def test_strips_particles_units_and_question_words(self):
+        self.assertEqual(tokenize("2023년 3월 31일 기준 신한은행의 최대주주는 누구인가?"), ["2023", "31", "신한은행", "최대주주"])
+        self.assertEqual(tokenize("KB금융지주가 2025년에 출자한 회사는?"), ["KB금융지주", "2025", "출자한", "회사"])
+        self.assertEqual(tokenize("은행"), ["은행"])  # 두 글자는 조사를 떼지 않음
+
+
+def insert_sections(con, rows):
+    for rcept_no, section_id, path, text, tables in rows:
+        title = path.split(" > ")[-1]
+        con.execute(
+            "INSERT INTO document_section VALUES (?, ? || '.xml', '11011', '사업보고서', ?, NULL, 2, NULL, NULL, NULL, ?, ?, false, true, ?, ?, ?, ?)",
+            [rcept_no, rcept_no, section_id, title, path, text, json.dumps(tables, ensure_ascii=False), len(text), len(tables)],
+        )
+
+
+class RetrieverAndDraftTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.con = connect()
+        self.addCleanup(self.con.close)
+        con = self.con
+        con.execute("INSERT INTO target_corp VALUES (?, 'KB금융지주', 'holding', NULL, NULL, NULL, '2025', now())", [KB])
+        con.execute("INSERT INTO target_corp VALUES (?, '신한은행', 'subsidiary', '00382199', 100, NULL, '2025', now())", [SHINHAN_BANK])
+        upsert_disclosures(con, [
+            disclosure_row(KB_2025, "사업보고서 (2025.12)", "20260313", corp_code=KB),
+            disclosure_row(KB_2024, "사업보고서 (2024.12)", "20250314", corp_code=KB),
+            disclosure_row("20250320000001", "[기재정정]사업보고서 (2024.12)", "20250320", corp_code=KB),  # 파싱 안 됨 → 제외
+            disclosure_row(SHB_2023Q1, "분기보고서 (2023.03)", "20230515", corp_code=SHINHAN_BANK),
+        ])
+        table = [{"caption": None, "unit": None, "header_rows": 1, "rows": [["주주", "지분율"], ["국민연금공단", "8.4"]]}]
+        insert_sections(con, [
+            (KB_2025, 1, "I. 회사의 개요 > 1. 회사의 개요", "KB금융지주는 금융지주회사입니다.", []),
+            (KB_2025, 2, "VII. 주주에 관한 사항 > 1. 최대주주 및 특수관계인의 주식소유 현황", "", table),
+            (KB_2025, 3, "VII. 주주에 관한 사항 > 2. 최대주주 변동현황", "최대주주 변동 없음", []),
+            (KB_2025, 4, "VIII. 임원 및 직원 등에 관한 사항 > 1. 임원 및 직원 등의 현황", "대표이사 양종희", []),
+            (KB_2024, 1, "VII. 주주에 관한 사항 > 1. 최대주주 및 특수관계인의 주식소유 현황", "2024년 최대주주 국민연금공단", []),
+        ])
+
+    def test_keyword_retriever_ranks_title_matches_first(self):
+        hits = KeywordRetriever(self.con).search("2025년 말 기준 KB금융지주의 최대주주는?", k=3)
+        # 제목에 '최대주주'가 든 섹션들이 '회사의 개요'보다 앞. 본문에도 낱말이 있는 둘(3점)이 제목만 맞는 2(2점)보다 앞, 같은 점수면 짧은 것 먼저
+        self.assertEqual([(h.rcept_no, h.section_id) for h in hits], [(KB_2025, 3), (KB_2024, 1), (KB_2025, 2)])
+        self.assertTrue(all(h.score > 0 for h in hits))
+        self.assertEqual(KeywordRetriever(self.con).search("??", k=3), [])
+
+    def test_evaluate_scores_by_type(self):
+        qs = [parse_question(ready()), parse_question(ready(id="q002", type="서술", question="KB금융지주의 주요 사업은?",
+                                                            answer="금융지주", evidence_section="회사의 개요")),
+              parse_question(ready(id="q003", type="시점", question="2024년 말 기준 KB금융지주의 최대주주는?",
+                                   answer="국민연금공단", evidence_rcept_no=[KB_2024]))]
+        result = evaluate(qs, KeywordRetriever(self.con), k=5)
+        self.assertEqual(result["overall"]["n"], 3)
+        self.assertEqual(result["overall"]["hit_doc"], 1.0)
+        self.assertEqual(set(result["by_type"]), {"정형표", "서술", "시점"})
+        self.assertEqual(len(result["questions"][0]["top"]), min(5, len(result["questions"][0]["top"])))
+
+    def test_locate_finds_text_and_table_cells(self):
+        rows = locate(self.con, KB_2025, "국민연금공단")
+        self.assertEqual([(r[1], r[3]) for r in rows], [(2, "표")])
+        rows = locate(self.con, KB_2025, "양종희")
+        self.assertEqual((rows[0][1], rows[0][3]), (4, "본문"))
+        self.assertEqual(locate(self.con, KB_2025, "없는글자"), [])
+
+    def test_draft_uses_latest_parsed_report_and_previous_year_for_timepoint(self):
+        drafts = draft_questions(self.con)
+        by_source = {q.source.split("/")[1]: q for q in drafts if q.evidence_rcept_no == [KB_2025]}
+        self.assertEqual(set(by_source), {"largest_holder", "ceo"})  # 틀 중 섹션이 있는 것만 ('회사의 개요'는 '사업의 개요'가 아님)
+        self.assertEqual(by_source["largest_holder"].question, "2025년 말 기준 KB금융지주의 최대주주는 누구이고 지분율은 몇 %인가?")
+        self.assertIn("1. 최대주주 및 특수관계인의 주식소유 현황", by_source["largest_holder"].evidence_section)
+        self.assertTrue(all(q.status == "draft" and q.answer is None for q in drafts))
+        previous = [q for q in drafts if q.evidence_rcept_no == [KB_2024]]
+        self.assertEqual([(q.type, q.question) for q in previous], [("시점", "2024년 말 기준 KB금융지주의 최대주주는 누구이고 지분율은 몇 %인가?")])
+        self.assertEqual([q for q in drafts if q.evidence_rcept_no == ["20250320000001"]], [])  # 파싱 안 된 정정본은 제외
+        self.assertEqual(len(draft_questions(self.con, max_total=2)), 2)
+
+    def test_seed_questions_resolve_rcept_no_from_disclosure(self):
+        seeds = {q.id: q for q in seed_questions(self.con)}
+        self.assertEqual(seeds["p2-q1"].evidence_rcept_no, [SHB_2023Q1])
+        self.assertEqual(seeds["p2-q1"].answer, "신한금융지주회사 100%")
+        self.assertEqual(seeds["p2-q2"].evidence_rcept_no, [])  # 하나은행이 대상에 없음 → 비고에 기록
+        self.assertIn("접수번호를 못 찾음", seeds["p2-q2"].note)
+        self.assertEqual(seeds["p2-q4"].evidence_rcept_no, [KB_2025])  # 지주의 최신 사업보고서
+        self.assertTrue(all(q.status == "draft" for q in seeds.values()))
+
+
+if __name__ == "__main__":
+    unittest.main()

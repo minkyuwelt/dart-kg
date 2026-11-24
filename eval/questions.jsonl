@@ -1,0 +1,8 @@
+# Phase 3 평가 세트. 한 줄에 질문 하나. 형식은 eval/questions.py, 쓰는 법은 eval/README.md.
+# status "ready"는 사람이 DART 뷰어에서 정답·근거를 확인한 것. "draft"는 실행에서 빠진다.
+# "없음" 유형: 공시에 없는 것을 물어 "모른다"가 정답인 질문. 뷰어의 본문 검색으로 정말 없는지 확인한 뒤 ready로 바꾼다.
+{"id": "n001", "question": "KB금융지주의 2025년 사업보고서에 기재된 비트코인 보유 수량은 몇 개인가?", "type": "없음", "phase": 3, "status": "draft", "answer": "공시에 없음", "evidence_rcept_no": [], "evidence_section": null, "source": "web-2026-11-25", "note": "뷰어에서 '비트코인' 검색으로 없음을 확인"}
+{"id": "n002", "question": "하나금융지주가 2025년 사업보고서에서 제시한 2027년 예상 당기순이익은 얼마인가?", "type": "없음", "phase": 3, "status": "draft", "answer": "공시에 없음", "evidence_rcept_no": [], "evidence_section": null, "source": "web-2026-11-25", "note": "사업보고서에는 이익 예측치가 없다. '2027' 검색으로 확인"}
+{"id": "n003", "question": "우리금융지주 2025년 사업보고서에 기재된 임직원 평균 통근 시간은 몇 분인가?", "type": "없음", "phase": 3, "status": "draft", "answer": "공시에 없음", "evidence_rcept_no": [], "evidence_section": null, "source": "web-2026-11-25", "note": "'통근' 검색으로 확인"}
+{"id": "n004", "question": "신한지주가 2025년 사업보고서에서 밝힌 2030년 목표 주가는 얼마인가?", "type": "없음", "phase": 3, "status": "draft", "answer": "공시에 없음", "evidence_rcept_no": [], "evidence_section": null, "source": "web-2026-11-25", "note": "'목표 주가' 검색으로 확인"}
+{"id": "n005", "question": "KB국민은행 2025년 사업보고서에 나온 각 영업점의 주차 가능 대수는?", "type": "없음", "phase": 3, "status": "draft", "answer": "공시에 없음", "evidence_rcept_no": [], "evidence_section": null, "source": "web-2026-11-25", "note": "영업설비 섹션은 점포 수만 있다. '주차' 검색으로 확인"}

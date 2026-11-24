@@ -242,3 +242,7 @@ dagster_home/*
 
 # 검증 스크립트 결과 (임원 이름·생년월 포함 → 공개 저장소에 올리지 않음. 요약은 devlog에)
 notebooks/phase2_questions_result.txt
+
+# 평가 세트: 실행 결과와 데이터에서 만든 후보 초안은 커밋하지 않음 (questions.jsonl만 커밋)
+eval/results/
+eval/questions.draft.jsonl
