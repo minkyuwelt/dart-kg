@@ -12,8 +12,10 @@
   그런 제목은 "감싸는 섹션 깊이 + 1"의 하위 섹션으로 연다
 - `ATOCID`는 유일하지 않고 순서대로도 아니다(하위가 1부터 다시 시작) → 섹션 ID는 파일 안 등장 순서. ATOCID는 참고 컬럼
 - `AID`(예: CEO-CERT), `AASSOCNOTE`(예: D-0-1-1-0)는 항목 표준 코드로 보여 그대로 저장
-- 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `TU`는 단위, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개.
-  주석의 표는 `TR > TE`로 TE가 바로 칸이다 → 칸은 TR의 자식 TD/TH/TE
+- 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개.
+  주석의 표는 `TR > TE`로 TE가 바로 칸이다. DART가 코드값으로 채우는 칸(날짜·주총 종류·상장여부·성별 등)은 `TR > TU`다
+  (2026-11-24 raw: `<TU AUNIT="CHG_DT" AUNITVALUE="20240321">2024.03.21</TU>`) → 칸은 TR의 자식 TD/TH/TE/TU.
+  `TU`가 TR 밖(TABLE-GROUP·TABLE 바로 아래)에 있으면 단위 표시 "(단위 : 백만원)"
 - 무시: IMAGE/IMG/IMG-CAPTION, PGBRK, COL/COLGROUP. 그 밖의 모르는 태그는 안으로 들어가 글자만 모은다
 
 파서는 세 단계다 (docs/decisions/0007-xml-parser.md). 2026-11-24 노트북에서 사업보고서 187건을 내장 파서만으로
@@ -195,8 +197,11 @@ def clean_text(elem: ET.Element) -> str:
 
 # 표의 칸. 머리 칸은 TH, 몸통 칸은 TD 안에 TE가 있는 꼴이 보통이지만, 재무제표 주석의 표는 TR 바로 아래 TE가 칸이다
 # (2026-11-24 raw: `<TR><TE ENG="..." COLSPAN="2">사용이 제한된 예치금의 내역</TE></TR>`). 그래서 3차까지 주석 표의
-# 숫자 행이 모두 빠져 "숫자 칸 비율 0.0"이었다
-CELL_TAGS = {"TD", "TH", "TE"}
+# 숫자 행이 모두 빠져 "숫자 칸 비율 0.0"이었다.
+# TU도 TR 바로 아래 있으면 칸이다. DART가 코드값(AUNIT/AUNITVALUE)으로 채우는 날짜·주총 종류·상장여부·성별 칸이 이 꼴이라,
+# 4차까지 임원 표(성별·출생년월·등기임원여부)와 타법인출자 표(상장여부·최초취득일자)의 그 칸들이 빠져 열이 밀렸다
+# (2026-11-24 평가 세트 검토에서 발견, raw로 확인). TR 밖의 TU는 단위 표시다 (`_table_unit`)
+CELL_TAGS = {"TD", "TH", "TE", "TU"}
 
 
 def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Table:
@@ -212,9 +217,8 @@ def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Tab
             row_elems.append((child, False))
         elif child.tag == "TU" and unit is None:
             unit = clean_text(child) or None
-    for tu in table.iter("TU"):
-        if unit is None:
-            unit = clean_text(tu) or None
+    if unit is None:
+        unit = _table_unit(table)
 
     grid: list[list[str]] = []
     pending: dict[tuple[int, int], str] = {}  # (row, col) → ROWSPAN으로 내려온 값
@@ -241,6 +245,17 @@ def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Tab
             header_rows += 1
         grid.append(row)
     return Table(caption=caption, unit=unit, header_rows=header_rows, rows=grid)
+
+
+def _table_unit(table: ET.Element) -> str | None:
+    """표 안에서 단위 표시 TU를 찾는다. TR 안의 TU는 칸이므로 제외한다 (안 그러면 "2024.03.21"이 단위가 된다)."""
+    in_row = {id(tu) for tr in table.iter("TR") for tu in tr.iter("TU")}
+    for tu in table.iter("TU"):
+        if id(tu) not in in_row:
+            text = clean_text(tu)
+            if text:
+                return text
+    return None
 
 
 def _span(td: ET.Element, attr: str) -> int:

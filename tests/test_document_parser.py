@@ -3,7 +3,7 @@
 확인하는 것
 1) SECTION-n 중첩 → 깊이·경로·부모. 섹션 태그 없는 TITLE ATOC="Y"는 하위 섹션으로
 2) 문단: 서식 태그 벗김, 공백 정리, 빈 문단 제외. 소제목(ATOC="N")은 문단이자 표 캡션
-3) 표: THEAD 행 수, TE 글자, TU 단위, COLSPAN/ROWSPAN 값 복제
+3) 표: THEAD 행 수, TE 글자, TR 밖 TU는 단위·TR 안 TU는 칸, COLSPAN/ROWSPAN 값 복제
 4) 주석 섹션 표시, 첨부 파일의 문서 종류
 5) rebuild_sections: ZIP 전체 재생성, 어느 파서 단계로 성공했는지 기록, 다시 돌려도 행 수 같음
 6) 파서 3단계 (0007): 정상 → etree, 그대로의 `<`·`&` → etree+escape(글자 보존), 닫히지 않은 태그 → lxml
@@ -158,6 +158,21 @@ class ParseDocumentXmlTest(unittest.TestCase):
         table, _ = parse_tree(b"""<TABLE><THEAD><TR><TH><TE>A</TE></TH><TH><TE>B</TE></TH></TR></THEAD>
             <TBODY><TR><TE COLSPAN="2">X</TE></TR><TR><TE>1</TE><TE>2</TE></TR></TBODY></TABLE>""")
         self.assertEqual(parse_table(table, None, None).rows, [["A", "B"], ["X", "X"], ["1", "2"]])
+
+    def test_tu_directly_under_tr_is_a_cell_not_a_unit(self):
+        # 임원 변동 표 (raw 20260313000815 4057~4063번째 줄을 본뜸): 날짜·주총 종류 칸이 TU다. 4차까지 이 칸들이 빠져
+        # 머리행 5칸·몸통행 3칸으로 열이 밀렸고, 표 단위 자리에 날짜가 들어갈 수 있었다
+        table, _ = parse_tree("""<TABLE><TU>(단위 : 명)</TU>
+            <THEAD><TR><TH>변동일자</TH><TH>주총종류</TH><TH>신규</TH><TH>재선임</TH><TH>해임</TH></TR></THEAD>
+            <TBODY><TR><TU AUNIT="CHG_DT" AUNITVALUE="20240321">2024.03.21</TU><TU AUNIT="GM_TYPE" AUNITVALUE="1">정기주총</TU>
+            <TE ACODE="NAPP_NM">사외이사 A</TE><TE ACODE="RAPP_NM">사외이사 B</TE><TE ACODE="DISM_NM">-</TE></TR></TBODY></TABLE>""".encode())
+        parsed = parse_table(table, None, None)
+        self.assertEqual(parsed.rows, [["변동일자", "주총종류", "신규", "재선임", "해임"],
+                                       ["2024.03.21", "정기주총", "사외이사 A", "사외이사 B", "-"]])
+        self.assertEqual(parsed.unit, "(단위 : 명)")
+        # 단위 TU가 없고 칸 TU만 있으면 단위는 비어야 한다
+        table2, _ = parse_tree(b"<TABLE><TR><TU>2024.03.21</TU><TE>x</TE></TR></TABLE>")
+        self.assertIsNone(parse_table(table2, None, None).unit)
 
     def test_unknown_entity_cr_becomes_space_others_kept_as_text(self):
         self.assertEqual(escape_stray(b"<P>&cr;&cr;a&amp;b&nbsp;</P>"), b"<P>  a&amp;b&amp;nbsp;</P>")
