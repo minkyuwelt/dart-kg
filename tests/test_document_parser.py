@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from src.loaders.document_parser import escape_stray, explain_failure, parse_document_xml, parse_table, parse_tree
+from src.loaders.document_parser import Table, escape_stray, explain_failure, is_prose_table, normalize_encoding, parse_document_xml, parse_table, parse_tree
 from src.loaders.documents import rebuild_sections, save_document, why_lxml
 from src.loaders.duckdb_store import connect
 from tests.test_documents import make_zip
@@ -164,6 +164,7 @@ LENIENT_XML = """<?xml version="1.0" encoding="utf-8"?>
 <SECTION-1><TITLE ATOC="Y" ATOCID="1">주석</TITLE>
 <P><당기말></P>
 <P>신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &amp;는 그대로.</P>
+<P><NICE신용평가>-장기 신용등급</P>
 <TABLE><TR><TD><TE>S&P</TE></TD><TD><TE>Fitch</TE></TD></TR></TABLE>
 <TABLE><TR><TH COLSPAN="8" ENG="" KB Insurance Co., Ltd "">㈜KB라이프생명보험</TH></TR></TABLE>
 </SECTION-1>
@@ -171,6 +172,13 @@ LENIENT_XML = """<?xml version="1.0" encoding="utf-8"?>
 <TITLE ATOC="Y" ATOCID="241">1. 지배기업의 개요 (연결)</TITLE>
 <TABLE ACLASS="NORMAL"><TBODY><TR><TD><P>지배기업은 2008년 설립되었습니다.</P><P>본점은 서울입니다.</P></TD></TR></TBODY></TABLE>
 <TABLE><TR><TD><TE></TE></TD></TR></TABLE>
+<TITLE ATOC="Y" ATOCID="242">3. 중요한 회계정책 (연결)</TITLE>
+<TABLE><TBODY>
+<TR><TD COLSPAN="3">다음은 연결재무제표 작성에 적용된 중요한 회계정책입니다. 이러한 정책은 일관되게 적용되었습니다.</TD></TR>
+<TR><TD>―</TD><TD COLSPAN="2">수준 1 : 동일한 자산이나 부채에 대한 활성시장의 공시가격</TD></TR>
+<TR><TD>―</TD><TD COLSPAN="2">수준 2 : 직접적으로 또는 간접적으로 관측 가능한 투입변수</TD></TR>
+</TBODY></TABLE>
+<TABLE><TBODY><TR><TD>자산총계</TD><TD>1,000</TD></TR><TR><TD>부채총계</TD><TD>800</TD></TR></TBODY></TABLE>
 </SECTION-1></BODY></DOCUMENT>"""
 
 
@@ -191,12 +199,43 @@ class LenientParsingTest(unittest.TestCase):
         self.assertEqual(escape_stray(b'<TITLE ATOC="Y" ATOCID="2" ENG="I. Company Overview">t</TITLE>'),
                          b'<TITLE ATOC="Y" ATOCID="2" ENG="I. Company Overview">t</TITLE>')
 
+    def test_tag_like_korean_text_is_escaped_but_real_tags_kept(self):
+        # `<NICE신용평가>` `<KB금융지주>`: 영문 뒤에 한글이 붙어 태그처럼 보이지만 글자 (why-lxml 22개)
+        self.assertEqual(escape_stray("<P><NICE신용평가>-장기</P>".encode("utf-8")), "<P>&lt;NICE신용평가>-장기</P>".encode("utf-8"))
+        self.assertEqual(escape_stray(b'<SECTION-1><TD COLSPAN="2"/><BR/>\n<P>\n</P></SECTION-1>'),
+                         b'<SECTION-1><TD COLSPAN="2"/><BR/>\n<P>\n</P></SECTION-1>')
+        pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
+        self.assertEqual(pf.parser, "etree+escape")
+        self.assertIn("<NICE신용평가>-장기 신용등급", pf.sections[0].paragraphs)
+
+    def test_cp949_file_is_transcoded(self):
+        # 2022년 이전 사업보고서: 선언은 utf-8인데 바이트는 EUC-KR (why-lxml 98개)
+        raw = MAIN_XML.encode("cp949")
+        data, changed = normalize_encoding(raw)
+        self.assertTrue(changed)
+        self.assertEqual(data, MAIN_XML.encode("utf-8"))
+        self.assertEqual(normalize_encoding(MAIN_XML.encode("utf-8")), (MAIN_XML.encode("utf-8"), False))
+        pf = parse_document_xml("a.xml", raw)
+        self.assertEqual(pf.parser, "etree+cp949")
+        self.assertEqual(pf.company_name, parse_document_xml("a.xml", MAIN_XML.encode("utf-8")).company_name)
+
+    def test_prose_table_becomes_paragraphs_but_data_table_stays(self):
+        pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
+        [policy] = [s for s in pf.sections if s.title.startswith("3. 중요한 회계정책")]
+        self.assertEqual(policy.paragraphs, [
+            "다음은 연결재무제표 작성에 적용된 중요한 회계정책입니다. 이러한 정책은 일관되게 적용되었습니다.",
+            "― 수준 1 : 동일한 자산이나 부채에 대한 활성시장의 공시가격",
+            "― 수준 2 : 직접적으로 또는 간접적으로 관측 가능한 투입변수",
+        ])
+        self.assertEqual([t.rows for t in policy.tables], [[["자산총계", "1,000"], ["부채총계", "800"]]])  # 숫자 표는 표로
+        self.assertFalse(is_prose_table(Table(None, None, 1, [["항목", "설명"], ["가", "긴 설명 " * 10]])))  # 머리행이 있으면 표
+
     def test_stray_lt_and_amp_parsed_with_text_preserved(self):
         pf = parse_document_xml("b.xml", LENIENT_XML.encode("utf-8"))
         self.assertEqual(pf.parser, "etree+escape")
         [section] = [s for s in pf.sections if s.title == "주석"]
         self.assertEqual(section.paragraphs, ["<당기말>", "신용등급은 S&P 기준이며 비율은 < 10% 입니다. 기호 &는 그대로.",
-                                              "㈜KB라이프생명보험"])  # 칸 하나짜리 표(속성 따옴표 깨진 것)는 문단으로
+                                              "<NICE신용평가>-장기 신용등급", "㈜KB라이프생명보험"])  # 칸 하나짜리 표(속성 따옴표 깨진 것)는 문단으로
         self.assertEqual([t.rows for t in section.tables], [[["S&P", "Fitch"]]])
 
     def test_single_cell_table_is_text_box(self):
