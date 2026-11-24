@@ -122,6 +122,25 @@ def find_section(con: duckdb.DuckDBPyConnection, rcept_no: str, title_re: str, s
     return (row[0], row[1]) if row else None
 
 
+def with_particle(corp: str, particle: str) -> str:
+    """회사 이름 뒤 조사를 받침에 맞게. '동양생명보험' + '는' → '동양생명보험은'. 한글이 아닌 글자로 끝나면 그대로."""
+    last = corp[-1]
+    if not ("가" <= last <= "힣"):
+        return corp + particle
+    has_final = (ord(last) - ord("가")) % 28 != 0
+    pairs = {"는": ("은", "는"), "가": ("이", "가"), "를": ("을", "를")}
+    if particle not in pairs:
+        return corp + particle
+    return corp + (pairs[particle][0] if has_final else pairs[particle][1])
+
+
+def fill_question(template: str, corp: str, year: str) -> str:
+    """틀의 {corp}는/{corp}가/{corp}를 자리를 조사까지 맞춰 채운다."""
+    for particle in ("는", "가", "를"):
+        template = template.replace("{corp}" + particle, with_particle(corp, particle))
+    return template.format(corp=corp, year=year)
+
+
 def pick_templates(corp_code: str, role: str) -> list[Template]:
     if role == "holding":
         return TEMPLATES
@@ -143,7 +162,7 @@ def draft_questions(con: duckdb.DuckDBPyConnection, corp_codes: list[str] | None
             path, _ = found
             qtype = "시점" if rep["year_rank"] == 2 else t.type
             out.append(Question(
-                id=f"d{len(out) + 1:03d}", question=t.question.format(corp=rep["corp_name"], year=rep["year"]),
+                id=f"d{len(out) + 1:03d}", question=fill_question(t.question, rep["corp_name"], rep["year"]),
                 type=qtype, phase=3, status="draft", answer=None, evidence_rcept_no=[rep["rcept_no"]],
                 evidence_section=path, source=f"draft-{today}/{t.key}",
                 note=f"확인할 것: {t.answer_hint}. 뷰어: {VIEWER_URL.format(rcept_no=rep['rcept_no'])}",

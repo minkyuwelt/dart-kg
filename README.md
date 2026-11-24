@@ -260,6 +260,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 
    ```bash
    python -m eval.draft --seed                  # 질문 후보 초안 → eval/questions.draft.jsonl (정답은 비움)
+   python -m eval.review                        # 후보를 한 개씩 원문과 함께 보고 정답 입력 → questions.jsonl
    python -m eval.locate 20260313001191 "국민연금공단"   # 정답 글자가 든 섹션 경로 찾기
    python -m eval.run --retrieval-only --label baseline  # 키워드 기본선 hit@5·MRR → eval/results/
    ```
