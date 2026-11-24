@@ -256,6 +256,14 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    python -m src.loaders.documents why-lxml                # 복구 파서(lxml)로 간 파일들의 원인을 종류별로 출력
    ```
 
+10. **(Phase 3) 평가 세트** — 임베딩·청킹·프롬프트를 비교할 질문 30개. 접수번호와 근거 섹션은 데이터에서 초안을 만들고, 정답은 사람이 DART 뷰어에서 확인해 적습니다 (`eval/README.md`). 키워드 기본선이 들어 있어 Neo4j 없이도 hit@5·MRR이 나옵니다.
+
+   ```bash
+   python -m eval.draft --seed                  # 질문 후보 초안 → eval/questions.draft.jsonl (정답은 비움)
+   python -m eval.locate 20260313001191 "국민연금공단"   # 정답 글자가 든 섹션 경로 찾기
+   python -m eval.run --retrieval-only --label baseline  # 키워드 기본선 hit@5·MRR → eval/results/
+   ```
+
 화면 없이 터미널에서 실행할 수도 있습니다.
 
 ```bash
