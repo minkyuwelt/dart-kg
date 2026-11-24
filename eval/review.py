@@ -62,7 +62,9 @@ def section_preview(con: duckdb.DuckDBPyConnection, rcept_no: str, section: str 
     for i, t in enumerate(json.loads(tables), 1):
         out.append(f"<표 {i}>" + (f" {t['caption']}" if t.get("caption") else "") + (f" {t['unit']}" if t.get("unit") else ""))
         for row in t["rows"]:
-            cells = [c for c in dict.fromkeys(row)]  # 병합으로 복제된 칸은 한 번만
+            # 병합(COLSPAN/ROWSPAN)으로 복제된 칸은 바로 옆 칸과 같으므로 그때만 한 번으로 줄인다.
+            # 행 전체에서 같은 값을 지우면 안 된다: 타법인출자 표처럼 기초와 기말이 같은 행은 기말 칸이 사라져 보였다 (2026-11-24)
+            cells = [c for i, c in enumerate(row) if i == 0 or c != row[i - 1]]
             out.append("  " + " | ".join(c if c else "·" for c in cells))
     return out
 

@@ -223,7 +223,13 @@ class ReviewTest(unittest.TestCase):
         lines = section_preview(self.con, KB_2025, "1. 최대주주 및 특수관계인의 주식소유 현황")
         self.assertEqual(lines[0], "[VII. 주주에 관한 사항 > 1. 최대주주 및 특수관계인의 주식소유 현황]")
         self.assertIn("<표 1> (단위: 원)", lines)
-        self.assertIn("  주당 현금배당금 | 4,790 | 4,020", lines)  # 병합 복제 칸 하나로
+        self.assertIn("  주당 현금배당금 | 4,790 | 4,020", lines)  # 병합 복제 칸(바로 옆이 같음) 하나로
+        # 떨어져 있는 같은 값은 지우지 않는다: 기초 = 기말인 출자 행에서 기말 칸이 사라져 보였던 문제
+        insert_sections(self.con, [(KB_2025, 77, "XII. 상세표 > 3. 타법인출자 현황(상세)", "",
+                                    [{"caption": None, "unit": None, "header_rows": 0,
+                                      "rows": [["국민은행", "100", "100", "14,821,721", "-", "-", "100", "14,821,721"]]}])])
+        lines = section_preview(self.con, KB_2025, "타법인출자 현황(상세)")
+        self.assertIn("  국민은행 | 100 | 14,821,721 | - | 100 | 14,821,721", lines)
         self.assertEqual(section_preview(self.con, KB_2025, "없는 섹션"), ["(파싱된 섹션이 없습니다. 뷰어로 확인하세요)"])
         self.assertEqual(section_preview(self.con, KB_2025, None), [])
 
