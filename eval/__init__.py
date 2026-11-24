@@ -9,4 +9,5 @@
 - eval/run.py            실행: python -m eval.run --retrieval-only
 - eval/locate.py         근거 섹션 경로 찾기: python -m eval.locate <접수번호> "<정답에 나오는 글자>"
 - eval/draft.py          질문 후보 초안 만들기 (접수번호·섹션은 데이터에서, 정답은 사람이)
+- eval/review.py         후보를 한 개씩 원문과 함께 보여 주고 정답을 받아 questions.jsonl에 넣는 대화형 도구
 """

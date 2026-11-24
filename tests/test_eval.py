@@ -7,11 +7,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from eval.draft import draft_questions, seed_questions
+from eval.draft import draft_questions, fill_question, seed_questions, with_particle
 from eval.locate import locate
 from eval.metrics import Hit, hit_at_k, reciprocal_rank, score_question, summarize
 from eval.questions import NO_ANSWER, QuestionFormatError, load_questions, parse_question
 from eval.retrievers.keyword import KeywordRetriever, tokenize
+from eval.review import line_id, pending, read_lines, review, section_preview
 from eval.run import evaluate
 from src.collectors.corp_code import HOLDING_CORPS
 from src.loaders.duckdb_store import connect, upsert_disclosures
@@ -190,3 +191,69 @@ class RetrieverAndDraftTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewTest(unittest.TestCase):
+    """대화형 정답 입력 도구. input/print를 가짜로 바꿔 돌린다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.con = connect()
+        self.addCleanup(self.con.close)
+        table = [{"caption": None, "unit": "(단위: 원)", "header_rows": 1, "rows": [["구분", "당기", "당기", "전기"], ["주당 현금배당금", "4,790", "4,790", "4,020"]]}]
+        insert_sections(self.con, [
+            (KB_2025, 1, "I. 회사의 개요 > 1. 회사의 개요", "KB금융지주는 금융지주회사입니다.\n둘째 문단", []),
+            (KB_2025, 2, "VII. 주주에 관한 사항 > 1. 최대주주 및 특수관계인의 주식소유 현황", "", table),
+        ])
+        self.questions = Path(self.tmp.name) / "questions.jsonl"
+        self.draft = Path(self.tmp.name) / "questions.draft.jsonl"
+        none_q = ready(id="n001", type="없음", status="draft", answer=NO_ANSWER, evidence_rcept_no=[], evidence_section=None,
+                       question="KB금융지주의 비트코인 보유 수량은?")
+        self.questions.write_text("# 주석\n" + json.dumps(none_q, ensure_ascii=False) + "\n", encoding="utf-8")
+        d1 = ready(id="d001", status="draft", answer=None, note="확인할 것: 최대주주. 뷰어: https://x")
+        d2 = ready(id="d002", status="draft", answer=None, type="서술", question="KB금융지주의 주요 사업은?", evidence_section="회사의 개요")
+        d3 = ready(id="d003", status="draft", answer=None, type="서술", question="어색한 질문")
+        self.draft.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in (d1, d2, d3)), encoding="utf-8")
+
+    def test_section_preview_shows_text_and_table_rows_without_duplicated_merged_cells(self):
+        lines = section_preview(self.con, KB_2025, "1. 최대주주 및 특수관계인의 주식소유 현황")
+        self.assertEqual(lines[0], "[VII. 주주에 관한 사항 > 1. 최대주주 및 특수관계인의 주식소유 현황]")
+        self.assertIn("<표 1> (단위: 원)", lines)
+        self.assertIn("  주당 현금배당금 | 4,790 | 4,020", lines)  # 병합 복제 칸 하나로
+        self.assertEqual(section_preview(self.con, KB_2025, "없는 섹션"), ["(파싱된 섹션이 없습니다. 뷰어로 확인하세요)"])
+        self.assertEqual(section_preview(self.con, KB_2025, None), [])
+
+    def test_pending_lists_drafts_from_both_files_and_review_loop_writes_answers(self):
+        todo = pending(self.questions, self.draft, None, None)
+        self.assertEqual([q.id for q in todo], ["n001", "d001", "d002", "d003"])
+        answers = iter(["y", "국민연금공단 8.4%", "m", "", "d"])  # 없음 확인, 정답, 더 보기 후 건너뛰기, 삭제
+        printed = []
+        stats = review(self.con, self.questions, self.draft, todo, input_fn=lambda _: next(answers), print_fn=printed.append)
+        self.assertEqual(stats, {"accepted": 2, "dropped": 1, "skipped": 1})
+        qs = {q.id: q for q in load_questions(self.questions)}
+        self.assertEqual(set(qs), {"n001", "d001"})
+        self.assertTrue(qs["n001"].is_ready and qs["n001"].answer == NO_ANSWER)
+        self.assertEqual((qs["d001"].status, qs["d001"].answer), ("ready", "국민연금공단 8.4%"))
+        self.assertTrue(qs["d001"].note.startswith("review로 확인"))
+        self.assertEqual([line_id(l) for l in read_lines(self.draft)], ["d002"])  # 저장·삭제된 줄은 빠지고 건너뛴 것만 남음
+        self.assertTrue(any("KB금융지주는 금융지주회사입니다." in p for p in printed))  # 원문이 화면에 나옴
+        self.assertEqual(pending(self.questions, self.draft, None, None)[0].id, "d002")  # 다음 실행은 남은 것부터
+
+    def test_none_type_accepts_only_y_and_quit_stops(self):
+        todo = pending(self.questions, self.draft, "없음", None)
+        answers = iter(["있음", "q"])
+        printed = []
+        stats = review(self.con, self.questions, self.draft, todo, input_fn=lambda _: next(answers), print_fn=printed.append)
+        self.assertEqual(stats["accepted"], 0)
+        self.assertTrue(any("y(공시에 없음)만" in p for p in printed))
+
+    def test_particles_follow_final_consonant(self):
+        self.assertEqual(with_particle("동양생명보험", "는"), "동양생명보험은")
+        self.assertEqual(with_particle("신한카드", "가"), "신한카드가")
+        self.assertEqual(with_particle("하나증권", "가"), "하나증권이")
+        self.assertEqual(with_particle("KB", "는"), "KB는")
+        self.assertEqual(fill_question("{corp}는 {year}년 {corp}의 보고서", "우리은행", "2025"), "우리은행은 2025년 우리은행의 보고서")

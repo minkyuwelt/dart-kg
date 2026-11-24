@@ -10,7 +10,20 @@
 | `eval/questions.draft.jsonl` | `python -m eval.draft`가 만든 후보. 정답을 채워 `questions.jsonl`로 옮긴다 | X (데이터에서 생성) |
 | `eval/results/` | `python -m eval.run` 결과 | X |
 
-## 순서 (노트북, 2~3시간)
+## 빠른 길: `python -m eval.review`
+
+JSON을 손으로 고치지 않아도 된다. 후보를 한 개씩 보여 주면서 **그 섹션의 원문(DuckDB에 파싱된 글과 표)**을 함께 띄우니, 읽고 정답을 치면 끝이다.
+
+```bash
+python -m eval.draft --seed      # 후보 만들기 (한 번)
+python -m eval.review            # 한 개씩 보며 정답 입력 → questions.jsonl에 ready로 저장
+python -m eval.review --type 정형표   # 유형 하나만
+```
+
+입력: 정답 글자(저장) / Enter(건너뛰기) / m(원문 더 보기) / d(후보 삭제) / q(종료). "없음" 유형은 뷰어 검색으로 확인한 뒤 `y`.
+숫자(지분율·배당·직원 수)는 화면의 뷰어 링크로 한 번 대조하는 것을 권한다. 정답은 사람이 읽고 치는 것이고 코드는 추측하지 않는다.
+
+## 손으로 하는 순서 (노트북, 2~3시간)
 
 1. **후보 만들기**
    ```bash
