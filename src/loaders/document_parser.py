@@ -4,14 +4,16 @@
 조각으로 자르지 않고(청킹의 일), 표를 문장으로 바꾸지 않고(청킹 실험의 변수), 내용을 해석하지 않는다.
 
 2026-11-24 KB금융 2025 사업보고서(rcept_no 20260313001191)에서 확인한 DART XML(dart4.xsd) 구조:
-- ZIP 안에 본문 `{rcept_no}.xml`과 첨부 `{rcept_no}_{코드}.xml`(연결감사보고서 등). 모두 UTF-8
+- ZIP 안에 본문 `{rcept_no}.xml`과 첨부 `{rcept_no}_{코드}.xml`(연결감사보고서 등). 2023년 이후는 UTF-8,
+  2022년 이전은 선언만 utf-8이고 바이트는 EUC-KR(CP949) → 파싱 전에 UTF-8로 바꾼다 (normalize_encoding)
 - `DOCUMENT > DOCUMENT-NAME(ACODE=문서 종류) / COMPANY-NAME / SUMMARY / BODY`
 - 섹션은 `SECTION-1 > SECTION-2 > SECTION-3`로 중첩. 각 섹션의 첫 `TITLE ATOC="Y"`가 제목.
   단, 제목 174개 중 섹션 태그는 69개뿐이다. 재무제표 주석처럼 섹션 태그 없이 `TITLE ATOC="Y"`만 이어지는 곳이 많아,
   그런 제목은 "감싸는 섹션 깊이 + 1"의 하위 섹션으로 연다
 - `ATOCID`는 유일하지 않고 순서대로도 아니다(하위가 1부터 다시 시작) → 섹션 ID는 파일 안 등장 순서. ATOCID는 참고 컬럼
 - `AID`(예: CEO-CERT), `AASSOCNOTE`(예: D-0-1-1-0)는 항목 표준 코드로 보여 그대로 저장
-- 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `TU`는 단위, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개
+- 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `TU`는 단위, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개.
+  주석의 표는 `TR > TE`로 TE가 바로 칸이다 → 칸은 TR의 자식 TD/TH/TE
 - 무시: IMAGE/IMG/IMG-CAPTION, PGBRK, COL/COLGROUP. 그 밖의 모르는 태그는 안으로 들어가 글자만 모은다
 
 파서는 세 단계다 (docs/decisions/0007-xml-parser.md). 2026-11-24 노트북에서 사업보고서 187건을 내장 파서만으로
@@ -21,7 +23,8 @@
   2. etree+escape  엔티티가 아닌 `&` → `&amp;`, 태그 이름이 될 수 없는 글자가 따라오는 `<` → `&lt;`로 바꾼 뒤 1
                    (`<당기말>`을 글자로 살린다. lxml 복구만 쓰면 모르는 태그로 보고 글자를 버릴 수 있다)
   3. lxml          lxml.etree의 recover 모드. 닫히지 않은 태그 등 전처리로 못 잡는 것
-어느 단계에서 성공했는지를 document_parse.parser에 남겨 단계별 건수를 알 수 있게 한다.
+어느 단계에서 성공했는지를 document_parse.parser에 남겨 단계별 건수를 알 수 있게 한다 (인코딩을 바꿨으면 "+cp949").
+글이 든 표 두 가지(칸 하나짜리 글상자, 머리행 없는 한 줄 한 칸 본문)는 표가 아니라 문단으로 넣는다 (0007).
 "글자 → 트리"는 parse_tree() 한 함수다.
 """
 
@@ -89,22 +92,71 @@ class ParsedFile:
 
 # 엔티티(&amp; &#60; &#x3C;)가 아닌 `&`
 STRAY_AMP_RE = re.compile(rb"&(?!(?:[A-Za-z][A-Za-z0-9]*|#\d+|#x[0-9A-Fa-f]+);)")
-# 태그 이름·닫는 태그·주석·선언(`<a` `</a` `<!` `<?`)이 아닌 `<` (예: `<당기말>`, `< 10%`)
-STRAY_LT_RE = re.compile(rb"<(?![A-Za-z_/!?])")
+# 이름 엔티티. XML이 아는 것은 다섯 개뿐이고, DART 2022년 이전 원문은 줄바꿈을 `&cr;`로 쓴다 (why-lxml 3차: 76개 파일 전부)
+NAMED_ENTITY_RE = re.compile(rb"&([A-Za-z][A-Za-z0-9]*);")
+XML_ENTITIES = {b"amp", b"lt", b"gt", b"quot", b"apos"}
+
+
+def _fix_entity(m: re.Match) -> bytes:
+    name = m.group(1)
+    if name in XML_ENTITIES:
+        return m.group(0)
+    if name.lower() == b"cr":  # 줄바꿈. 글자 정리에서 공백 하나로 합쳐진다
+        return b" "
+    return b"&amp;" + name + b";"  # 그 밖의 모르는 엔티티는 글자 그대로 남긴다 (예: &nbsp; → "&nbsp;")
+# 진짜 태그(`<NAME ` `<NAME>` `<NAME/>` `</NAME>` `<!` `<?`)가 아닌 `<`. 예: `<당기말>`, `< 10%`,
+# 그리고 영문 뒤에 한글이 붙은 `<NICE신용평가>` `<KB금융지주>` (2026-11-24 why-lxml: 22개 파일). 태그 이름은 ASCII만이라
+# 이름 뒤에 `>`·`/`·"공백 + 속성 이름"이 오지 않으면 글자로 본다 (한글은 바이트가 0x80 이상이어서 영문 범위에 걸리지 않음)
+# 3차(why-lxml 20개): `<upside 시나리오>`는 이름 뒤에 공백이 와서 태그로 보였다. 공백 뒤에는 속성 이름(영문)이나 `>` `/`가 와야 태그다
+STRAY_LT_RE = re.compile(rb"<(?![A-Za-z_][A-Za-z0-9_\-.:]*(?:\s+[A-Za-z_]|\s*/?>|\s*$)|/[A-Za-z_][A-Za-z0-9_\-.:]*\s*>|[!?])", re.MULTILINE)
+# 속성값 안의 따옴표. 예: ENG="" KB Insurance Co., Ltd "" (2026-11-24 KB 사업보고서 143,619번째 줄).
+# 값의 끝은 "따옴표 뒤에 태그 끝(> />) 또는 다음 속성(NAME=")이 오는 자리"로 본다. 그 전의 따옴표는 값의 일부다.
+ATTR_VALUE_RE = re.compile(rb'(\s[A-Za-z_][A-Za-z0-9_\-]*=)"((?:[^<>"]|"(?!\s*(?:/?>|[A-Za-z_][A-Za-z0-9_\-]*=")))*)"')
+
+
+def _fix_attr_quotes(m: re.Match) -> bytes:
+    name, value = m.group(1), m.group(2)
+    return name + b'"' + value.replace(b'"', b"&quot;") + b'"' if b'"' in value else m.group(0)
 
 
 def escape_stray(data: bytes) -> bytes:
-    """XML 규칙을 어긴 그대로의 `&`와 `<`를 엔티티로 바꾼다. 정상 파일은 그대로다."""
-    return STRAY_LT_RE.sub(b"&lt;", STRAY_AMP_RE.sub(b"&amp;", data))
+    """XML 규칙을 어긴 그대로의 `&`, `<`, 모르는 엔티티(`&cr;`), 속성값 안 따옴표를 고친다. 정상 파일은 그대로다."""
+    data = STRAY_LT_RE.sub(b"&lt;", NAMED_ENTITY_RE.sub(_fix_entity, STRAY_AMP_RE.sub(b"&amp;", data)))
+    return ATTR_VALUE_RE.sub(_fix_attr_quotes, data)
+
+
+XML_DECL_ENCODING_RE = re.compile(rb"""(<\?xml[^>]*encoding=["'])([A-Za-z0-9_\-]+)(["'])""")
+
+
+def normalize_encoding(data: bytes) -> tuple[bytes, bool]:
+    """UTF-8이 아닌 원문(2022년 이전 사업보고서는 EUC-KR/CP949)을 UTF-8로 바꾼다. 돌려주는 값: (바이트, 바꿨는가).
+
+    내장 파서(expat)는 다중 바이트 인코딩 중 UTF-8·UTF-16만 읽는다. 선언이 utf-8인데 바이트가 CP949인 파일도 있어
+    선언을 믿지 않고 바이트를 직접 확인한다. UTF-8로 읽히면 그대로 둔다 (선언만 utf-8로 맞춤).
+    2026-11-24 why-lxml: lxml로 간 120개 중 98개가 이 경우였다 (`<DOCUMENT-NAME>` 회사명부터 깨짐).
+    """
+    try:
+        data.decode("utf-8")
+        changed = False
+    except UnicodeDecodeError:
+        text = data.decode("cp949", errors="replace")  # CP949는 EUC-KR의 상위 집합
+        data = text.encode("utf-8")
+        changed = True
+    return XML_DECL_ENCODING_RE.sub(rb"\1utf-8\3", data, count=1), changed
 
 
 def parse_tree(data: bytes) -> tuple[ET.Element, str]:
-    """바이트 → (요소 트리, 성공한 단계). 단계는 모듈 설명 참고. 셋 다 실패하면 마지막 예외를 올린다."""
+    """바이트 → (요소 트리, 성공한 단계). 단계는 모듈 설명 참고. 셋 다 실패하면 마지막 예외를 올린다.
+
+    인코딩 변환은 단계 앞에서 한 번 하고, 변환했으면 단계 이름 뒤에 "+cp949"를 붙인다 (예: etree+escape+cp949).
+    """
+    data, transcoded = normalize_encoding(data)
+    suffix = "+cp949" if transcoded else ""
     try:
-        return ET.fromstring(data), "etree"
+        return ET.fromstring(data), "etree" + suffix
     except ET.ParseError as first:
         try:
-            return ET.fromstring(escape_stray(data)), "etree+escape"
+            return ET.fromstring(escape_stray(data)), "etree+escape" + suffix
         except ET.ParseError as second:
             if lxml_etree is None:
                 raise second from first
@@ -112,7 +164,28 @@ def parse_tree(data: bytes) -> tuple[ET.Element, str]:
             root = lxml_etree.fromstring(escape_stray(data), parser)
             if root is None:
                 raise second from first
-            return root, "lxml"
+            return root, "lxml" + suffix
+
+
+def explain_failure(data: bytes) -> tuple[str, int, str] | None:
+    """2단계(전처리 + 내장 파서)가 왜 실패하는지. 돌려주는 값: (오류 종류, 줄 번호, 그 줄의 문제 지점 앞뒤 글자).
+
+    3단계(lxml)로 간 파일의 원인을 모아 전처리 규칙을 추가하는 데 쓴다 (0007 "다시 판단할 조건").
+    2단계가 성공하면 None.
+    """
+    fixed = escape_stray(normalize_encoding(data)[0])
+    try:
+        ET.fromstring(fixed)
+        return None
+    except ET.ParseError as e:
+        lineno, col = e.position
+        kind = re.sub(r":\s*line \d+, column \d+$", "", str(e))
+        lines = fixed.split(b"\n")
+        line = lines[lineno - 1] if 0 < lineno <= len(lines) else b""
+        # 열 번호는 글자 기준, 줄은 바이트. 한글이 섞이면 어긋나므로 글자로 바꾼 뒤 자른다
+        text = line.decode("utf-8", errors="replace")
+        snippet = text[max(0, col - 60):col + 60]
+        return kind, lineno, snippet
 
 
 def clean_text(elem: ET.Element) -> str:
@@ -120,8 +193,14 @@ def clean_text(elem: ET.Element) -> str:
     return WS_RE.sub(" ", "".join(elem.itertext())).strip()
 
 
+# 표의 칸. 머리 칸은 TH, 몸통 칸은 TD 안에 TE가 있는 꼴이 보통이지만, 재무제표 주석의 표는 TR 바로 아래 TE가 칸이다
+# (2026-11-24 raw: `<TR><TE ENG="..." COLSPAN="2">사용이 제한된 예치금의 내역</TE></TR>`). 그래서 3차까지 주석 표의
+# 숫자 행이 모두 빠져 "숫자 칸 비율 0.0"이었다
+CELL_TAGS = {"TD", "TH", "TE"}
+
+
 def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Table:
-    """TABLE → 2차원 배열. THEAD 행 수를 header_rows로. COLSPAN/ROWSPAN은 값 복제."""
+    """TABLE → 2차원 배열. THEAD 행 수를 header_rows로. COLSPAN/ROWSPAN은 값 복제. 칸은 TR의 자식 TD/TH/TE."""
     header_rows = 0
     row_elems: list[tuple[ET.Element, bool]] = []
     for child in table:
@@ -142,7 +221,7 @@ def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Tab
     for r, (tr, is_header) in enumerate(row_elems):
         row: list[str] = []
         c = 0
-        cells = [td for td in tr if isinstance(td.tag, str) and td.tag in ("TD", "TH")]
+        cells = [td for td in tr if isinstance(td.tag, str) and td.tag in CELL_TAGS]
         for td in cells:
             while (r, c) in pending:
                 row.append(pending.pop((r, c)))
@@ -239,10 +318,70 @@ class _Walker:
             elif tag == "TABLE-GROUP":
                 self.walk(child, caption, unit)
             elif tag == "TABLE":
-                self.current().tables.append(parse_table(child, caption, unit))
+                cells = [td for tr in child.iter("TR") for td in tr if isinstance(td.tag, str) and td.tag in CELL_TAGS]
+                if len(cells) <= 1:
+                    # 칸이 하나뿐인 표는 표가 아니라 글상자다. DART는 재무제표 주석 본문을 이렇게 쓴다
+                    # (2026-11-24 확인: "1. 지배기업의 개요" 본문 전체가 TD 하나 안에 있었음). 문단으로 취급한다
+                    for text in _box_paragraphs(cells[0]) if cells else []:
+                        self.current().paragraphs.append(text)
+                else:
+                    table = parse_table(child, caption, unit)
+                    if is_prose_table(table):
+                        self.current().paragraphs.extend(prose_rows(table))
+                    else:
+                        self.current().tables.append(table)
                 caption = None
             else:
                 self.walk(child, caption, unit)
+
+
+# 숫자와 기호만 있는 칸 (금액, 비율, 증감 표시). 글이 든 표를 가려낼 때 "숫자 칸"으로 센다. 숫자가 하나는 있어야 하므로
+# 글머리 기호만 있는 칸("―")은 숫자 칸이 아니다
+NUMERIC_CELL_RE = re.compile(r"^(?=.*\d)[\d\s,.\-+()%△▲▽▼―–—:/]*$")
+
+
+def is_prose_table(table: Table) -> bool:
+    """표가 아니라 '한 줄에 한 칸'으로 쓴 본문인가.
+
+    DART는 재무제표 주석 본문("3. 중요한 회계정책" 등)을 머리행 없는 2~3열 표에 한 문장씩 넣는다
+    (2026-11-24 KB 사업보고서: 49행 × 3열, 첫 열은 "―" 글머리). 기준: 머리행 0, 열 3개 이하, 글자 칸의
+    평균 길이 15자 이상, 숫자 칸 비율 20% 이하. 머리행이 있거나 숫자가 많은 표(재무 데이터)는 표로 남는다.
+    """
+    if table.header_rows or not table.rows or max(len(r) for r in table.rows) > 3:
+        return False
+    cells = [c for r in table.rows for c in dict.fromkeys(r) if c]  # 병합으로 복제된 칸은 한 번만
+    if not cells:
+        return False
+    numeric = sum(1 for c in cells if NUMERIC_CELL_RE.match(c))
+    return numeric / len(cells) <= 0.2 and sum(map(len, cells)) / len(cells) >= 15
+
+
+def table_stats(table: Table) -> dict:
+    """글-표 판별에 쓰는 수치. section CLI가 표마다 출력해 기준(15자, 20%)이 맞는지 눈으로 보는 용도."""
+    cells = [c for r in table.rows for c in dict.fromkeys(r) if c]
+    numeric = sum(1 for c in cells if NUMERIC_CELL_RE.match(c))
+    return {"cells": len(cells), "avg_len": round(sum(map(len, cells)) / len(cells), 1) if cells else 0.0,
+            "numeric_ratio": round(numeric / len(cells), 2) if cells else 0.0}
+
+
+def prose_rows(table: Table) -> list[str]:
+    """글이 든 표의 한 행을 문단 하나로. 칸은 공백으로 잇고, 병합으로 복제된 같은 값은 한 번만 쓴다."""
+    out = []
+    for row in table.rows:
+        text = " ".join(c for c in dict.fromkeys(row) if c)
+        if text:
+            out.append(text)
+    return out
+
+
+def _box_paragraphs(cell: ET.Element) -> list[str]:
+    """글상자(칸 하나짜리 표)의 칸 안 글자를 문단 목록으로. P가 있으면 P 단위로, 없으면 통째로 하나."""
+    ps = [clean_text(p) for p in cell.iter("P")]
+    ps = [p for p in ps if p]
+    if ps:
+        return ps
+    text = clean_text(cell)
+    return [text] if text else []
 
 
 def _attr(elem: ET.Element | None, name: str) -> str | None:

@@ -15,6 +15,9 @@ CLI (저장소 루트에서, API 호출 없음):
     python -m src.loaders.documents status                   # 회사별 정기보고서 수 대비 원문 보관 수
     python -m src.loaders.documents tree 20240318000xxx      # 한 원문의 섹션 트리를 파싱해 출력 (DB에 쓰지 않음)
     python -m src.loaders.documents parse                    # 저장된 ZIP 전체 → document_section·document_parse 재생성
+    python -m src.loaders.documents why-lxml [rcept_no ...]  # lxml(3단계)로 간 파일들의 2단계 실패 원인을 종류별로 모아 출력
+    python -m src.loaders.documents section <rcept_no> <file_name> <제목 일부>  # 한 섹션의 문단·표 모양 출력
+    python -m src.loaders.documents raw <rcept_no> <file_name> <찾을 글자> [앞뒤 줄 수]  # 원문 XML에서 그 글자가 있는 줄 앞뒤 출력
 
 파싱 규칙은 src/loaders/document_parser.py.
 """
@@ -31,7 +34,7 @@ import duckdb
 from dotenv import load_dotenv
 
 from src.collectors.document import ZipEntry, inspect_zip
-from src.loaders.document_parser import ParsedFile, parse_document_xml, section_rows
+from src.loaders.document_parser import ParsedFile, explain_failure, normalize_encoding, parse_document_xml, section_rows, table_stats
 from src.loaders.duckdb_store import REPO_ROOT, connect
 from src.loaders.periodic_reports import periodic_reports_of
 
@@ -225,6 +228,72 @@ def print_tree(rcept_no: str, file_name: str | None = None) -> None:
             print(f"{'  ' * s.depth}{mark}{s.title[:50]}{note}  [문단 {len(s.paragraphs)}, 표 {len(s.tables)}, {len(s.text):,}자]")
 
 
+def why_lxml(con: duckdb.DuckDBPyConnection, rcept_nos: list[str] | None = None) -> dict[str, list[tuple[str, str, int, str]]]:
+    """3단계(lxml)로 파싱된 파일마다 2단계가 실패한 원인을 모은다. 결과: {오류 종류: [(rcept_no, 파일, 줄, 앞뒤 글자)]}.
+
+    원인별 건수가 많은 것부터 전처리 규칙을 추가하면 lxml 비율이 내려간다 (0007). API 호출 없음.
+    """
+    sql = "SELECT rcept_no, file_name FROM document_parse WHERE parser LIKE 'lxml%'"  # lxml, lxml+cp949
+    params: list = []
+    if rcept_nos:
+        sql += " AND rcept_no IN (" + ",".join("?" * len(rcept_nos)) + ")"
+        params = list(rcept_nos)
+    by_kind: dict[str, list[tuple[str, str, int, str]]] = {}
+    for rcept_no, file_name in con.execute(sql + " ORDER BY 1, 2", params).fetchall():
+        path = document_path(rcept_no)
+        if not path.exists():
+            continue
+        with zipfile.ZipFile(path) as zf:
+            found = explain_failure(zf.read(file_name))
+        if found is None:  # 코드가 바뀌어 지금은 2단계가 되는 파일. parse를 다시 돌리면 사라진다
+            by_kind.setdefault("(지금은 2단계 성공)", []).append((rcept_no, file_name, 0, ""))
+            continue
+        kind, lineno, snippet = found
+        by_kind.setdefault(kind, []).append((rcept_no, file_name, lineno, snippet))
+    return by_kind
+
+
+def print_section(rcept_no: str, file_name: str, title_part: str, max_rows: int = 3) -> None:
+    """제목에 title_part가 들어가는 섹션의 문단 앞부분과 표 모양(행×열, 첫 행)을 출력한다 (DB에 쓰지 않음)."""
+    parsed, _ = parse_zip(rcept_no, document_path(rcept_no).read_bytes())
+    for pf in parsed:
+        if pf.file_name != file_name:
+            continue
+        for s in pf.sections:
+            if title_part not in s.title:
+                continue
+            print(f"\n=== [{s.section_id}] {s.path}  (문단 {len(s.paragraphs)}, 표 {len(s.tables)}, 파서 {pf.parser})")
+            for p in s.paragraphs[:max_rows]:
+                print(f"  문단: {p[:120]}")
+            for i, t in enumerate(s.tables, 1):
+                ncols = max((len(r) for r in t.rows), default=0)
+                st = table_stats(t)
+                print(f"  표 {i}: {len(t.rows)}행 × {ncols}열, 머리행 {t.header_rows}, 캡션 {t.caption!r}, 단위 {t.unit!r},"
+                      f" 글자 칸 {st['cells']}개 평균 {st['avg_len']}자, 숫자 칸 비율 {st['numeric_ratio']}")
+                for r in t.rows[:max_rows]:
+                    print("    | " + " | ".join(c[:40] for c in r[:6]) + (" | …" if len(r) > 6 else ""))
+
+
+def raw_context(data: bytes, needle: str, around: int = 3) -> list[tuple[int, str]]:
+    """원문 XML에서 needle이 처음 나오는 줄의 앞뒤 around줄을 (줄 번호, 글자)로. 파서 규칙을 정할 때 실물을 보는 용도."""
+    text = normalize_encoding(data)[0].decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if needle in line:
+            lo, hi = max(0, i - around), min(len(lines), i + around + 1)
+            return [(n + 1, lines[n]) for n in range(lo, hi)]
+    return []
+
+
+def print_raw(rcept_no: str, file_name: str, needle: str, around: int = 3) -> None:
+    with zipfile.ZipFile(document_path(rcept_no)) as zf:
+        found = raw_context(zf.read(file_name), needle, around)
+    if not found:
+        print(f"'{needle}'이(가) {file_name}에 없습니다")
+    for lineno, line in found:
+        print(f"{lineno:>7}: {line[:300]}")
+
+
 def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
     """회사별: 공시 목록의 정기보고서 접수번호 수, 원문 보관 수."""
     return con.execute(
@@ -245,7 +314,9 @@ def status(con: duckdb.DuckDBPyConnection) -> list[tuple]:
 
 
 def main(argv: list[str]) -> None:
-    usage = "사용법: python -m src.loaders.documents inspect <rcept_no> [entry_name] | status | tree <rcept_no> [file_name] | parse [rcept_no ...]"
+    usage = ("사용법: python -m src.loaders.documents inspect <rcept_no> [entry_name] | status | tree <rcept_no> [file_name]"
+             " | parse [rcept_no ...] | why-lxml [rcept_no ...] | section <rcept_no> <file_name> <제목 일부>"
+             " | raw <rcept_no> <file_name> <찾을 글자> [앞뒤 줄 수]")
     if not argv:
         sys.exit(usage)
     if argv[0] == "inspect" and len(argv) in (2, 3):
@@ -277,6 +348,19 @@ def main(argv: list[str]) -> None:
         print(stats)
         if stats["files_failed"]:
             print(f"실패한 파일이 {stats['files_failed']}개 있습니다. SELECT * FROM document_parse WHERE NOT ok 로 확인하세요.")
+    elif argv[0] == "why-lxml":
+        with connect(read_only=True) as con:
+            by_kind = why_lxml(con, argv[1:] or None)
+        total = sum(len(v) for v in by_kind.values())
+        print(f"lxml로 파싱된 파일 {total}개의 2단계 실패 원인:")
+        for kind, items in sorted(by_kind.items(), key=lambda kv: -len(kv[1])):
+            print(f"\n[{len(items)}개] {kind}")
+            for rcept_no, file_name, lineno, snippet in items[:3]:
+                print(f"  {rcept_no} {file_name} {lineno}번째 줄: {snippet}")
+    elif argv[0] == "section" and len(argv) == 4:
+        print_section(argv[1], argv[2], argv[3])
+    elif argv[0] == "raw" and len(argv) in (4, 5):
+        print_raw(argv[1], argv[2], argv[3], int(argv[4]) if len(argv) == 5 else 3)
     else:
         sys.exit(usage)
 

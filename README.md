@@ -253,6 +253,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    ```bash
    python -m src.loaders.documents tree 20260313001191     # 한 원문의 섹션 트리를 눈으로 확인 (DB에 쓰지 않음)
    python -m src.loaders.documents parse                   # 저장된 ZIP 전체 재생성
+   python -m src.loaders.documents why-lxml                # 복구 파서(lxml)로 간 파일들의 원인을 종류별로 출력
    ```
 
 화면 없이 터미널에서 실행할 수도 있습니다.
