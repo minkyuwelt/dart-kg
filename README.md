@@ -265,6 +265,15 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    python -m eval.run --retrieval-only --label baseline  # 키워드 기본선 hit@5·MRR → eval/results/
    ```
 
+11. **(Phase 3) 청킹** — 섹션을 임베딩 모델이 읽을 크기(1,000자)의 조각으로 자르고 회사·보고서·섹션 경로 꼬리표를 붙여 `chunk`에 넣습니다. 전략 세 가지(`fixed` / `section` / `section_path`)는 0008의 실험 변수이고, 조각 위의 키워드 검색으로 임베딩 전에 비교할 수 있습니다. 규칙은 `src/loaders/chunking.py`, 근거는 `docs/decisions/0008-chunking.md`.
+
+   ```bash
+   python -m src.loaders.chunks build --strategy all --from-eval      # 평가 세트 근거 보고서(약 30개)를 세 전략으로
+   python -m src.loaders.chunks stats                                 # 전략별 조각 수·길이 분포
+   python -m src.loaders.chunks show 20260313000815 --section "임원"   # 조각을 눈으로 확인
+   python -m eval.run --retrieval-only --retriever chunk:section --label section   # 전략별 hit@5·MRR
+   ```
+
 화면 없이 터미널에서 실행할 수도 있습니다.
 
 ```bash
