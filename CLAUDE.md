@@ -19,7 +19,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
-현재 단계: Phase 2 완료 (2026-11-23. 백필 618개 보고서, 품질 검사 통과, 시점 질의 5개 검증 → `docs/devlog/2026-11-23.md`). 다음: Phase 3 계획(공시 원문 RAG, 평가 세트)
+현재 단계: Phase 2 완료 (2026-11-23. 백필 618개 보고서, 품질 검사 통과, 시점 질의 5개 검증 → `docs/devlog/2026-11-23.md`). 다음: Phase 3 (공시 원문 RAG). 계획: `docs/plans/phase3.md`
 
 ## 아키텍처 원칙
 - DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함
@@ -44,6 +44,7 @@ tests/             오프라인 테스트 (DART API를 호출하지 않음, `pyt
 dagster_home/      Dagster 인스턴스 설정 (dagster.yaml만 커밋)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록 (NNNN-제목.md)
+docs/plans/        단계별 계획 (phase3.md)
 .github/workflows/ CI (PR마다 오프라인 테스트)
 docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
 ```
