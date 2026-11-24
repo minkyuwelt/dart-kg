@@ -65,7 +65,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Phase 3 평가 세트 실행")
     ap.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
     ap.add_argument("--retrieval-only", action="store_true", help="검색만 측정 (LLM 호출 없음)")
-    ap.add_argument("--retriever", default="keyword", help="검색 방식 (keyword | chunk:fixed | chunk:section | chunk:section_path)")
+    ap.add_argument("--retriever", default="keyword",
+                    help="검색 방식 (keyword | chunk:<전략> | dense:<모델>:<전략>). 전략 fixed/section/section_path, 모델 kure-v3/kure-v1/bge-m3")
+    ap.add_argument("--filter", choices=["corp"], help="corp: 질문의 회사명으로 그 회사 보고서만 (chunk·dense)")
+    ap.add_argument("--rerank", choices=["nano"], help="nano: 상위 30개를 KURE-Reranker-nano로 다시 매김 (chunk·dense, 노트북)")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--label", default="", help="결과 파일 이름에 붙일 설정 이름")
     args = ap.parse_args(argv)
@@ -81,9 +84,9 @@ def main(argv=None) -> int:
         return 1
 
     with connect(read_only=True) as con:
-        retriever = make_retriever(args.retriever, con)
+        retriever = make_retriever(args.retriever, con, corp_filter=args.filter == "corp", rerank=args.rerank)
         result = evaluate(target, retriever, args.k)
-    result["config"] = {"retriever": retriever.name, "k": args.k, "label": args.label, "questions": str(args.questions),
+    result["config"] = {"retriever": retriever.name, "filter": args.filter, "rerank": args.rerank, "k": args.k, "label": args.label, "questions": str(args.questions),
                         "run_at": datetime.now().isoformat(timespec="seconds")}
     print_report(result, args.k)
 
