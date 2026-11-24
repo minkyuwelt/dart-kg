@@ -65,6 +65,25 @@ class TableToLinesTest(unittest.TestCase):
         self.assertEqual(lines, ["자산총계 | 27,394,372"])  # 빈 행은 뺌
 
 
+class PackTablesTest(unittest.TestCase):
+    def test_small_tables_in_one_section_share_a_chunk_and_big_table_splits_by_rows(self):
+        from src.loaders.chunking import pack_tables
+        small = {"caption": "2025.12.31", "unit": None, "header_rows": 0, "rows": [["(기준일 :", "2025.12.31", ")"]]}
+        big = {"caption": None, "unit": None, "header_rows": 1,
+               "rows": [["이름", "설명"]] + [[f"회사{i}", "설명" * 60] for i in range(12)]}  # 행마다 약 130자 → 1,000자 안에 7행
+        out = pack_tables([small, small, EXEC_TABLE, big, small], 1000)
+        # 작은 표 셋(기준일·기준일·임원)은 한 조각, 큰 표는 행 묶음 둘, 마지막 작은 표는 큰 표 둘째 묶음 뒤에 붙음
+        self.assertEqual([ti for ti, _ in out], [0, 3, 3])
+        first = out[0][1]
+        self.assertEqual(first.count("[표]"), 3)
+        self.assertIn("성명: 정진완", first)
+        self.assertTrue(out[1][1].startswith("[표]\n이름: 회사0"))
+        self.assertTrue(out[2][1].startswith("[표]\n이름: 회사"))      # 둘째 묶음도 머리를 다시 붙임
+        self.assertIn("(기준일 : | 2025.12.31 | )", out[2][1])          # 마지막 작은 표가 함께
+        self.assertTrue(all(len(text) <= 1000 for _, text in out))
+        self.assertEqual(pack_tables([{"caption": None, "unit": None, "header_rows": 1, "rows": [["a", "b"]]}], 1000), [])  # 데이터 행 없음
+
+
 class StrategyTest(unittest.TestCase):
     def sections(self):
         return [
