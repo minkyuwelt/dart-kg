@@ -11,6 +11,7 @@ CI와 웹 환경에서도 import할 수 있고, 테스트는 FakeEmbedder 같은
 CLI (노트북, API 호출 없음, GPU 사용):
     python -m src.rag.embedding build --model kure-v3 --strategy section_path          # 그 전략의 조각 전부 임베딩
     python -m src.rag.embedding build --model kure-v1 --strategy section_path --limit 2000   # 시간 재기용
+    python -m src.rag.embedding build --model kure-v3 --strategy section_path --fp16         # 16비트로 (약 2배 빠름)
     python -m src.rag.embedding stats                                                # 모델·전략별 임베딩 수
 """
 
@@ -52,15 +53,22 @@ class Embedder(Protocol):
 class LocalEmbedder:
     """sentence-transformers 로컬 모델. GPU가 있으면 자동으로 쓴다. 정규화된 벡터를 돌려주므로 코사인 = 내적."""
 
-    def __init__(self, name: str, device: str | None = None):
+    def __init__(self, name: str, device: str | None = None, fp16: bool = False):
         if name not in MODELS:
             raise ValueError(f"모르는 임베딩 모델: {name} (가능: {', '.join(MODELS)})")
         self.name = name
         self.spec = MODELS[name]
         self.dim = self.spec.dim
+        self.fp16 = fp16
         from sentence_transformers import SentenceTransformer  # 노트북 전용 패키지 — 함수 안 import
 
-        self.model = SentenceTransformer(self.spec.hf_id, device=device, truncate_dim=self.spec.dim)
+        model_kwargs = {}
+        if fp16:
+            # 16비트 실수로 계산. GPU에서 보통 2배 가까이 빨라지고 검색 품질은 거의 그대로 (0009에서 fp32와 비교해 기록).
+            # 2026-11-24 kure-v1 fp32: RTX 4070 노트북에서 1,000개당 50초 → 30만 조각이면 4시간, kure-v3는 8시간 → 하루 밤 경계
+            import torch
+            model_kwargs["torch_dtype"] = torch.float16
+        self.model = SentenceTransformer(self.spec.hf_id, device=device, truncate_dim=self.spec.dim, model_kwargs=model_kwargs)
         self.model.max_seq_length = min(self.model.max_seq_length or self.spec.max_seq_length, self.spec.max_seq_length)
         # 모델이 질문용 프롬프트를 정해 두었으면(config의 prompts.query) 질문에만 붙인다. 없으면 그대로
         prompts = getattr(self.model, "prompts", None) or {}
@@ -136,13 +144,14 @@ def main(argv=None) -> int:
     b.add_argument("--batch", type=int, default=32)
     b.add_argument("--limit", type=int, help="앞에서 n개만 (시간 재기)")
     b.add_argument("--device", help="cuda / cpu (기본 자동)")
+    b.add_argument("--fp16", action="store_true", help="16비트로 계산 (GPU에서 약 2배 빠름)")
     sub.add_parser("stats")
     args = ap.parse_args(argv)
 
     if args.cmd == "build":
-        embedder = LocalEmbedder(args.model, args.device)
+        embedder = LocalEmbedder(args.model, args.device, fp16=args.fp16)
         with connect() as con:
-            print(f"모델 {args.model} ({embedder.spec.hf_id}, {embedder.dim}차원), 전략 {args.strategy}, 배치 {args.batch}")
+            print(f"모델 {args.model} ({embedder.spec.hf_id}, {embedder.dim}차원, {'fp16' if args.fp16 else 'fp32'}), 전략 {args.strategy}, 배치 {args.batch}")
             stats = embed_chunks(con, embedder, args.strategy, args.batch, args.limit)
         print(stats)
         return 0
