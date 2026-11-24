@@ -160,6 +160,8 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
   - 검색: `hit@5` (상위 5개 조각 중 정답 rcept_no의 조각이 있는 비율), `MRR` (정답이 몇 번째에 나오는지의 평균)
   - 답변: 1차는 사람이 채점(맞음/부분/틀림/근거 없는 주장 있음). LLM 채점은 사람 채점과 일치율을 확인한 뒤에만 도입
 - **스크립트:** `python -m eval.run --retrieval-only` (API 호출 없이 검색만 측정), `python -m eval.run` (LLM까지). 결과는 `eval/results/{날짜}_{설정}.json`으로 남겨 설정끼리 비교
+- **현재 상태 (2026-11-24):** ready 36개 (정형표 14 · 시점 10 · 서술 7 · 없음 5), draft 1개(d031 제주은행 배당: 파서 빈 칸 문제로 당기 값 미확인). 후보 107개 중 36개를 `eval.review`로 확인했고 나머지 70개는 초안 파일에 남아 있어 언제든 이어서 채울 수 있다. 타법인출자 질문 3개(d021·d024·d032)는 표 열이 밀려 정답을 가릴 수 없어 지움 → 파서 수정 뒤 지주 보고서로 다시 만든다
+- **키워드 기본선 (2026-11-24, 검색 대상 32개):** hit@5 공시 0.28 / 섹션 0.19, MRR 공시 0.20 / 섹션 0.13. 유형별 hit@5 공시: 서술 0.43, 정형표 0.33, 시점 0.10. 낮은 이유는 단어 일치만 보는 검색기가 "대표이사"·"주당 현금배당금"처럼 모든 회사 보고서에 똑같이 나오는 말로는 **어느 회사의 보고서인지 가리지 못하기** 때문(회사명은 자기 보고서보다 모회사 보고서에 더 자주 나온다). 이것이 5~6번 PR에서 회사 필터(corp_code)·임베딩·재순위를 넣을 때 비교할 출발선이다. 결과 파일 `eval/results/20261124_1541_keyword_baseline.json`(커밋하지 않음)
 
 ## 5. 호출 수·용량·시간 어림
 
@@ -192,7 +194,7 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
 | 1 | `docs/phase3-plan` (이 문서) | 계획 작성 | — | — |
 | 2 | `feat/document-collect` | `collectors/document.py`, `document` 테이블, CLI `collect document <rcept_no>`, 백필 스크립트(`--dry-run`) | **사업보고서 1건 받아 ZIP 열어 보기** → XML 파일 이름·인코딩·크기를 devlog에 기록 | 응답 형식이 예상과 다르면 2번 PR 안에서 고침 |
 | 3 | `feat/document-parse` | XML → 섹션 트리 파서 + 테스트(실제 XML 1건을 fixture로, 개인정보 없는 섹션만) | 보고서 10개 파싱, 섹션 수·빈 섹션·표 비율 확인 | DART XML 변형이 많으면 보고서 종류별로 fixture 추가 |
-| 4 | `feat/eval-set` | `eval/questions.jsonl` 틀(근거는 접수번호 + 섹션 경로) + `eval/run.py --retrieval-only`(키워드 기본선 포함, 바로 숫자가 나옴) + `eval/draft.py`(접수번호·섹션을 데이터에서 채운 질문 후보, 정답은 비움) + `eval/locate.py` + Phase 2 질문 4개(phase 3/4 표시) | **사용자가 후보 중 30개를 골라 DART 뷰어에서 정답 확인** (정형표 10 · 서술 10 · 시점 5 · 없음 5), 기본선 실행 | 2026-11-25 설계 변경: 질문은 코드가 초안을 만들고 사람은 정답만 확인 (사용자 결정) |
+| 4 | `feat/eval-set` | `eval/questions.jsonl` 틀(근거는 접수번호 + 섹션 경로) + `eval/run.py --retrieval-only`(키워드 기본선 포함, 바로 숫자가 나옴) + `eval/draft.py`(접수번호·섹션을 데이터에서 채운 질문 후보, 정답은 비움) + `eval/locate.py` + Phase 2 질문 4개(phase 3/4 표시) | **사용자가 후보 중 30개를 골라 DART 뷰어에서 정답 확인** (정형표 10 · 서술 10 · 시점 5 · 없음 5), 기본선 실행 | 2026-11-24 설계 변경: 질문은 코드가 초안을 만들고 사람은 `eval.review`에서 정답만 확인 (사용자 결정). **완료**: ready 36개, 키워드 기본선 hit@5 0.28 (4절) |
 | 5 | `feat/chunking` + 0008 초안 | 청킹 2~3가지 구현, `chunk` 테이블 | 사업보고서 30개 청킹, 조각 수·길이 분포 | — |
 | 6 | `feat/embedding-poc` + 0009 | 임베딩 함수(모델 교체 가능), `chunk_embedding` 테이블, 재순위 함수, 비교 스크립트 | **모델 3~4개 × 청킹 3개 × 재순위 유/무 hit@5, GPU 시간** → 0008·0009 확정 | VRAM 부족이면 KURE-v1, 그래도 느리면 API 임베딩 |
 | 7 | `chore/neo4j-compose` + 0001 개정 | docker-compose, `.env.example`, `text_normalize.py`, 0004 스크립트 리팩터 | 컨테이너 기동, 포트 확인 | 포트 충돌 → `.env` |
