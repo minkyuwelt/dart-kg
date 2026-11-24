@@ -128,6 +128,7 @@ class RetrieverAndDraftTest(unittest.TestCase):
             (KB_2025, 3, "VII. 주주에 관한 사항 > 2. 최대주주 변동현황", "최대주주 변동 없음", []),
             (KB_2025, 4, "VIII. 임원 및 직원 등에 관한 사항 > 1. 임원 및 직원 등의 현황", "대표이사 양종희", []),
             (KB_2024, 1, "VII. 주주에 관한 사항 > 1. 최대주주 및 특수관계인의 주식소유 현황", "2024년 최대주주 국민연금공단", []),
+            (SHB_2023Q1, 1, "VII. 주주에 관한 사항", "최대주주 및 특수관계인의 주식소유 현황 (소제목)", []),  # 소제목만 있는 보고서
         ])
 
     def test_keyword_retriever_ranks_title_matches_first(self):
@@ -158,7 +159,8 @@ class RetrieverAndDraftTest(unittest.TestCase):
     def test_draft_uses_latest_parsed_report_and_previous_year_for_timepoint(self):
         drafts = draft_questions(self.con)
         by_source = {q.source.split("/")[1]: q for q in drafts if q.evidence_rcept_no == [KB_2025]}
-        self.assertEqual(set(by_source), {"largest_holder", "ceo"})  # 틀 중 섹션이 있는 것만 ('회사의 개요'는 '사업의 개요'가 아님)
+        # 틀 중 섹션이 있는 것만 ('회사의 개요'는 '사업의 개요'가 아님). 직원 수는 감싸는 '임원 및 직원 등의 현황'으로 걸림
+        self.assertEqual(set(by_source), {"largest_holder", "ceo", "employees"})
         self.assertEqual(by_source["largest_holder"].question, "2025년 말 기준 KB금융지주의 최대주주는 누구이고 지분율은 몇 %인가?")
         self.assertIn("1. 최대주주 및 특수관계인의 주식소유 현황", by_source["largest_holder"].evidence_section)
         self.assertTrue(all(q.status == "draft" and q.answer is None for q in drafts))
@@ -166,6 +168,15 @@ class RetrieverAndDraftTest(unittest.TestCase):
         self.assertEqual([(q.type, q.question) for q in previous], [("시점", "2024년 말 기준 KB금융지주의 최대주주는 누구이고 지분율은 몇 %인가?")])
         self.assertEqual([q for q in drafts if q.evidence_rcept_no == ["20250320000001"]], [])  # 파싱 안 된 정정본은 제외
         self.assertEqual(len(draft_questions(self.con, max_total=2)), 2)
+
+    def test_draft_falls_back_to_parent_section_when_title_is_only_a_subheading(self):
+        # 신한은행 분기보고서(사업보고서가 아님)는 초안 대상이 아니므로, 같은 꼴을 KB 2025에 넣어 확인
+        self.con.execute("DELETE FROM document_section WHERE rcept_no = ? AND section_id = 2", [KB_2025])  # 최대주주 섹션 제거
+        insert_sections(self.con, [(KB_2025, 6, "VII. 주주에 관한 사항", "최대주주 및 특수관계인의 주식소유 현황 (소제목) 국민연금공단 8.4%", [])])
+        drafts = {q.source.split("/")[1]: q for q in draft_questions(self.con) if q.evidence_rcept_no == [KB_2025]}
+        # 제목 정규식은 '2. 최대주주 변동현황'에 안 맞고, 감싸는 섹션 중 가장 얕은 'VII. 주주에 관한 사항'으로
+        self.assertEqual(drafts["largest_holder"].evidence_section, "VII. 주주에 관한 사항")
+        self.assertIn("1. 임원 및 직원 등의 현황", drafts["employees"].evidence_section)
 
     def test_seed_questions_resolve_rcept_no_from_disclosure(self):
         seeds = {q.id: q for q in seed_questions(self.con)}
