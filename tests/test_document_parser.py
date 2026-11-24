@@ -153,6 +153,17 @@ class ParseDocumentXmlTest(unittest.TestCase):
         self.assertEqual((att.doc_kind, att.doc_kind_name), ("00761", "연결감사보고서"))
         self.assertEqual([s.title for s in att.sections], ["감 사 보 고 서", "독립된 감사인의 감사보고서"])
 
+    def test_te_directly_under_tr_is_a_cell(self):
+        # 주석 표: TD 없이 TR 바로 아래 TE. 3차까지 이 행들이 모두 빠졌다 (raw 81245번째 줄)
+        table, _ = parse_tree(b"""<TABLE><THEAD><TR><TH><TE>A</TE></TH><TH><TE>B</TE></TH></TR></THEAD>
+            <TBODY><TR><TE COLSPAN="2">X</TE></TR><TR><TE>1</TE><TE>2</TE></TR></TBODY></TABLE>""")
+        self.assertEqual(parse_table(table, None, None).rows, [["A", "B"], ["X", "X"], ["1", "2"]])
+
+    def test_unknown_entity_cr_becomes_space_others_kept_as_text(self):
+        self.assertEqual(escape_stray(b"<P>&cr;&cr;a&amp;b&nbsp;</P>"), b"<P>  a&amp;b&amp;nbsp;</P>")
+        pf = parse_document_xml("d.xml", b'<DOCUMENT><BODY><P>x&cr;y &nbsp;</P></BODY></DOCUMENT>')
+        self.assertEqual((pf.parser, pf.sections[0].paragraphs), ("etree+escape", ["x y &nbsp;"]))
+
     def test_rowspan_spanning_into_later_rows(self):
         table, _ = parse_tree(b"""<TABLE><TR><TD ROWSPAN="3"><TE>A</TE></TD><TD><TE>1</TE></TD></TR>
             <TR><TD><TE>2</TE></TD></TR><TR><TD><TE>3</TE></TD></TR></TABLE>""")

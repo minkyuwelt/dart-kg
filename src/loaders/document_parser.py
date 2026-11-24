@@ -12,7 +12,8 @@
   그런 제목은 "감싸는 섹션 깊이 + 1"의 하위 섹션으로 연다
 - `ATOCID`는 유일하지 않고 순서대로도 아니다(하위가 1부터 다시 시작) → 섹션 ID는 파일 안 등장 순서. ATOCID는 참고 컬럼
 - `AID`(예: CEO-CERT), `AASSOCNOTE`(예: D-0-1-1-0)는 항목 표준 코드로 보여 그대로 저장
-- 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `TU`는 단위, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개
+- 표: `TABLE-GROUP > TABLE > THEAD/TBODY > TR > TD|TH > TE(글자)`, `TU`는 단위, `COL/COLGROUP`은 너비. 사업보고서 한 권에 표 4,809개.
+  주석의 표는 `TR > TE`로 TE가 바로 칸이다 → 칸은 TR의 자식 TD/TH/TE
 - 무시: IMAGE/IMG/IMG-CAPTION, PGBRK, COL/COLGROUP. 그 밖의 모르는 태그는 안으로 들어가 글자만 모은다
 
 파서는 세 단계다 (docs/decisions/0007-xml-parser.md). 2026-11-24 노트북에서 사업보고서 187건을 내장 파서만으로
@@ -91,6 +92,18 @@ class ParsedFile:
 
 # 엔티티(&amp; &#60; &#x3C;)가 아닌 `&`
 STRAY_AMP_RE = re.compile(rb"&(?!(?:[A-Za-z][A-Za-z0-9]*|#\d+|#x[0-9A-Fa-f]+);)")
+# 이름 엔티티. XML이 아는 것은 다섯 개뿐이고, DART 2022년 이전 원문은 줄바꿈을 `&cr;`로 쓴다 (why-lxml 3차: 76개 파일 전부)
+NAMED_ENTITY_RE = re.compile(rb"&([A-Za-z][A-Za-z0-9]*);")
+XML_ENTITIES = {b"amp", b"lt", b"gt", b"quot", b"apos"}
+
+
+def _fix_entity(m: re.Match) -> bytes:
+    name = m.group(1)
+    if name in XML_ENTITIES:
+        return m.group(0)
+    if name.lower() == b"cr":  # 줄바꿈. 글자 정리에서 공백 하나로 합쳐진다
+        return b" "
+    return b"&amp;" + name + b";"  # 그 밖의 모르는 엔티티는 글자 그대로 남긴다 (예: &nbsp; → "&nbsp;")
 # 진짜 태그(`<NAME ` `<NAME>` `<NAME/>` `</NAME>` `<!` `<?`)가 아닌 `<`. 예: `<당기말>`, `< 10%`,
 # 그리고 영문 뒤에 한글이 붙은 `<NICE신용평가>` `<KB금융지주>` (2026-11-24 why-lxml: 22개 파일). 태그 이름은 ASCII만이라
 # 이름 뒤에 `>`·`/`·"공백 + 속성 이름"이 오지 않으면 글자로 본다 (한글은 바이트가 0x80 이상이어서 영문 범위에 걸리지 않음)
@@ -107,8 +120,8 @@ def _fix_attr_quotes(m: re.Match) -> bytes:
 
 
 def escape_stray(data: bytes) -> bytes:
-    """XML 규칙을 어긴 그대로의 `&`, `<`, 속성값 안 따옴표를 엔티티로 바꾼다. 정상 파일은 그대로다."""
-    data = STRAY_LT_RE.sub(b"&lt;", STRAY_AMP_RE.sub(b"&amp;", data))
+    """XML 규칙을 어긴 그대로의 `&`, `<`, 모르는 엔티티(`&cr;`), 속성값 안 따옴표를 고친다. 정상 파일은 그대로다."""
+    data = STRAY_LT_RE.sub(b"&lt;", NAMED_ENTITY_RE.sub(_fix_entity, STRAY_AMP_RE.sub(b"&amp;", data)))
     return ATTR_VALUE_RE.sub(_fix_attr_quotes, data)
 
 
@@ -180,8 +193,14 @@ def clean_text(elem: ET.Element) -> str:
     return WS_RE.sub(" ", "".join(elem.itertext())).strip()
 
 
+# 표의 칸. 머리 칸은 TH, 몸통 칸은 TD 안에 TE가 있는 꼴이 보통이지만, 재무제표 주석의 표는 TR 바로 아래 TE가 칸이다
+# (2026-11-24 raw: `<TR><TE ENG="..." COLSPAN="2">사용이 제한된 예치금의 내역</TE></TR>`). 그래서 3차까지 주석 표의
+# 숫자 행이 모두 빠져 "숫자 칸 비율 0.0"이었다
+CELL_TAGS = {"TD", "TH", "TE"}
+
+
 def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Table:
-    """TABLE → 2차원 배열. THEAD 행 수를 header_rows로. COLSPAN/ROWSPAN은 값 복제."""
+    """TABLE → 2차원 배열. THEAD 행 수를 header_rows로. COLSPAN/ROWSPAN은 값 복제. 칸은 TR의 자식 TD/TH/TE."""
     header_rows = 0
     row_elems: list[tuple[ET.Element, bool]] = []
     for child in table:
@@ -202,7 +221,7 @@ def parse_table(table: ET.Element, caption: str | None, unit: str | None) -> Tab
     for r, (tr, is_header) in enumerate(row_elems):
         row: list[str] = []
         c = 0
-        cells = [td for td in tr if isinstance(td.tag, str) and td.tag in ("TD", "TH")]
+        cells = [td for td in tr if isinstance(td.tag, str) and td.tag in CELL_TAGS]
         for td in cells:
             while (r, c) in pending:
                 row.append(pending.pop((r, c)))
@@ -299,7 +318,7 @@ class _Walker:
             elif tag == "TABLE-GROUP":
                 self.walk(child, caption, unit)
             elif tag == "TABLE":
-                cells = [td for td in child.iter() if isinstance(td.tag, str) and td.tag in ("TD", "TH")]
+                cells = [td for tr in child.iter("TR") for td in tr if isinstance(td.tag, str) and td.tag in CELL_TAGS]
                 if len(cells) <= 1:
                     # 칸이 하나뿐인 표는 표가 아니라 글상자다. DART는 재무제표 주석 본문을 이렇게 쓴다
                     # (2026-11-24 확인: "1. 지배기업의 개요" 본문 전체가 TD 하나 안에 있었음). 문단으로 취급한다
