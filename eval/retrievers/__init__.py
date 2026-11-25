@@ -6,6 +6,8 @@
 - neo4j:vector:<모델>:    Neo4j 벡터 인덱스 (8번 PR). 예: neo4j:vector:kure-v3. 조각은 src/graph/load_chunks.py로 들어가 있어야 한다
 - neo4j:fulltext:         Neo4j cjk 전문검색 (0004). 검색어는 text_normalize.fulltext_query
 - neo4j:hybrid:<모델>:    벡터 20 + 전문검색 20 → RRF (9a번 PR, 0010). 재순위는 여기에만 붙는다
+- graph:only:             (Phase 4, 0011) 라우터 → 그래프 템플릿 → 근거 조각만. 템플릿에 안 맞는 질문은 빈 결과
+- graph:hybrid:<모델>:    그래프 근거 조각 + neo4j:hybrid:<모델> → RRF. 템플릿에 안 맞으면 neo4j:hybrid 그대로
 선택 단계(모든 조각 검색기에 공통): corp_filter(질문의 회사명으로 좁힘), reranker(상위 후보를 교차 인코더로 다시 매김).
 설정 이름(--retriever)으로 고르므로 run.py는 검색 방식을 모른다.
 """
@@ -58,6 +60,19 @@ def make_retriever(name: str, con, corp_filter: bool = False, rerank: str | None
             embedder = LocalEmbedder(model)
         return DenseRetriever(con, embedder, strategy, corp_filter=corp_filter, reranker=reranker)
 
+    if name == "graph:only" or name.startswith("graph:hybrid:"):
+        from src.graph.load_relations import load_lineage
+        from src.graph.query import GraphRetriever
+        if reranker:
+            raise SystemExit("graph 검색기에는 재순위를 붙이지 않습니다 (0011: 크로스인코더 제외)")
+        if driver is None:
+            from src.graph.client import connect
+            driver = connect()
+        base = None
+        if name.startswith("graph:hybrid:"):
+            base = make_retriever("neo4j:hybrid:" + name.split(":", 2)[2], con, corp_filter=corp_filter, embedder=embedder, driver=driver)
+        return GraphRetriever(driver, con, base=base, lineage=load_lineage())
+
     if name.startswith("neo4j:"):
         from eval.retrievers.neo4j import Neo4jFulltextRetriever, Neo4jHybridRetriever, Neo4jVectorRetriever
         from src.rag.embedding import MODELS
@@ -81,4 +96,4 @@ def make_retriever(name: str, con, corp_filter: bool = False, rerank: str | None
             return Neo4jHybridRetriever(driver, embedder, con, corp_filter=corp_filter, reranker=reranker)
         raise SystemExit("neo4j 검색기는 neo4j:vector:<모델>, neo4j:hybrid:<모델> 또는 neo4j:fulltext 꼴입니다")
 
-    raise SystemExit(f"모르는 검색 방식: {name} (가능: keyword, chunk:<전략>, dense:<모델>:<전략>, neo4j:vector:<모델>, neo4j:hybrid:<모델>, neo4j:fulltext)")
+    raise SystemExit(f"모르는 검색 방식: {name} (가능: keyword, chunk:<전략>, dense:<모델>:<전략>, neo4j:vector:<모델>, neo4j:hybrid:<모델>, neo4j:fulltext, graph:only, graph:hybrid:<모델>)")

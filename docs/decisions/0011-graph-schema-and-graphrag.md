@@ -126,4 +126,7 @@ FIBO는 그래프 형식으로 쓰지 않고 이름 대응만 적는다(phase3-r
 
 ## 순서
 
+진행 (2026-11-25): 2번 `feat/graph-relations`(적재), 4번 중 템플릿 8개·규칙 라우터·관계 표·파생 값·RRF 검색기는 `feat/graph-templates`(`src/graph/templates.py`·`router.py`·`query.py`, 검색기 `graph:only`·`graph:hybrid:<모델>`). 남은 것: LLM 고르기(규칙이 못 고른 질문), `src.rag.ask`·API에 관계 표 넘기기 + 실행 기록 응답.
+
+
 1. 이 문서 병합 → 2. `feat/graph-relations`: 결정 2의 노드·관계를 Neo4j에 올리는 코드(오프라인 테스트) → 3. 노트북에서 정답 12개 확인 후 `questions.jsonl`에 추가(+ `graph_kind` 칸) → 4. 템플릿 8개 + 라우터 + RRF → 5. 평가 세 가지 비교, 결과를 이 문서에 적고 상태를 "채택"으로.
