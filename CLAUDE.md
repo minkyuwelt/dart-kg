@@ -21,6 +21,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 
 현재 단계: Phase 2 완료 (2026-11-23. 백필 618개 보고서, 품질 검사 통과, 시점 질의 5개 검증 → `docs/devlog/2026-11-23.md`). 다음: Phase 3 (공시 원문 RAG). 계획: `docs/plans/phase3.md`
 방향: `docs/plans/usecases.md` — 누가 쓰나, 업무 질문 11개, 비슷한 서비스와 차별점 5개. 기능을 넣을지는 이 문서의 질문을 돕는지로 판단한다
+Phase 4 설계 전 조사: `docs/plans/phase4-research.md` — 논문·도구마다 채택/보류/제외와 이유. 0011은 이 문서 5절의 뼈대로 쓴다
 
 ## 아키텍처 원칙
 - DuckDB 파일(`data/dartkg.duckdb`)이 원본(Source of Truth). DART API 원본 응답도 함께 보관해서, 스키마를 바꿔도 API를 다시 호출하지 않고 다시 정규화할 수 있게 함
