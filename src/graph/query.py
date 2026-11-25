@@ -33,6 +33,7 @@ from src.graph.router import Plan, route
 MAX_RELATION_ROWS = 50   # LLM에 넘기는 관계 행 상한 (phase4-research 3절 5번 예산)
 MAX_DERIVED_ROWS = 50    # LLM에 넘기는 파생 값 줄 상한. 계산(derive)은 전체로 하고 표에만 자른다
 EVIDENCE_LIMIT = 20
+EVIDENCE_PER_DOC = 3   # 보고서 하나에서 가져올 조각 수. 검색 평가가 상위 5개를 보므로 보고서 2곳 이상이 그 안에 들도록
 
 
 @dataclass
@@ -227,9 +228,10 @@ def evidence(driver, relations: list[dict], limit: int = EVIDENCE_LIMIT, databas
                 sections.append(sec)
     if not rcepts:
         return []
-    recs = T.run(driver, "evidence_chunks", {"rcepts": rcepts, "sections": sections or None, "limit": limit}, database)
+    recs = T.run(driver, "evidence_chunks",
+                 {"rcepts": rcepts, "sections": sections or None, "limit": limit, "per_doc": EVIDENCE_PER_DOC}, database)
     order = {r: i for i, r in enumerate(rcepts)}
-    recs.sort(key=lambda r: (order.get(r["rcept_no"], len(order)), r.get("seq") or 0))
+    recs.sort(key=lambda r: (order.get(r["rcept_no"], len(order)), r.get("seq") or 0))   # Cypher도 같은 순서로 주지만, 가짜 드라이버(테스트)를 위해 한 번 더
     n = len(recs)
     return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(n - i), (r["text"] or "")[:120], r["text"] or "")
             for i, r in enumerate(recs)]

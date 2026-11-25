@@ -200,6 +200,19 @@ class GraphQueryTest(unittest.TestCase):
 
     # ------------------------------------------------------------ 4) 실행·관계 표·파생
 
+    def test_evidence_keeps_relation_order_and_caps_chunks_per_report(self):
+        # 2026-11-25 평가: 접수번호 순으로 먼저 잘라, 조각 많은 오래된 보고서가 칸을 다 채우던 문제 (g11·g12)
+        rels = [{"source_rcept_no": r, "source_table": "HOLDS_POSITION"} for r in ("R2026", "R2021", "R2026", "R2023")]
+        driver = TemplateDriver({"evidence_chunks": lambda p: [
+            {"rcept_no": r, "file_name": "f", "section_id": 1, "path": "임원", "text": f"{r}-{n}", "seq": n}
+            for r in p["rcepts"] for n in range(p["per_doc"])]})
+        hits = Q.evidence(driver, rels)
+        params = driver.calls[0][1]
+        self.assertEqual(params["rcepts"], ["R2026", "R2021", "R2023"])   # 관계에 나온 순서, 중복 없이 (접수번호 순이 아님)
+        self.assertEqual(params["per_doc"], Q.EVIDENCE_PER_DOC)
+        self.assertEqual([h.rcept_no for h in hits[:4]], ["R2026"] * 3 + ["R2021"])
+        self.assertIn("collect(ch)[..$per_doc]", T.TEMPLATES["evidence_chunks"].cypher)
+
     def test_holder_chain_then_positions(self):
         card, kbh, nps = node(KBCARD, "KB국민카드"), node(KBH, "KB금융지주"), node(f"name:{KBH}:국민연금공단", "국민연금공단", has=False)
         driver = TemplateDriver({

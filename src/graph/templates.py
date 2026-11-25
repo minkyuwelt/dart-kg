@@ -174,16 +174,23 @@ WHERE {at('r')}
 )
 
 # T8은 모양이 다르다: 관계 행의 근거 접수번호 → 그 보고서의 해당 섹션 조각. 그래프 결과를 공시 원문과 잇는 다리
+# $rcepts는 관계 행에 나온 순서. 그 순서대로 보고서마다 앞 조각 $per_doc개씩 고른 뒤 전체 $limit개에서 자른다.
+# (전에는 접수번호 순으로 $limit개를 먼저 잘라, 임원 표처럼 조각이 많은 오래된 보고서 하나가 칸을 다 채웠다 — 2026-11-25 평가 g11·g12)
 T8 = Template(
     "evidence_chunks", "관계 행의 근거 공시 → 그 섹션의 조각",
     """
-MATCH (d:Document)-[:HAS_CHUNK]->(ch:Chunk)
-WHERE d.rcept_no IN $rcepts AND ($sections IS NULL OR any(s IN $sections WHERE ch.path CONTAINS s))
-RETURN ch.rcept_no AS rcept_no, ch.file_name AS file_name, ch.section_id AS section_id, ch.path AS path, ch.text AS text, ch.seq AS seq
-ORDER BY ch.rcept_no, ch.seq
+UNWIND range(0, size($rcepts) - 1) AS i
+MATCH (d:Document {rcept_no: $rcepts[i]})-[:HAS_CHUNK]->(ch:Chunk)
+WHERE $sections IS NULL OR any(s IN $sections WHERE ch.path CONTAINS s)
+WITH i, ch ORDER BY i, ch.seq
+WITH i, collect(ch)[..$per_doc] AS chs
+UNWIND chs AS ch
+RETURN ch.rcept_no AS rcept_no, ch.file_name AS file_name, ch.section_id AS section_id, ch.path AS path, ch.text AS text, ch.seq AS seq,
+       i AS doc_order
+ORDER BY doc_order, seq
 LIMIT $limit
 """,
-    ("rcepts", "limit"), ("sections",),
+    ("rcepts", "limit", "per_doc"), ("sections",),
 )
 
 TEMPLATES: dict[str, Template] = {t.name: t for t in (T1, T2, T3, T4, T5, T6, T7, T8)}
