@@ -76,7 +76,7 @@ TEMPLATES = [
 TIMEPOINT_KEYS = ("largest_holder", "ceo")  # 전 연도 보고서에 쓰는 틀
 TEMPLATES_BY_KEY = {t.key: t for t in TEMPLATES}
 
-SEEDS = [  # Phase 2 시점 질의 5개 중 4개. Q5(정정 전후 차이)는 API가 최신 정정본만 줘서 비교 대상이 없어 뺌 (0005)
+SEEDS = [  # Phase 2 시점 질의 5개 중 3개. Q5(정정 전후 차이)는 API가 최신 정정본만 줘서 비교 대상이 없어 뺌 (0005), Q3은 g11로 대체 (0011)
     {"id": "p2-q1", "type": "시점", "phase": 3, "question": "2023년 3월 31일 기준 신한은행의 최대주주는 누구이고 지분율은 몇 %인가?",
      "answer": "신한금융지주회사 100%", "corp_name": "신한은행", "report_nm": "분기보고서 (2023.03)",
      "evidence_section": "최대주주 및 특수관계인의 주식소유 현황", "source": "phase2-Q1", "status": "draft",
@@ -85,9 +85,7 @@ SEEDS = [  # Phase 2 시점 질의 5개 중 4개. Q5(정정 전후 차이)는 AP
      "answer": None, "corp_name": "하나은행", "report_nm": "사업보고서 (2022.12)",
      "evidence_section": "임원 및 직원 등의 현황", "source": "phase2-Q2", "status": "draft",
      "note": "Phase 2에서 6명으로 확인. 이름은 뷰어에서 확인해 적는다"},
-    {"id": "p2-q3", "type": "다중경로", "phase": 4, "question": "4대 금융지주의 임원 중 같은 지주의 자회사 임원을 겸하는 사람은 누구인가?",
-     "answer": None, "corp_name": None, "report_nm": None, "evidence_section": "임원 및 직원 등의 현황", "source": "phase2-Q3", "status": "draft",
-     "note": "근거는 지주 4곳 최신 사업보고서 + 자회사 보고서. 검색이 지주 보고서의 임원 섹션을 찾는지만 잰다"},
+    # p2-q3(4대 지주 임원의 자회사 임원 겸직)은 지주 하나로 좁힌 g11(eval/graph_draft.py)로 대체해 뺐다 (0011)
     {"id": "p2-q4", "type": "다중경로", "phase": 4, "question": "4대 금융지주의 최대주주는 설립 이후 어떻게 바뀌었는가?",
      "answer": None, "corp_name": None, "report_nm": None, "evidence_section": "최대주주 변동현황", "source": "phase2-Q4", "status": "draft",
      "note": "근거는 지주 4곳 최신 사업보고서의 최대주주 변동현황 섹션"},
