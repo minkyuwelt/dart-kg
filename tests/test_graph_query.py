@@ -171,7 +171,11 @@ class GraphQueryTest(unittest.TestCase):
         self.assertFalse(T.title_matches("부행장", "대표이사"))
         self.assertTrue(T.title_matches("대표이사 사장", "대표이사"))
         self.assertTrue(T.title_matches("아무 직위", None))
-        self.assertIn("은행장", T.TEMPLATES["person_history"].cypher)
+        self.assertTrue(T.is_ceo("회장", "대표이사"))                 # 금융지주: 직위 '회장', 담당업무 '대표이사'
+        self.assertTrue(T.is_ceo("회장", "대표이사 (이사회 의장)"))
+        self.assertFalse(T.is_ceo("이사", "사외이사 (자회사대표이사후보 추천위원회)"))   # 위원회 이름 안의 말은 아님
+        self.assertTrue(T.title_matches("회장", "대표이사", "대표이사"))
+        self.assertIn("r0.ceo", T.TEMPLATES["person_history"].cypher)
         self.assertIn(f"LIMIT {T.DESCENDANTS_LIMIT}", T.TEMPLATES["descendants"].cypher)
 
     def test_abbreviation_is_not_rename(self):

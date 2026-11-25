@@ -12,7 +12,7 @@ from eval.locate import locate
 from eval.metrics import Hit, hit_at_k, reciprocal_rank, score_question, summarize
 from eval.questions import NO_ANSWER, QuestionFormatError, load_questions, parse_question
 from eval.retrievers.keyword import KeywordRetriever, tokenize
-from eval.review import line_id, pending, read_lines, review, section_preview
+from eval.review import first_preview, line_id, pending, read_lines, review, section_preview
 from eval.run import evaluate
 from src.collectors.corp_code import HOLDING_CORPS
 from src.loaders.duckdb_store import connect, upsert_disclosures
@@ -254,6 +254,10 @@ class ReviewTest(unittest.TestCase):
         self.assertIn("  국민은행 | 100 | 14,821,721 | - | 100 | 14,821,721", lines)
         self.assertEqual(section_preview(self.con, KB_2025, "없는 섹션"), ["(파싱된 섹션이 없습니다. 뷰어로 확인하세요)"])
         self.assertEqual(section_preview(self.con, KB_2025, None), [])
+        # 근거 보고서가 여럿이면 섹션이 있는 첫 보고서 (앞 보고서가 파싱되지 않았을 때)
+        lines = first_preview(self.con, ["20990101000000", KB_2025], "타법인출자 현황(상세)")
+        self.assertEqual(lines[0], f"(보고서 {KB_2025})")
+        self.assertEqual(first_preview(self.con, ["20990101000000"], "타법인출자 현황(상세)"), ["(파싱된 섹션이 없습니다. 뷰어로 확인하세요)"])
 
     def test_pending_lists_drafts_from_both_files_and_review_loop_writes_answers(self):
         todo = pending(self.questions, self.draft, None, None)

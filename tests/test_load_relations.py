@@ -202,6 +202,16 @@ class LoadRelationsTest(unittest.TestCase):
         self.assertFalse(any(k.endswith(":-") for k in driver.corps))
         self.assertIn("국민카드(지주 표기)", driver.corps[CARD]["names"])
 
+    def test_ceo_from_duty_column(self):
+        # 금융지주는 직위 '회장', 담당업무 '대표이사'로 적는다 → HOLDS_POSITION.ceo
+        self.con.execute("UPDATE executive SET ofcps = '회장', chrg_job = '대표이사' WHERE nm = '양종희' AND corp_code = ?", [HOLD])
+        self.con.execute("UPDATE executive SET chrg_job = '사외이사 (자회사대표이사후보 추천위원회)' WHERE nm = '이영희'")
+        driver, _ = self.build()
+        rels = {r["title"]: r for k, r in driver.rels.items() if k[0] == "HOLDS_POSITION"}
+        self.assertTrue(rels["회장"]["ceo"])
+        self.assertEqual(rels["회장"]["duty"], "대표이사")
+        self.assertFalse(rels["사외이사"]["ceo"])
+
     def test_titles_are_one_line(self):
         self.assertEqual(lr._one_line("기타\n비상무이사"), "기타 비상무이사")
         self.assertIsNone(lr._one_line(None))

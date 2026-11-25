@@ -25,23 +25,33 @@ ROW_LIMIT = 200     # 경로 수 상한. 직렬화에서 관계 행 50개로 다
 # 200에서 자르면 "몇 곳인가"의 답이 200이 된다. 회사 수는 전체로 세고, LLM에 넘기는 표만 query.py에서 자른다
 DESCENDANTS_LIMIT = 10000
 
-# 질문의 직위 → 임원 표의 직위 칸에서 찾을 말. 은행은 대표이사를 '은행장'으로 적는다
-# (은행법상 은행장이 대표이사. 신한은행 2026-09-30 보고서: 정상혁 '은행장' / 사내이사). 목록에 적힌 것만 넓힌다
+# 대표이사는 어디에 적히나 (노트북 확인 2026-11-25)
+# - 직위 칸: '대표이사 회장', 은행은 '은행장' (은행법상 은행장이 대표이사. 신한은행 정상혁 '은행장' / 사내이사)
+# - 담당업무 칸: 금융지주는 직위 '회장', 담당업무 '대표이사'로 적는다 (우리금융지주 2025 사업보고서 임종룡)
+# 담당업무에서는 낱말로만 찾는다: 사외이사 담당업무의 '자회사대표이사후보 추천위원회'는 대표이사가 아니다
 TITLE_ALIASES = {"대표이사": ("대표이사", "은행장")}
+_CEO_DUTY_RE = re.compile(r"(?<![가-힣])대표이사(?![가-힣])")
 
 
-def title_matches(title: str | None, want: str | None) -> bool:
+def is_ceo(title: str | None, duty: str | None = None) -> bool:
+    """임원 행 하나가 대표이사인가. 그래프 적재(HOLDS_POSITION.ceo)와 SQL 초안이 같은 함수를 쓴다."""
+    if any(w in (title or "") for w in TITLE_ALIASES["대표이사"]):
+        return True
+    return bool(duty) and bool(_CEO_DUTY_RE.search(" ".join(duty.split())))
+
+
+def title_matches(title: str | None, want: str | None, duty: str | None = None) -> bool:
     """파이썬 쪽 같은 규칙 (eval/graph_draft.py의 SQL 초안이 쓴다)."""
     if want is None:
         return True
-    return any(w in (title or "") for w in TITLE_ALIASES.get(want, (want,)))
+    if want == "대표이사":
+        return is_ceo(title, duty)
+    return want in (title or "")
 
 
 def title_ok(r: str) -> str:
-    """Cypher 조각: 관계 r의 직위가 $title(또는 그 별칭)을 담는가."""
-    alias = " ".join(f"OR ($title = '{k}' AND ({' OR '.join(f'{r}.title CONTAINS {v!r}' for v in vs)}))"
-                     for k, vs in TITLE_ALIASES.items())
-    return f"($title IS NULL OR {r}.title CONTAINS $title {alias})"
+    """Cypher 조각: 관계 r의 직위가 $title을 담는가. 대표이사는 적재 때 is_ceo로 계산한 r.ceo로 본다."""
+    return f"($title IS NULL OR {r}.title CONTAINS $title OR ($title = '대표이사' AND coalesce({r}.ceo, false)))"
 
 
 def at(r: str) -> str:

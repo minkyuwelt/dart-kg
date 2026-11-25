@@ -82,10 +82,11 @@ class GraphDraftTest(unittest.TestCase):
         # 추론
         holder(con, R["wr"], WRBANK, "우리금융지주", WRH, 100.0, D25)
         holder(con, R["wrh"], WRH, "우리사주조합", None, 9.5, D25)
-        holder(con, R["wrh"], WRH, "국민연금공단", None, 6.0, D25)
+        holder(con, R["wrh"], WRH, "우리은행우리사주조합", None, 2.01, D25)   # 특수관계인 → 최대주주 표 합계 11.51%
         holder(con, R["shlife"], SHLIFE, "신한지주", SHH, 100.0, D25)
         holder(con, R["card23"], KBCARD, "KB금융지주", KBH, 100.0, D22, D23)
-        ex(con, R["kbh23"], KBH, "윤종규", "대표이사 회장", "사내이사", "윤종규|1955-10|남", D22, D23)
+        ex(con, R["kbh23"], KBH, "윤종규", "회장", "사내이사", "윤종규|1955-10|남", D22, D23)   # 대표이사는 담당업무 칸에만
+        con.execute("UPDATE executive SET chrg_job = '대표이사' WHERE nm = '윤종규'")
         holder(con, R["shsec21"], SHSEC, "신한지주", SHH, 100.0, D21, D22)
         # 계층
         inv(con, R["kbh"], KBH, "KB국민은행", KBBANK, 100.0)
@@ -119,10 +120,12 @@ class GraphDraftTest(unittest.TestCase):
                 self.assertEqual(q.graph_kind, s.graph_kind)
         d = self.drafts
         self.assertIn("우리금융지주 (100.0%)", d["g01"].answer)
-        self.assertIn("우리사주조합 (9.5%", d["g01"].answer)
+        self.assertIn("우리사주조합 (9.5%, 특수관계인 포함 최대주주 표 합계 11.51%", d["g01"].answer)
+        self.assertIn("우리금융지주 (100.0%)", d["g01"].answer)                 # 특수관계인이 없으면 합계를 따로 적지 않음
         self.assertEqual(d["g01"].evidence, [R["wr"], R["wrh"]])
         self.assertEqual(d["g02"].count, 2)
-        self.assertIn("윤종규", d["g03"].answer)
+        self.assertIn("윤종규(직위 회장, 담당업무 대표이사)", d["g03"].answer)
+        self.assertEqual(d["g03"].evidence[0], R["kbh23"])                  # 답이 있는 보고서(임원 표)가 먼저
         self.assertIn("2021-12-31 최대주주: 신한지주", d["g08"].answer)
         self.assertIn("신한금융투자 → 신한투자증권", d["g08"].answer)
         self.assertIn("우리종합금융", d["g07"].answer)                       # corp 테이블에만 있는 없어진 회사도 찾는다

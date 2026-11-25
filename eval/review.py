@@ -73,6 +73,17 @@ def section_preview(con: duckdb.DuckDBPyConnection, rcept_no: str, section: str 
 WRAP_CHARS = 300
 
 
+def first_preview(con: duckdb.DuckDBPyConnection, rcepts: list[str], section: str | None) -> list[str]:
+    """근거 보고서를 순서대로 보며 그 섹션이 파싱된 첫 보고서의 원문. 여러 보고서가 근거인 질문(그래프 질문)에서
+    첫 보고서가 파싱되지 않았거나(오래된 분기보고서) 그 섹션이 없을 때 다음 보고서를 본다. 어느 보고서인지 맨 앞에 적는다."""
+    missing = ["(파싱된 섹션이 없습니다. 뷰어로 확인하세요)"]
+    for r in rcepts:
+        lines = section_preview(con, r, section)
+        if lines and lines != missing:
+            return ([f"(보고서 {r})"] if len(rcepts) > 1 else []) + lines
+    return missing if section and rcepts else []
+
+
 def wrap(text: str, width: int = WRAP_CHARS) -> list[str]:
     """글을 width 글자 안팎으로 자른다. 문장 끝(마침표 뒤 공백)에서 자르고, 없으면 그냥 자른다."""
     out, rest = [], text
@@ -167,7 +178,7 @@ def review(con, questions_path: Path, draft_path: Path, todo: list[Question], in
             print_fn("(없음 유형) 뷰어의 본문 검색으로 정말 없는지 확인한 뒤 y를 치세요.")
             preview, shown = [], 0
         else:
-            preview = section_preview(con, q.evidence_rcept_no[0], q.evidence_section) if q.evidence_rcept_no else []
+            preview = first_preview(con, q.evidence_rcept_no, q.evidence_section)
             shown = _show(preview, 0, print_fn)
         while True:
             try:
@@ -184,7 +195,7 @@ def review(con, questions_path: Path, draft_path: Path, todo: list[Question], in
                     print_fn("예: e 12-A. 금융자산과 금융부채의 공정가치   (섹션 경로의 일부. locate로 찾은 경로를 붙이면 됨)")
                     continue
                 q.evidence_section = part
-                preview = section_preview(con, q.evidence_rcept_no[0], part) if q.evidence_rcept_no else []
+                preview = first_preview(con, q.evidence_rcept_no, part)
                 print_fn(f"근거 섹션을 바꿨습니다: {part}")
                 shown = _show(preview, 0, print_fn)
                 continue
