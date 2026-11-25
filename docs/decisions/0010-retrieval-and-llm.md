@@ -37,5 +37,28 @@ python -m eval.run --retrieval-only --retriever neo4j:hybrid:kure-v3 --filter co
 
 ## 2. LLM 답변 생성 (9b)
 
-(계획 (E)절 "생성" 그대로. 모델 `gpt-6-luna`, `.env` `OPENAI_API_KEY`·`LLM_MODEL`, 구조화 출력(답 본문 + 인용 번호), 조각에 없는 내용은 "공시에서 찾지 못했습니다",
-답마다 DART 뷰어 링크(usecases D3). 비용 상한: 질문당 토큰 상한·하루 호출 한도. 9b번 PR에서 채운다)
+### 모델
+`gpt-6-luna`(OpenAI, 사용자 결정 2026-11-24, 계획 (E)절: `gpt-4o-mini`의 종료 후속이고 더 싸다 — 입력 $0.10 / 출력 $0.50 per 1M 토큰, 2026-11 기준).
+모델 이름은 `.env`의 `LLM_MODEL`로만 바꾼다. 호출 코드는 `src/rag/llm.py` 한 곳(`OpenAILLM`), 인터페이스는 "조각 목록 + 질문 → 답 + 인용 번호"(`LLM` Protocol).
+테스트·평가는 같은 인터페이스의 가짜 LLM으로 돌아 API를 부르지 않는다.
+
+### 프롬프트 규칙 (`SYSTEM_PROMPT`)
+1. 번호 붙은 조각에 적힌 내용만으로 답한다 2. 문장마다 [번호] 인용 3. 없으면 정확히 "공시에서 찾지 못했습니다", 인용 비움 4. 숫자·이름·날짜는 적힌 그대로 5. citations에는 실제 인용만.
+조각은 k=5개, 각 1,000자까지, "[n] 회사 | 보고서 | 섹션 경로" 꼬리표와 함께. 출력은 JSON 스키마(`answer`, `citations`) 구조화 출력(Responses API `text.format` json_schema strict).
+프로그램이 인용 번호 → 접수번호·섹션·DART 뷰어 링크(`dsaf001/main.do?rcpNo=`)로 바꾼다(usecases D3). 범위 밖 번호는 버린다.
+
+### 비용 보호
+질문당 출력 토큰 상한 `LLM_MAX_OUTPUT_TOKENS`(600), 하루 호출 한도 `LLM_DAILY_LIMIT`(200, `data/llm_calls.json`). 입력은 5 × 1,000자 ≈ 3,000~4,000토큰 → 질문당 약 $0.0005, 평가 세트 60개 ≈ $0.03.
+**실측해 아래에 적는다.** OpenAI 콘솔의 월 한도도 걸어 둔다.
+
+### 평가 (사람 채점)
+`python -m eval.run --retriever neo4j:hybrid:kure-v3 --filter corp --include-none`이 질문마다 답·인용·정답을 나란히 둔 채점표(`eval/results/*_llm_*.md`)를 만든다.
+채점 기준: 맞음 / 부분 / 틀림 / 근거없는주장(조각에 없는 말). "없음" 5개는 "찾지 못했습니다"가 정답 — 답이 있는 질문에 "찾지 못함"이라고 하는 비율(false none)도 함께 본다.
+LLM 채점은 사람 채점과 일치율을 확인한 뒤에만 도입(계획 4절).
+
+### 확인할 것 (9b 노트북 1차)
+- `gpt-6-luna`가 json_schema strict 구조화 출력을 받는가 — 질문 1개로 확인. 안 되면 `text.format`을 `json_object`로 내리고 스키마는 프롬프트에 적는다
+- 토큰 수·비용 실측, 질문당 지연
+
+### 검증 결과
+(기록 예정: 채점 분포, 토큰·비용, '없음' 처리율, 근거없는주장 건수)

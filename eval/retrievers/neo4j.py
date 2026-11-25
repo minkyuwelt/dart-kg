@@ -38,7 +38,7 @@ ORDER BY score DESC LIMIT $k
 
 
 def _hits(records) -> list[Hit]:
-    return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(r["score"]), (r["text"] or "")[:120]) for r in records]
+    return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(r["score"]), (r["text"] or "")[:120], r["text"] or "") for r in records]
 
 
 class Neo4jVectorRetriever:
@@ -104,5 +104,5 @@ class Neo4jHybridRetriever:
         if self.reranker:
             top = [rec for rec, _ in fused[: self.rerank_candidates]]
             ranked = rerank(self.reranker, question, top, lambda r: r["text"] or "", k)
-            return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(s), (r["text"] or "")[:120]) for r, s in ranked]
-        return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(s), (r["text"] or "")[:120]) for r, s in fused[:k]]
+            return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(s), (r["text"] or "")[:120], r["text"] or "") for r, s in ranked]
+        return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(s), (r["text"] or "")[:120], r["text"] or "") for r, s in fused[:k]]
