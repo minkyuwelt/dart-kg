@@ -332,3 +332,4 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```
 
    벡터 인덱스는 근사 검색이라 DuckDB 전수 비교(`dense:kure-v3:section_path`)와 hit@5가 조금 다를 수 있습니다. 둘을 나란히 재어 [0009](docs/decisions/0009-embedding.md)에 적습니다.
+   벡터와 전문검색을 RRF로 합친 하이브리드는 `--retriever neo4j:hybrid:kure-v3`([0010](docs/decisions/0010-retrieval-and-llm.md)). 재순위(`--rerank nano`)는 하이브리드에만 붙습니다.
