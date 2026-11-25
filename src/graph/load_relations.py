@@ -42,6 +42,7 @@ import duckdb
 
 from src.graph.client import connect, settings, wait_until_ready
 from src.loaders.duckdb_store import connect as duck_connect
+from src.graph.names import NAME_CHARS, has_name, linked_names
 from src.loaders.investments import normalize_name
 
 LINEAGE_PATH = Path(__file__).resolve().parents[2] / "config" / "corp_lineage.csv"
@@ -168,6 +169,8 @@ def owns_rows(con: duckdb.DuckDBPyConnection) -> list[dict]:
         SELECT rcept_no, row_seq, investor_corp_code, investee_name, investee_corp_code, share_class, invstmnt_purps,
                trmend_blce_qy, trmend_blce_qota_rt, trmend_blce_acntbk_amount, valid_from, valid_to, superseded_by
         FROM investment ORDER BY rcept_no, row_seq"""):
+        if not has_name(r["investee_name"]):
+            continue  # 이름 칸이 '-'인 행 (출자 표의 빈 줄·합계 줄). 회사가 아니므로 노드를 만들지 않는다. duckdb_counts도 같이 뺀다
         dst = r["investee_corp_code"] or name_key(r["investor_corp_code"], r["investee_name"])
         out.append({
             "row_key": f"inv:{r['rcept_no']}:{r['row_seq']}", "source_table": "investment",
@@ -196,6 +199,10 @@ def owns_rows(con: duckdb.DuckDBPyConnection) -> list[dict]:
     return out
 
 
+def _one_line(text: str | None) -> str | None:
+    return " ".join(text.split()) if text else text
+
+
 def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict], int]:
     """(HOLDS_POSITION 행, Person 행, person_id가 없어 건너뛴 행 수). 생년월·성별은 여기서 버린다."""
     rows = _rows(con, """
@@ -211,7 +218,8 @@ def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict
         persons[pid] = names.get(r["person_id"]) or r["person_id"].split("|", 1)[0]
         out.append({
             "row_key": f"exe:{r['source_rcept_no']}:{r['row_seq']}", "pid": pid, "corp": r["corp_code"],
-            "title": r["ofcps"], "registered": r["rgist_exctv_at"], "outside": r["rgist_exctv_at"] == "사외이사",
+            # 직위 칸의 줄바꿈('기타\n비상무이사')은 공백 하나로. 원문은 DuckDB에 그대로 있다
+            "title": _one_line(r["ofcps"]), "registered": _one_line(r["rgist_exctv_at"]), "outside": _one_line(r["rgist_exctv_at"]) == "사외이사",
             "full_time": r["fte_at"],
             "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
             "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
@@ -244,6 +252,10 @@ def corp_rows(con: duckdb.DuckDBPyConnection, owns: list[dict], positions: list[
         """SELECT corp_code, corp_name FROM disclosure WHERE corp_name IS NOT NULL
            GROUP BY corp_code, corp_name ORDER BY corp_code, min(rcept_dt), corp_name""").fetchall():
         history.setdefault(code, []).append(name)
+    # 공시 목록 다음에 출자 표·최대주주 표의 다른 이름 ('KB국민카드', '신한금융지주회사'). 라우터 사전과 같은 출처 (names.py)
+    for code, name in sorted(linked_names(con)):
+        if name not in history.setdefault(code, []):
+            history[code].append(name)
     # 출자 표에 corp_code로 연결된 이름 (corp 테이블에 없는 회사의 이름 대신)
     inv_names = dict(con.execute(
         "SELECT investee_corp_code, any_value(investee_name) FROM investment WHERE investee_corp_code IS NOT NULL GROUP BY 1").fetchall())
@@ -306,7 +318,8 @@ def build(con: duckdb.DuckDBPyConnection, driver, database: str = "neo4j", linea
 
 
 def duckdb_counts(con: duckdb.DuckDBPyConnection, lineage_path: Path = LINEAGE_PATH) -> dict:
-    inv, msh = (con.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("investment", "major_shareholder"))
+    inv = con.execute(f"SELECT count(*) FROM investment WHERE regexp_matches(investee_name, '{NAME_CHARS}')").fetchone()[0]
+    msh = con.execute("SELECT count(*) FROM major_shareholder").fetchone()[0]
     exe = con.execute("SELECT count(*) FROM executive WHERE person_id IS NOT NULL").fetchone()[0]
     return {"owns": inv + msh, "positions": exe, "formerly": len(load_lineage(lineage_path))}
 

@@ -193,6 +193,19 @@ class LoadRelationsTest(unittest.TestCase):
         self.assertEqual(driver.corps[HOLD]["role"], "holding")
         self.assertIn(CARD, driver.corps)  # 임원 행에만 나오는 회사도 노드 (person_id 없는 행은 건너뛰지만 같은 회사의 다른 행으로)
 
+    def test_blank_name_rows_and_linked_names(self):
+        add_inv(self.con, R2, 9, HOLD, "-", None, None, D2)                 # 출자 표의 빈 줄: 회사가 아니다
+        add_inv(self.con, R2, 10, HOLD, "국민카드(지주 표기)", CARD, 100.0, D2)   # 지주가 부르는 다른 이름 → Corp.names
+        driver, out = self.build()
+        self.assertEqual(out["owns"], 7)                                    # 6 + 국민카드 행. '-' 행은 빠짐
+        self.assertTrue(lr.stats(self.con, driver, lineage_path=self.lineage)["match"])   # DuckDB 쪽 수도 같은 규칙으로 뺀다
+        self.assertFalse(any(k.endswith(":-") for k in driver.corps))
+        self.assertIn("국민카드(지주 표기)", driver.corps[CARD]["names"])
+
+    def test_titles_are_one_line(self):
+        self.assertEqual(lr._one_line("기타\n비상무이사"), "기타 비상무이사")
+        self.assertIsNone(lr._one_line(None))
+
     def test_rebuild_is_idempotent(self):
         driver, _ = self.build()
         first = lr.stats(self.con, driver, lineage_path=self.lineage)["neo4j"]

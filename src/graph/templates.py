@@ -21,6 +21,27 @@ from dataclasses import dataclass, field
 
 MAX_DEPTH = 3       # 경로 질문의 최대 깊이 (0011 결정 4, phase4-research 3절)
 ROW_LIMIT = 200     # 경로 수 상한. 직렬화에서 관계 행 50개로 다시 자른다
+# 출자를 따라 내려가는 T2만 더 크게: 지주 아래 2단계가 1,500곳을 넘는다 (KB금융, 2025-12-31).
+# 200에서 자르면 "몇 곳인가"의 답이 200이 된다. 회사 수는 전체로 세고, LLM에 넘기는 표만 query.py에서 자른다
+DESCENDANTS_LIMIT = 10000
+
+# 질문의 직위 → 임원 표의 직위 칸에서 찾을 말. 은행은 대표이사를 '은행장'으로 적는다
+# (은행법상 은행장이 대표이사. 신한은행 2026-09-30 보고서: 정상혁 '은행장' / 사내이사). 목록에 적힌 것만 넓힌다
+TITLE_ALIASES = {"대표이사": ("대표이사", "은행장")}
+
+
+def title_matches(title: str | None, want: str | None) -> bool:
+    """파이썬 쪽 같은 규칙 (eval/graph_draft.py의 SQL 초안이 쓴다)."""
+    if want is None:
+        return True
+    return any(w in (title or "") for w in TITLE_ALIASES.get(want, (want,)))
+
+
+def title_ok(r: str) -> str:
+    """Cypher 조각: 관계 r의 직위가 $title(또는 그 별칭)을 담는가."""
+    alias = " ".join(f"OR ($title = '{k}' AND ({' OR '.join(f'{r}.title CONTAINS {v!r}' for v in vs)}))"
+                     for k, vs in TITLE_ALIASES.items())
+    return f"($title IS NULL OR {r}.title CONTAINS $title {alias})"
 
 
 def at(r: str) -> str:
@@ -30,11 +51,17 @@ def at(r: str) -> str:
 
 
 _NODE = "{key: coalesce(n.key, n.pid), name: n.name, label: labels(n)[0], has_corp_code: n.has_corp_code, names: n.names}"
-RETURN_PATH = f"""
+
+
+def return_path(limit: int = ROW_LIMIT) -> str:
+    return f"""
 RETURN [n IN nodes(p) | {_NODE}] AS nodes,
        [r IN relationships(p) | r{{.*, type: type(r), start_key: coalesce(startNode(r).key, startNode(r).pid)}}] AS rels
-LIMIT {ROW_LIMIT}
+LIMIT {limit}
 """
+
+
+RETURN_PATH = return_path()
 
 
 @dataclass(frozen=True)
@@ -73,7 +100,7 @@ MATCH p = (c:Corp {{key: $corp}})-[:OWNS*1..{MAX_DEPTH}]->(:Corp)
 WHERE length(p) <= $depth
   AND all(r IN relationships(p) WHERE r.source_table = 'investment' AND {at('r')}
                                   AND ($min_pct IS NULL OR r.pct >= $min_pct))
-{RETURN_PATH}""",
+{return_path(DESCENDANTS_LIMIT)}""",
     ("corp", "as_of", "depth"), ("min_pct",),
 )
 
@@ -102,7 +129,7 @@ T5 = Template(
     "person_history", "한 사람의 임원 이력 (시간순)",
     f"""
 MATCH (pe:Person)-[r0:HOLDS_POSITION]->(:Corp {{key: $corp}})
-WHERE {at('r0')} AND ($title IS NULL OR r0.title CONTAINS $title) AND ($person IS NULL OR pe.name = $person)
+WHERE {at('r0')} AND {title_ok('r0')} AND ($person IS NULL OR pe.name = $person)
 WITH DISTINCT pe
 MATCH p = (pe)-[r:HOLDS_POSITION]->(:Corp)
 WHERE r.superseded_by IS NULL
@@ -131,7 +158,7 @@ T7 = Template(
 MATCH p = (x)-[r:OWNS|HOLDS_POSITION]->(c:Corp {{key: $corp}})
 WHERE {at('r')}
   AND ((type(r) = 'OWNS' AND r.source_table = 'major_shareholder' AND ($kind IS NULL OR $kind = 'holders'))
-       OR (type(r) = 'HOLDS_POSITION' AND ($kind IS NULL OR $kind = 'positions') AND ($title IS NULL OR r.title CONTAINS $title)))
+       OR (type(r) = 'HOLDS_POSITION' AND ($kind IS NULL OR $kind = 'positions') AND {title_ok('r')}))
 {RETURN_PATH}""",
     ("corp", "as_of"), ("kind", "title"),
 )

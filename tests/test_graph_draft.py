@@ -176,7 +176,8 @@ class GraphDraftTest(unittest.TestCase):
         spec = G.SPECS[0]
         ctx = Q.build_context(spec.question, driver, self.con, today=TODAY)
         self.assertTrue(G.compare(spec, self.drafts["g01"], ctx)["ok"])
-        ctx.relations = ctx.relations[:1]       # 그래프가 두 번째 단계를 못 찾은 경우
+        ctx.relations = ctx.relations[:1]       # 그래프가 두 번째 단계를 못 찾은 경우 (경로도 첫 번째만)
+        ctx.steps[0].paths = ctx.steps[0].paths[:1]
         r = G.compare(spec, self.drafts["g01"], ctx)
         self.assertFalse(r["ok"])
         self.assertEqual(r["missing_names"], ["우리사주조합"])

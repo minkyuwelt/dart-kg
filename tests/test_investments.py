@@ -13,6 +13,7 @@ class NormalizeNameTest(unittest.TestCase):
         self.assertEqual(normalize_name("㈜우리은행 "), ("우리은행", None))
         self.assertEqual(normalize_name("우리금융캐피탈㈜"), ("우리금융캐피탈", None))
         self.assertEqual(normalize_name("㈜우리투자증권 \n주4)"), ("우리투자증권", None))
+        self.assertEqual(normalize_name("ＰＯＳＣＯ"), ("POSCO", None))   # 전각 글자 → 보통 글자 (NFKC)
         self.assertEqual(normalize_name("핀크(주3)"), ("핀크", None))
 
     def test_splits_share_class(self):
