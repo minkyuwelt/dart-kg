@@ -398,3 +398,5 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    python -m src.graph.query "2025년 12월 31일 기준 우리은행의 최대주주의 최대주주는 누구인가?"   # 실행 기록 + 관계 표 + 근거 조각 (LLM 없음)
    python -m eval.run --retrieval-only --retriever graph:hybrid:kure-v3 --filter corp                           # 평가: 검색만 / 그래프만(graph:only) / 결합 비교
    ```
+
+   `src.rag.ask`와 API `/ask`의 기본 검색기는 이제 `graph:hybrid:kure-v3`입니다. 그래프 질문이면 관계표를 조각 뒤 마지막 번호로 LLM에 넘기고(파생 값은 "계산값"이라고 밝히게 함), API 응답의 `graph` 칸에 실행 기록·관계·파생 값·DART 링크가 붙습니다. 규칙으로 템플릿을 못 고른 질문은 LLM이 **번호만** 고르고(빈칸은 규칙), 그래프 질의가 실패하면 공시 검색만으로 답하고 `graph_error`에 이유를 적습니다. 그래프 질문이 아니면 전과 같습니다.

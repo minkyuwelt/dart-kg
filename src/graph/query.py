@@ -270,9 +270,17 @@ class GraphRetriever:
         self.fetch, self.picker, self.today, self.database = fetch, picker, today, database
         self.name = "graph-" + (base.name if base is not None else "only")
         self.last: GraphContext | None = None
+        self.error: str | None = None
 
     def search(self, question: str, k: int) -> list[Hit]:
-        self.last = build_context(question, self.driver, self.con, self.today, self.lineage, self.picker, self.database)
+        from neo4j.exceptions import Neo4jError
+
+        self.error = None
+        try:
+            self.last = build_context(question, self.driver, self.con, self.today, self.lineage, self.picker, self.database)
+        except Neo4jError as e:
+            # 템플릿 질의가 실패해도(예: 관계가 아직 안 들어감, 문법 오류) 답은 RAG로 낸다. 실패는 error로 남겨 응답·로그에서 보이게
+            self.last, self.error = None, f"{type(e).__name__}: {getattr(e, 'message', None) or e}"
         graph_hits = self.last.evidence if self.last else []
         if self.base is None:
             return graph_hits[:k]
