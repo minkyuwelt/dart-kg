@@ -13,6 +13,7 @@ CLI (노트북, API 호출 없음, GPU 사용):
     python -m src.rag.embedding build --model kure-v1 --strategy section_path --limit 2000   # 시간 재기용
     python -m src.rag.embedding build --model kure-v3 --strategy section_path --fp16         # 16비트로 (약 2배 빠름)
     python -m src.rag.embedding build --model bge-m3 --strategy section_path --batch 16       # 배치 크기 (기본 8)
+    python -m src.rag.embedding build --model kure-v3 --strategy section_path --fp16 --rebuild # 지우고 전부 다시 (프롬프트 등 코드가 바뀐 뒤)
     python -m src.rag.embedding stats                                                # 모델·전략별 임베딩 수
 """
 
@@ -71,14 +72,18 @@ class LocalEmbedder:
             model_kwargs["torch_dtype"] = torch.float16
         self.model = SentenceTransformer(self.spec.hf_id, device=device, truncate_dim=self.spec.dim, model_kwargs=model_kwargs)
         self.model.max_seq_length = min(self.model.max_seq_length or self.spec.max_seq_length, self.spec.max_seq_length)
-        # 모델이 질문용 프롬프트를 정해 두었으면(config의 prompts.query) 질문에만 붙인다. 없으면 그대로
+        # 모델이 접두어(prompt)를 정해 두었으면 그대로 따른다: 질문에는 prompts.query, 조각(문서)에는 prompts.document 또는 passage.
+        # 둘 중 하나만 붙이면 질문과 조각이 다른 조건으로 변환되어 서로 안 맞는다 — 2026-11-25 kure-v3(query: / passage: 접두어,
+        # Mistral 계열 디코더)에서 조각에 접두어를 빠뜨려 hit@5 섹션 0.556 → 0.222로 무너졌던 원인. bge-m3·kure-v1은 접두어가 없다
         prompts = getattr(self.model, "prompts", None) or {}
         self.query_prompt_name = "query" if "query" in prompts else None
+        self.doc_prompt_name = next((k for k in ("document", "passage") if k in prompts), None)
 
     def encode(self, texts: list[str], batch_size: int = 32, is_query: bool = False) -> list[list[float]]:
         kwargs = {"batch_size": batch_size, "normalize_embeddings": True, "convert_to_numpy": True, "show_progress_bar": False}
-        if is_query and self.query_prompt_name:
-            kwargs["prompt_name"] = self.query_prompt_name
+        prompt_name = self.query_prompt_name if is_query else self.doc_prompt_name
+        if prompt_name:
+            kwargs["prompt_name"] = prompt_name
         vectors = self.model.encode(texts, **kwargs)
         return [[float(x) for x in v] for v in vectors]
 
@@ -149,13 +154,18 @@ def main(argv=None) -> int:
     b.add_argument("--limit", type=int, help="앞에서 n개만 (시간 재기)")
     b.add_argument("--device", help="cuda / cpu (기본 자동)")
     b.add_argument("--fp16", action="store_true", help="16비트로 계산 (GPU에서 약 2배 빠름)")
+    b.add_argument("--rebuild", action="store_true", help="이 모델의 임베딩을 지우고 전부 다시 (코드·프롬프트가 바뀌어 벡터가 달라질 때. 해시는 글만 보므로 자동으로 다시 하지 않는다)")
     sub.add_parser("stats")
     args = ap.parse_args(argv)
 
     if args.cmd == "build":
         embedder = LocalEmbedder(args.model, args.device, fp16=args.fp16)
         with connect() as con:
-            print(f"모델 {args.model} ({embedder.spec.hf_id}, {embedder.dim}차원, {'fp16' if args.fp16 else 'fp32'}), 전략 {args.strategy}, 배치 {args.batch}")
+            print(f"모델 {args.model} ({embedder.spec.hf_id}, {embedder.dim}차원, {'fp16' if args.fp16 else 'fp32'}), 전략 {args.strategy}, 배치 {args.batch}"
+                  f", 접두어 질문={embedder.query_prompt_name} 조각={embedder.doc_prompt_name}")
+            if args.rebuild:
+                con.execute("DELETE FROM chunk_embedding WHERE model_name = ?", [args.model])
+                print(f"--rebuild: {args.model} 임베딩 삭제")
             stats = embed_chunks(con, embedder, args.strategy, args.batch, args.limit)
         print(stats)
         return 0
