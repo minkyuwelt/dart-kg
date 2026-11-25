@@ -66,7 +66,7 @@ class GraphDraftTest(unittest.TestCase):
         con = self.con = connect()
         self.addCleanup(con.close)
         names = {KBH: "KB금융지주", SHH: "신한지주", HNH: "하나금융지주", WRH: "우리금융지주", KBBANK: "KB국민은행", KBCARD: "KB국민카드",
-                 WRBANK: "우리은행", SHLIFE: "신한라이프생명보험", SHSEC: "신한투자증권", WRSEC: "우리투자증권", SHBANK: "신한은행", KBLIFE: "KB생명보험"}
+                 "00000043": "우리종합금융", WRBANK: "우리은행", SHLIFE: "신한라이프생명보험", SHSEC: "신한투자증권", WRSEC: "우리투자증권", SHBANK: "신한은행", KBLIFE: "KB생명보험"}
         for code, name in names.items():
             con.execute("INSERT INTO corp VALUES (?, ?, NULL, NULL, now())", [code, name])
         for code in (KBH, SHH, HNH, WRH):
@@ -125,7 +125,8 @@ class GraphDraftTest(unittest.TestCase):
         self.assertIn("윤종규", d["g03"].answer)
         self.assertIn("2021-12-31 최대주주: 신한지주", d["g08"].answer)
         self.assertIn("신한금융투자 → 신한투자증권", d["g08"].answer)
-        self.assertIn("한국포스증권 → 우리투자증권", d["g07"].answer)
+        self.assertIn("우리종합금융", d["g07"].answer)                       # corp 테이블에만 있는 없어진 회사도 찾는다
+        self.assertIn("corp_lineage.csv에 적어야", d["g07"].note)
         self.assertIn("corp_lineage.csv에 적어야", d["g09"].note)  # 공시 목록에도 CSV에도 없음
         self.assertIn("박겸직", d["g10"].answer)
         self.assertEqual(d["g10"].count, 1)
@@ -149,6 +150,11 @@ class GraphDraftTest(unittest.TestCase):
         d = G.solve(self.con, G.SPECS[8], lineage, today=TODAY)
         self.assertIn("KB생명보험(00000099) → KB라이프생명보험 2023-01-01 합병", d.answer)
         self.assertEqual(d.evidence, ["20230102000001"])
+        wr = [{"current_corp_code": WRSEC, "former_corp_code": "00000043", "former_name": "우리종합금융", "on": "2024-08-01",
+               "reason": "흡수합병", "evidence_rcept_no": "20260313001235"}]
+        d7 = G.solve(self.con, G.SPECS[6], wr, today=TODAY)
+        self.assertIn("우리종합금융(00000043) → 우리투자증권 2024-08-01 흡수합병", d7.answer)
+        self.assertIn("우리투자증권", d7.names)                                  # 이어지는 회사 이름도 대조에 쓴다
 
     def test_write_drafts_keeps_other_lines_and_skips_ready(self):
         draft = Path(self.tmp.name) / "draft.jsonl"

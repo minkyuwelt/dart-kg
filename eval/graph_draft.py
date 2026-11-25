@@ -56,7 +56,7 @@ SPECS = [
     Spec("g04", "계층", "2025년 12월 31일 기준 KB금융지주 아래 손자회사까지(2단계) 포함하면 회사는 모두 몇 곳인가?", "descendants_count", "출자", "지주 출자 표 + 자회사들의 출자 표. 같은 회사가 두 경로로 나오면 한 번만"),
     Spec("g05", "계층", "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?", "indirect_only", "출자", "자회사 출자 표에만 있고 지주 출자 표에는 없는 회사"),
     Spec("g06", "계층", "2025년 12월 31일 기준 우리금융지주 아래 2단계까지의 출자 대상 중 국내 공시 대상이 아닌 곳(해외 법인·펀드 등)은 몇 곳인가?", "unresolved_count", "출자", "corp_code가 없는 출자 대상. 두 자회사가 같은 펀드에 출자하면 그래프는 둘로 센다(0011 ②)"),
-    Spec("g07", "의미", "한국포스증권은 지금 어떤 회사이고, 그 공시는 어느 회사 이름으로 이어 보나?", "lineage", "연혁", "연혁에서 합병·사명 변경 날짜. corp_code가 바뀌었으면 corp_lineage.csv에 근거와 함께"),
+    Spec("g07", "의미", "우리종합금융은 지금 어느 회사로 이어지고, 그 공시는 어느 회사 이름으로 이어 보나?", "lineage", "연혁", "합병으로 corp_code가 바뀐 회사 → 지금 회사. corp_lineage.csv 줄과 근거(우리금융지주 2025 사업보고서 20260313001235)"),
     Spec("g08", "의미", "신한금융투자의 2021년 12월 31일 기준 최대주주는 누구였나?", "lineage_holders", "최대주주", "옛 이름 시절 보고서의 최대주주 표"),
     Spec("g09", "의미", "KB생명보험의 공시는 지금 어느 회사로 이어지나?", "lineage", "연혁", "KB라이프생명보험 연혁의 합병 기재. 수집 대상이 아니므로 corp_lineage.csv가 있어야 그래프가 답함"),
     Spec("g10", "통합", "2025년 12월 31일 기준 4대 금융지주 중 두 곳 이상에서 동시에 사외이사인 사람이 있는가?", "shared_outside_holdings", "임원", "네 지주의 사외이사 명단. 없으면 '없음'이 정답"),
@@ -242,7 +242,7 @@ def _lineage(con, corp, as_of, mentions, lineage, question: str = "") -> Draft:
         d.cite(latest[0])
     if not names and not links:
         d.note = "공시 목록에도 corp_lineage.csv에도 없음 → 뷰어 연혁으로 확인해 corp_lineage.csv에 적어야 그래프가 답한다"
-    d.names |= {mentions[0].current}
+    d.names |= {mentions[0].current, *(corp_name(con, r["current_corp_code"]) for r in links)}   # 이어지는 회사 이름도 대조
     return d
 
 

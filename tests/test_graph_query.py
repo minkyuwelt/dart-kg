@@ -72,7 +72,7 @@ class GraphQueryTest(unittest.TestCase):
         con = self.con
         corps = [(KBH, "KB금융지주"), (SHH, "신한지주"), (HNH, "하나금융지주"), (WRH, "우리금융지주"), (KBBANK, "KB국민은행"),
                  (KBCARD, "KB국민카드"), (WRBANK, "우리은행"), (SHLIFE, "신한라이프생명보험"), (SHSEC, "신한투자증권"),
-                 (WRSEC, "우리투자증권"), (SHBANK, "신한은행"), (KBLIFE_OLD, "KB생명보험"), ("00000098", "중복은행"), ("00000097", "중복은행")]
+                 (WRSEC, "우리투자증권"), (SHBANK, "신한은행"), (KBLIFE_OLD, "KB생명보험"), ("00000043", "우리종합금융"), ("00000098", "중복은행"), ("00000097", "중복은행")]
         for code, name in corps:
             con.execute("INSERT INTO corp VALUES (?, ?, NULL, NULL, now())", [code, name])
         for code, name in corps[:4]:
@@ -102,7 +102,7 @@ class GraphQueryTest(unittest.TestCase):
             "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?": [("descendants", {"corp": SHH, "depth": 2})],
             "2025년 12월 31일 기준 우리금융지주 아래 2단계까지의 출자 대상 중 국내 공시 대상이 아닌 곳(해외 법인·펀드 등)은 몇 곳인가?":
                 [("descendants", {"corp": WRH, "depth": 2})],
-            "한국포스증권은 지금 어떤 회사이고, 그 공시는 어느 회사 이름으로 이어 보나?": [("corp_lineage", {"corp": WRSEC, "name": "한국포스증권"})],
+            "우리종합금융은 지금 어느 회사로 이어지고, 그 공시는 어느 회사 이름으로 이어 보나?": [("corp_lineage", {"corp": "00000043", "name": "우리종합금융"})],
             "신한금융투자의 2021년 12월 31일 기준 최대주주는 누구였나?":
                 [("corp_lineage", {"corp": SHSEC}), ("facts_at", {"corp": SHSEC, "kind": "holders", "as_of": "2021-12-31"})],
             "KB생명보험의 공시는 지금 어느 회사로 이어지나?": [("corp_lineage", {"corp": KBLIFE_OLD})],
