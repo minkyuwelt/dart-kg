@@ -43,8 +43,11 @@ def connect(s: Neo4jSettings | None = None):
     s = s or settings()
     # UNRECOGNIZED 경고("관계 종류 FORMERLY가 없음", "속성 superseded_by가 없음")는 끈다.
     # 값이 아직 하나도 없을 때(이력 CSV가 비었거나, 정정된 관계가 없을 때) 나오는 정상 상황이라 출력만 가린다.
+    # DEPRECATION 경고("db.index.vector.queryNodes는 SEARCH로 바뀜")도 끈다. 질문마다 한 덩어리씩 나와 평가 출력을 덮는다(2026-11-25).
+    # 지금 Neo4j에서는 그대로 동작한다. SEARCH 문법으로 옮기는 일은 Neo4j를 올릴 때 따로 한다 (0011 "다시 판단할 조건")
     # 성능 경고 등 다른 종류는 그대로 둔다
-    driver = GraphDatabase.driver(s.uri, auth=(s.user, s.password), notifications_disabled_classifications=["UNRECOGNIZED"])
+    driver = GraphDatabase.driver(s.uri, auth=(s.user, s.password),
+                                  notifications_disabled_classifications=["UNRECOGNIZED", "DEPRECATION"])
     return driver
 
 
