@@ -6,6 +6,7 @@
 엔드포인트
     GET  /health                                  DuckDB·Neo4j 연결, 임베딩 모델, LLM 키 유무
     POST /ask                                     질문 → 답·인용·근거 링크 (src/rag/ask). use_llm=false면 검색만
+                                                  그래프 질문이면 graph(관계표·파생 값·실행 기록)도 (0011)
     GET  /changes?since=&until=&corp=             변화 리포트 (src/reports/changes) JSON
     GET  /corps                                   수집 대상 회사 목록
     GET  /corps/{corp_code}/executives?as_of=     그 날짜의 임원 (src/loaders/as_of)
@@ -15,7 +16,7 @@
     - 임베딩 모델(kure-v3, 2GB)과 Neo4j 드라이버는 서버가 뜰 때 한 번 열어 state에 둔다 (lifespan)
     - DuckDB는 요청마다 읽기 전용으로 열고 바로 닫는다. 서버가 연결을 쥐고 있으면 Dagster의 쓰기가 막힌다 (CLAUDE.md 잠금 규칙)
     - LLM 클라이언트는 요청마다 만든다 (가볍고, 키가 없으면 503으로 알린다)
-    - 테스트는 create_app(embedder=, driver=, llm_factory=)에 가짜를 꽂는다
+    - 테스트는 create_app(embedder=, driver=, llm_factory=, picker_factory=)에 가짜를 꽂는다
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from src.loaders.duckdb_store import connect, is_lock_error
 from src.rag.ask import VIEWER_URL, ask
 from src.reports.changes import CHANGE_KINDS, PCT_THRESHOLD, build_report, summarize
 
-DEFAULT_RETRIEVER = "neo4j:hybrid:kure-v3"
+DEFAULT_RETRIEVER = "graph:hybrid:kure-v3"   # 그래프 질문이 아니면 neo4j:hybrid:kure-v3와 같다 (0011)
 
 
 def api_settings() -> dict:
@@ -75,11 +76,39 @@ class AnswerOut(BaseModel):
     output_tokens: int
 
 
+class GraphRelationOut(BaseModel):
+    src: str
+    rel: str
+    dst: str
+    value: str
+    valid_from: str | None
+    valid_to: str | None
+    source_rcept_no: str | None
+    url: str | None
+
+
+class GraphDerivedOut(BaseModel):
+    rule: str
+    subject: str | None
+    value: str
+
+
+class GraphOut(BaseModel):
+    """그래프 템플릿을 썼을 때만. trace = 어떤 규칙·템플릿·빈칸으로 몇 개를 찾았나 (틀린 답을 따라가 보기 위해)."""
+    n: int                      # LLM에 넘긴 번호 (조각 뒤 마지막). answer.citations에 있으면 인용된 것
+    cited: bool
+    trace: dict
+    relations: list[GraphRelationOut]
+    derived: list[GraphDerivedOut]
+
+
 class AskResponse(BaseModel):
     question: str
     retriever: str
     answer: AnswerOut | None
     hits: list[HitOut]
+    graph: GraphOut | None = None
+    graph_error: str | None = None   # 그래프 질의가 실패해 공시 검색만 쓴 경우 그 이유
 
 
 class ChangeOut(BaseModel):
@@ -127,18 +156,19 @@ def _with_url(row: dict) -> dict:
     return row
 
 
-def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, retriever_name: str | None = None) -> FastAPI:
+def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, retriever_name: str | None = None,
+               picker_factory: Callable | None = None) -> FastAPI:
     s = api_settings()
     retriever_name = retriever_name or s["retriever"]
-    needs_neo4j = retriever_name.startswith("neo4j:")
-    needs_embedder = retriever_name.startswith(("neo4j:vector", "neo4j:hybrid", "dense:"))
+    needs_neo4j = retriever_name.startswith(("neo4j:", "graph:"))
+    needs_embedder = retriever_name.startswith(("neo4j:vector", "neo4j:hybrid", "dense:", "graph:hybrid"))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # 무거운 것은 여기서 한 번. 테스트가 가짜를 줬으면 그대로 쓴다
         if needs_embedder and app.state.embedder is None:
             from src.rag.embedding import LocalEmbedder
-            model = retriever_name.split(":")[2] if retriever_name.startswith("neo4j:") else retriever_name.split(":")[1]
+            model = retriever_name.split(":")[2] if retriever_name.startswith(("neo4j:", "graph:")) else retriever_name.split(":")[1]
             app.state.embedder = LocalEmbedder(model, device=s["embed_device"], fp16=s["embed_device"] != "cpu")
         if needs_neo4j and app.state.driver is None:
             from src.graph.client import connect as graph_connect
@@ -159,6 +189,16 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
         try:
             return OpenAILLM()
         except SystemExit as e:  # 키 없음
+            raise HTTPException(503, str(e)) from e
+
+    def make_picker():
+        """규칙이 못 고른 질문에서 템플릿 번호만 고르는 LLM (0011). 답변 LLM을 쓸 때만 함께 쓴다."""
+        if picker_factory is not None:
+            return picker_factory()
+        from src.graph.picker import LLMPicker
+        try:
+            return LLMPicker()
+        except SystemExit as e:
             raise HTTPException(503, str(e)) from e
 
     @app.get("/health")
@@ -184,6 +224,8 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
         with _open_duckdb() as con:
             try:
                 retriever = make_retriever(retriever_name, con, corp_filter=req.corp_filter, embedder=app.state.embedder, driver=app.state.driver)
+                if llm is not None and hasattr(retriever, "picker"):
+                    retriever.picker = make_picker()
                 result = ask(req.question, retriever, llm, req.k, con)
             except SystemExit as e:
                 raise HTTPException(500, str(e)) from e
@@ -193,7 +235,18 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
         a = result.answer
         answer = AnswerOut(text=a.text, citations=a.citations, model=a.model, not_found=a.not_found,
                            input_tokens=a.input_tokens, output_tokens=a.output_tokens) if a else None
-        return AskResponse(question=req.question, retriever=getattr(retriever, "name", retriever_name), answer=answer, hits=hits)
+        graph = None
+        if result.graph is not None:
+            g = result.graph
+            graph = GraphOut(
+                n=result.graph_number, cited=result.graph_cited, trace=g.trace(),
+                relations=[GraphRelationOut(src=r["src"], rel=r["rel"], dst=r["dst"], value=r["value"], valid_from=r["valid_from"],
+                                            valid_to=r["valid_to"], source_rcept_no=r["source_rcept_no"],
+                                            url=VIEWER_URL.format(rcept_no=r["source_rcept_no"]) if r["source_rcept_no"] else None)
+                           for r in g.relations],
+                derived=[GraphDerivedOut(rule=d["rule"], subject=d["subject"], value=d["value"]) for d in g.derived])
+        return AskResponse(question=req.question, retriever=getattr(retriever, "name", retriever_name), answer=answer, hits=hits,
+                           graph=graph, graph_error=result.graph_error)
 
     @app.get("/changes", response_model=ChangesResponse)
     def get_changes(since: date | None = None, until: date | None = None, days: int = Query(7, ge=1, le=366),

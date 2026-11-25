@@ -38,7 +38,8 @@ SYSTEM_PROMPT = """당신은 금융지주 공시(사업보고서) 원문만 근�
 2. 답의 문장마다 근거 조각 번호를 [1], [2]처럼 붙입니다. 여러 조각이면 [1][3].
 3. 질문에 답할 내용이 조각에 없으면 answer를 정확히 "{not_found}"로 쓰고 citations를 빈 목록으로 둡니다. 추측하지 않습니다.
 4. 숫자·이름·날짜는 조각에 적힌 그대로 씁니다(단위 포함). 요약은 2~4문장, 한국어.
-5. citations에는 실제로 인용한 조각 번호만 넣습니다."""
+5. citations에는 실제로 인용한 조각 번호만 넣습니다.
+6. "[그래프 관계표]" 조각은 공시의 관계 표(지분·임원)를 정리한 것입니다. 그 안의 "파생 값"은 규칙으로 계산한 값이므로 쓸 때 "계산값"이라고 밝힙니다. 유효 기간이 질문의 기준일과 맞는 행만 씁니다."""
 
 ANSWER_SCHEMA = {
     "type": "object",
@@ -57,6 +58,7 @@ class Passage:
     number: int
     label: str
     text: str
+    max_chars: int | None = None   # None이면 build_user_prompt의 기본값. 그래프 관계표는 길어서 따로 정한다 (0011)
 
 
 @dataclass
@@ -83,7 +85,8 @@ def build_user_prompt(question: str, passages: list[Passage], max_chars: int = 1
     """조각마다 '[n] 꼬리표' 한 줄 + 본문(max_chars까지). 모델이 보는 것은 이 글이 전부다."""
     parts = []
     for p in passages:
-        body = p.text if len(p.text) <= max_chars else p.text[:max_chars] + " …"
+        limit = p.max_chars or max_chars
+        body = p.text if len(p.text) <= limit else p.text[:limit] + " …"
         parts.append(f"[{p.number}] {p.label}\n{body}")
     return "질문: " + question + "\n\n조각:\n\n" + "\n\n".join(parts)
 
