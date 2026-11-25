@@ -20,6 +20,7 @@
                           disclosure 목록에 그 보고서가 없으면 API를 부르지 않고 건너뛴다 (0건)
     relations           : (Phase 2) 원본 전체에서 investment·major_shareholder·major_shareholder_change·executive·person
                           테이블을 다시 만들고 시간을 닫는다(valid_to·superseded_by, 0005). API 0건
+    change_report       : (Phase 3, 0012) 최근 접수된 정기보고서가 임원·최대주주·출자에 만든 변화 → data/reports/changes_날짜.md. API 0건
     documents           : (Phase 3) 한 회사의 한 정기보고서 원문 ZIP(document.xml) 저장. 파티션은 report_details와 같은
                           회사 × 보고서. 정정본은 접수번호가 달라 각각 받는다. 아직 없는 접수번호만 받으므로 API는 보통 0~1건
     chunks              : (Phase 3) 새 원문을 파싱(document_section)하고 아직 조각이 없는 보고서만 자른다(chunk). API 0건
@@ -70,6 +71,7 @@ from src.loaders.periodic_reports import (
 from src.loaders.relations import rebuild_relations
 from src.loaders.targets import latest_business_report_year, rebuild_target_corps
 from src.rag.embedding import embed_chunks
+from src.reports.changes import build_report, render_markdown, summarize, write_report
 
 # DuckDB 파일 잠금에 걸렸을 때 다시 시도하는 횟수와 간격(초).
 # 노트북에서 DuckDB를 잠깐 열어 둔 경우 몇 분 뒤에는 풀리는 경우가 대부분이다.
@@ -324,6 +326,27 @@ def relations() -> dg.MaterializeResult:
                                           "holder_by_method": dg.MetadataValue.json(rel["holder_by_method"])})
 
 
+CHANGE_REPORT_DAYS = 7  # 변화 리포트가 돌아보는 접수 기간. 노트북이 며칠 꺼져 있어도 놓치지 않을 만큼
+
+
+@dg.asset(
+    group_name="dart",
+    deps=[relations],
+    description="(Phase 3, 0012) 최근 7일 접수된 정기보고서가 임원·최대주주·출자에 만든 변화를 markdown으로. API 0건.",
+)
+def change_report(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    """관계 테이블의 스냅샷 차이를 읽기만 하므로 읽기 전용 연결을 쓴다. 같은 run의 relations가 쓰기 연결을 닫은 뒤에 실행된다."""
+    until = today_kst()
+    since = until - timedelta(days=CHANGE_REPORT_DAYS)
+    with connect(read_only=True) as con:
+        results = build_report(con, since, until)
+    path = write_report(render_markdown(results, since, until), until)
+    s = summarize(results)
+    context.log.info(f"{path}: 보고서 {s['reports']}개, 변화 {s['changes']}건")
+    return dg.MaterializeResult(metadata={"period": f"{since}~{until}", "path": str(path), **{k: v for k, v in s.items() if k != "by_kind"},
+                                          "by_kind": dg.MetadataValue.json(s["by_kind"])})
+
+
 RELATION_TABLES = ("major_shareholder", "major_shareholder_change", "executive")
 
 
@@ -414,7 +437,7 @@ targets_job = dg.define_asset_job(
 )
 disclosures_job = dg.define_asset_job("disclosures_job", selection=dg.AssetSelection.assets(disclosures))
 report_details_job = dg.define_asset_job("report_details_job", selection=dg.AssetSelection.assets(report_details))
-relations_job = dg.define_asset_job("relations_job", selection=dg.AssetSelection.assets(relations))
+relations_job = dg.define_asset_job("relations_job", selection=dg.AssetSelection.assets(relations, change_report))
 
 
 def latest_target_bsns_year(instance: dg.DagsterInstance) -> int | None:
@@ -759,7 +782,7 @@ def daily_rag_index(context: dg.ScheduleEvaluationContext):
 
 
 defs = dg.Definitions(
-    assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations,
+    assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations, change_report,
             documents, chunks, chunk_embeddings, neo4j_chunks],
     asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS, *RAG_CHECKS],
     jobs=[targets_job, disclosures_job, report_details_job, relations_job, documents_job, rag_index_job],
