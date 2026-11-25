@@ -122,6 +122,8 @@ src/loaders/       DuckDB 적재
 src/pipeline/      Dagster 자산·스케줄 정의
 src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
+src/reports/       (Phase 3) 변화 리포트 (0012)
+src/api/           (Phase 3) FastAPI — 기존 함수를 HTTP로 감싼다 (0013). 화면은 Next.js로 따로
 sql/               DuckDB 테이블 정의 (schema.sql)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록
@@ -362,3 +364,21 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```bash
    DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions   # 화면에서 rag_index_job 실행 → 스케줄 2개 켜기
    ```
+
+18. **(Phase 3) API 서버** — 질문·변화 리포트·시점 질의를 HTTP로 내보냅니다. 기존 Python 함수를 감싸기만 하고 새 로직은 없습니다. 임베딩 모델과 Neo4j 드라이버는 서버가 뜰 때 한 번 열고, DuckDB는 요청마다 읽기 전용으로 짧게 엽니다(Dagster 쓰기를 막지 않기 위해). 화면은 Next.js로 따로 만들어 Vercel에 올립니다([0013](docs/decisions/0013-ui-and-deploy.md)).
+
+   ```bash
+   uvicorn src.api.main:app --port 8000          # 그다음 http://127.0.0.1:8000/docs 에서 직접 호출해 볼 수 있음
+   curl -s -X POST localhost:8000/ask -H 'content-type: application/json' -d '{"question":"2025년 신한은행의 주당 현금배당금은 얼마인가?","use_llm":false}'
+   curl -s 'localhost:8000/changes?since=2026-03-01&until=2026-04-30'
+   curl -s 'localhost:8000/corps/00382199/executives?as_of=2024-06-30&outside_only=true'
+   ```
+
+   | 경로 | 내용 |
+   |---|---|
+   | `GET /health` | DuckDB·Neo4j 연결, 임베딩 모델, LLM 키 유무 |
+   | `POST /ask` | `{question, k, use_llm, corp_filter}` → 답·인용 번호·근거 조각(DART 링크) |
+   | `GET /changes` | `since`·`until`(또는 `days`)·`corp` → 변화 리포트 JSON |
+   | `GET /corps` | 수집 대상 회사 목록 |
+   | `GET /corps/{corp_code}/executives` | `as_of`·`outside_only` → 그 날짜의 임원 (생년월은 내보내지 않음) |
+   | `GET /corps/{corp_code}/shareholders` | `as_of` → 그 날짜의 최대주주·지분율 |

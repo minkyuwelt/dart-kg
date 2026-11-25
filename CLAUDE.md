@@ -41,6 +41,8 @@ src/pipeline/      Dagster 자산·스케줄 정의
 config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_overrides.csv)
 src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
+src/reports/       (Phase 3) 변화 리포트 (0012)
+src/api/           (Phase 3) FastAPI — 기존 함수를 HTTP로 감싼다 (0013). 화면은 Next.js로 따로
 sql/schema.sql     DuckDB 테이블 정의
 tests/             오프라인 테스트 (DART API를 호출하지 않음, `python -m unittest discover -s tests -t .`)
 eval/              (Phase 3) 평가 세트: questions.jsonl, run.py, 검색 함수(retrievers/), 질문 초안 도구. 정답은 사람이 뷰어에서 확인한 것만
