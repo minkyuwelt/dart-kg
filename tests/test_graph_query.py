@@ -99,7 +99,9 @@ class GraphQueryTest(unittest.TestCase):
             "2023년 3월 31일 기준 KB국민카드 최대주주의 대표이사는 누구인가?":
                 [("holder_chain", {"corp": KBCARD, "as_of": "2023-03-31"}), ("facts_at", {"kind": "positions", "title": "대표이사"})],
             "2025년 12월 31일 기준 KB금융지주 아래 손자회사까지(2단계) 포함하면 회사는 모두 몇 곳인가?": [("descendants", {"corp": KBH, "depth": 2})],
-            "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?": [("descendants", {"corp": SHH, "depth": 2})],
+            "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분 50% 이상을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?":
+                [("descendants", {"corp": SHH, "depth": 2, "min_pct": 50.0})],
+            "2025년 12월 31일 기준 KB금융지주 아래 손자회사까지 몇 곳?": [("descendants", {"corp": KBH, "min_pct": None})],   # 기준 없으면 None
             "2025년 12월 31일 기준 우리금융지주 아래 2단계까지의 출자 대상 중 국내 공시 대상이 아닌 곳(해외 법인·펀드 등)은 몇 곳인가?":
                 [("descendants", {"corp": WRH, "depth": 2})],
             "우리종합금융은 지금 어느 회사로 이어지고, 그 공시는 어느 회사 이름으로 이어 보나?": [("corp_lineage", {"corp": "00000043", "name": "우리종합금융"})],

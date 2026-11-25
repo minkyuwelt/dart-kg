@@ -97,6 +97,7 @@ class GraphDraftTest(unittest.TestCase):
         inv(con, R["shh"], SHH, "신한펀드A", None, 10.0)
         inv(con, R["shlife"], SHLIFE, "신한펀드A", None, 40.0)   # 지주도 직접 가짐 → 간접만 아님? 키가 달라 별개 (0011 ②)
         inv(con, R["shsec"], SHSEC, "신한펀드B", None, 20.0)
+        inv(con, R["shsec"], SHSEC, "신한증권해외법인", None, 100.0)   # g05: 50% 이상인 손자회사
         # 통합
         ex(con, R["kbh"], KBH, "양종희", "대표이사 회장", "사내이사", "양종희|1961-06|남", D25)
         ex(con, R["kbh"], KBH, "이영희", "사외이사", "사외이사", "이영희|1960-03|여", D25)
@@ -141,8 +142,12 @@ class GraphDraftTest(unittest.TestCase):
     def test_hierarchy_counts_use_graph_keys(self):
         d = self.drafts
         self.assertEqual(d["g04"].answer, "1단계 2곳, 2단계 1곳, 합계 3곳 (corp_code 없는 대상 포함)")
-        self.assertEqual(d["g05"].count, 2)                       # 신한펀드A(라이프 경유)와 신한펀드B — 지주의 신한펀드A와는 다른 키
-        self.assertIn("신한펀드B (신한투자증권 경유)", d["g05"].answer)
+        self.assertEqual(d["g05"].count, 1)                       # 50% 이상만: 신한펀드A(40%)·신한펀드B(20%)는 빠짐
+        self.assertIn("신한증권해외법인 100.0% (신한투자증권 경유)", d["g05"].answer)
+        # 기준이 없으면: 지주도 직접 가진 신한펀드A(이름이 같음)는 빼고 신한펀드B·신한증권해외법인
+        loose = G._indirect_only(self.con, SHH, D25, [], [], "자회사를 거쳐서만 지분을 가진 회사")
+        self.assertEqual(loose.count, 2)
+        self.assertNotIn("신한펀드A", loose.answer)
         self.assertEqual(d["g06"].count, 0)                       # 우리금융은 출자 데이터 없음
         self.assertEqual(G.walk_down(self.con, SHH, D25, 1).keys(), {SHLIFE, SHSEC, f"name:{SHH}:신한펀드A"})
 
