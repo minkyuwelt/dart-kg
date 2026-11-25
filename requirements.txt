@@ -9,3 +9,6 @@ lxml==6.1.2  # 원문 XML 복구 파싱 (docs/decisions/0007-xml-parser.md)
 neo4j==6.3.1  # Neo4j 드라이버 (Phase 3~, docker-compose.yml의 서버 2026.06.0과 짝). 6.4는 갓 나와 피함
 # 임베딩·재순위 모델(torch, sentence-transformers)은 requirements-ml.txt — 노트북 전용. CI는 설치하지 않는다 (테스트는 가짜 임베더)
 openai==3.58.0  # LLM 답변 생성 (0010). 키 없으면 import만 되고 부르지 않는다. 3.59는 갓 나와 피함
+fastapi==0.164.0  # HTTP API (0013). 0.165는 갓 나와 피함
+uvicorn==0.53.0  # FastAPI 실행 서버
+httpx==0.28.1  # FastAPI TestClient가 쓴다 (테스트)
