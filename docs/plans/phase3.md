@@ -254,6 +254,9 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
   `(Corp)-[FILED]->(Document)`, `(Document)-[HAS_CHUNK]->(Chunk)`, 사명 변경·합병은 `FORMERLY` 관계 또는 이름 이력 속성
 - **세 층:** 사실(공시 값 그대로, 위 전부) / 파생(규칙 계산: 간접 지분율, 지배 판정, 겸직 네트워크. 관계마다 `derived_from`·`rule`) /
   해석(LLM 판단. 그래프에 넣지 않고 답변 단계에서만) — 추측이 데이터에 섞이지 않게
+- **설계 전에 조사 문서.** 0011을 쓰기 전에 `docs/plans/phase4-research.md`(Phase 3의 `phase3-research.md`와 같은 역할)를 먼저 쓴다(사용자 제안 2026-11-25).
+  주제: GraphRAG 계열(Microsoft GraphRAG·LightRAG·G-Retriever — "검색 뒤 그래프 탐색" 부분만, LLM 관계 추출은 쓰지 않음), 금융 문서의 벡터+그래프 하이브리드(어느 질문에서 그래프가 이득이었나),
+  시간 그래프(temporal/bitemporal KG — 0005 이중 시간축과 맞춰 보기), 도구(neo4j-graphrag `VectorCypherRetriever`). 웹에서 확인한 것만 적고 설계에 반영한다
 - **FIBO는 참고 어휘로만.** 0011에 "우리 관계 ↔ FIBO 용어" 대응표 한 절 (research 5절의 판단)
 - **미결 (0011에서 의견을 묻는다):** ① 사명 변경·합병 — corp_code가 같으면 한 노드에 이름 이력, corp_code가 바뀌면 `FORMERLY` 관계(권함)
   ② corp_code 없는 출자 대상(해외 자회사·펀드) — 이름만 가진 `Corp` 노드 vs 별도 라벨 ③ "특수관계인" 관계 — 질문에서 필요해질 때까지 보류(권함)
