@@ -5,7 +5,7 @@
 - dense:<모델>:<전략>:    chunk_embedding 벡터 검색 (6번 PR). 예: dense:kure-v3:section_path. 모델은 노트북에서만 돈다
 - neo4j:vector:<모델>:    Neo4j 벡터 인덱스 (8번 PR). 예: neo4j:vector:kure-v3. 조각은 src/graph/load_chunks.py로 들어가 있어야 한다
 - neo4j:fulltext:         Neo4j cjk 전문검색 (0004). 검색어는 text_normalize.fulltext_query
-- (9번 PR) 하이브리드(RRF)
+- neo4j:hybrid:<모델>:    벡터 20 + 전문검색 20 → RRF (9a번 PR, 0010). 재순위는 여기에만 붙는다
 선택 단계(모든 조각 검색기에 공통): corp_filter(질문의 회사명으로 좁힘), reranker(상위 후보를 교차 인코더로 다시 매김).
 설정 이름(--retriever)으로 고르므로 run.py는 검색 방식을 모른다.
 """
@@ -59,24 +59,26 @@ def make_retriever(name: str, con, corp_filter: bool = False, rerank: str | None
         return DenseRetriever(con, embedder, strategy, corp_filter=corp_filter, reranker=reranker)
 
     if name.startswith("neo4j:"):
-        from eval.retrievers.neo4j import Neo4jFulltextRetriever, Neo4jVectorRetriever
+        from eval.retrievers.neo4j import Neo4jFulltextRetriever, Neo4jHybridRetriever, Neo4jVectorRetriever
         from src.rag.embedding import MODELS
         parts = name.split(":")
-        if reranker:
-            raise SystemExit("neo4j 검색기의 재순위는 9번 PR(하이브리드)에서 붙입니다")
+        if reranker and parts[1:2] != ["hybrid"]:
+            raise SystemExit("neo4j 검색기의 재순위는 neo4j:hybrid:<모델>에만 붙입니다")
         if driver is None:
             from src.graph.client import connect
             driver = connect()
         if parts[1:] == ["fulltext"]:
             return Neo4jFulltextRetriever(driver, con, corp_filter=corp_filter)
-        if len(parts) == 3 and parts[1] == "vector":
+        if len(parts) == 3 and parts[1] in ("vector", "hybrid"):
             model = parts[2]
             if embedder is None:
                 if model not in MODELS:
                     raise SystemExit(f"모르는 임베딩 모델: {model} (가능: {', '.join(MODELS)})")
                 from src.rag.embedding import LocalEmbedder
                 embedder = LocalEmbedder(model, fp16=True)
-            return Neo4jVectorRetriever(driver, embedder, con, corp_filter=corp_filter)
-        raise SystemExit("neo4j 검색기는 neo4j:vector:<모델> 또는 neo4j:fulltext 꼴입니다")
+            if parts[1] == "vector":
+                return Neo4jVectorRetriever(driver, embedder, con, corp_filter=corp_filter)
+            return Neo4jHybridRetriever(driver, embedder, con, corp_filter=corp_filter, reranker=reranker)
+        raise SystemExit("neo4j 검색기는 neo4j:vector:<모델>, neo4j:hybrid:<모델> 또는 neo4j:fulltext 꼴입니다")
 
-    raise SystemExit(f"모르는 검색 방식: {name} (가능: keyword, chunk:<전략>, dense:<모델>:<전략>, neo4j:vector:<모델>, neo4j:fulltext)")
+    raise SystemExit(f"모르는 검색 방식: {name} (가능: keyword, chunk:<전략>, dense:<모델>:<전략>, neo4j:vector:<모델>, neo4j:hybrid:<모델>, neo4j:fulltext)")

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from eval.retrievers import make_retriever
+from eval.retrievers.neo4j import rrf_fuse
 from src.graph.load_chunks import CHUNK_MERGE, DOCUMENT_MERGE, build, chunk_rows, document_rows, pending_count, schema_statements
 from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
@@ -35,6 +36,9 @@ class FakeDriver:
 
     def execute_query(self, query, database_=None, **params):
         self.calls.append((query.strip(), params))
+        if isinstance(self.records, dict):  # {"vector": [...], "fulltext": [...]}
+            kind = "vector" if "db.index.vector" in query else "fulltext" if "db.index.fulltext" in query else None
+            return FakeResult(self.records.get(kind, []))
         return FakeResult(self.records if "queryNodes" in query else [])
 
 
@@ -132,6 +136,40 @@ class LoadChunksTest(unittest.TestCase):
         for bad in ("neo4j:vector", "neo4j:nope", "neo4j:vector:nope"):
             with self.assertRaises(SystemExit):
                 make_retriever(bad, self.con, driver=drv, embedder=None if bad.endswith("nope") else FakeEmbedder())
+
+    def test_rrf_and_hybrid_retriever(self):
+        def rec(rcept, sid, text):
+            return {"rcept_no": rcept, "file_name": rcept + ".xml", "section_id": sid, "path": f"p{sid}", "score": 1.0, "text": text}
+        a, b, c, d = rec(WOORI, 1, "a"), rec(WOORI, 2, "b"), rec(SHINHAN, 1, "c"), rec(SHINHAN, 2, "배당 d")
+        # 벡터 순위 a,b,c / 전문검색 순위 c,d,a → a와 c는 두 목록 모두에 있어 위로. a: 1/61+1/63, c: 1/63+1/61 (동점), b: 1/62, d: 1/62
+        fused = rrf_fuse([[a, b, c], [c, d, a]])
+        self.assertEqual([r["text"] for r, _ in fused][:2].__len__(), 2)
+        self.assertEqual({fused[0][0]["text"], fused[1][0]["text"]}, {"a", "c"})
+        self.assertAlmostEqual(fused[0][1], 1 / 61 + 1 / 63)
+        self.assertEqual({fused[2][0]["text"], fused[3][0]["text"]}, {"b", "배당 d"})
+        self.assertEqual(rrf_fuse([[a], []])[0][1], 1 / 61)                          # 한 목록이 비어도 됨
+
+        drv = FakeDriver({"vector": [a, b, c], "fulltext": [c, d, a]})
+        r = make_retriever("neo4j:hybrid:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv)
+        self.assertEqual(r.name, "neo4j-hybrid-fake")
+        hits = r.search("우리은행 배당", 3)
+        self.assertEqual(len(hits), 3)
+        self.assertEqual({hits[0].snippet, hits[1].snippet}, {"a", "c"})
+        q_vec, p_vec = drv.calls[-2]
+        q_ft, p_ft = drv.calls[-1]
+        self.assertIn("db.index.vector", q_vec); self.assertIn("db.index.fulltext", q_ft)
+        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["q"]), (20, 20, 20, '"우리은행" AND "배당"'))   # 양쪽 20개씩 가져와 합침
+        # 회사 필터 → 후보 20×20, corp 전달
+        rc = make_retriever("neo4j:hybrid:kure-v3", self.con, corp_filter=True, embedder=FakeEmbedder(), driver=drv)
+        rc.search("신한은행 배당", 2)
+        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 400))
+        # 재순위는 하이브리드에만: '배당'이 든 d가 맨 위로
+        from tests.test_embedding import FakeReranker
+        rr = make_retriever("neo4j:hybrid:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv, reranker=FakeReranker())
+        self.assertEqual(rr.name, "neo4j-hybrid-fake-rerank_fake")
+        self.assertEqual(rr.search("배당", 1)[0].snippet, "배당 d")
+        with self.assertRaises(SystemExit):
+            make_retriever("neo4j:vector:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv, reranker=FakeReranker())
 
 
 if __name__ == "__main__":
