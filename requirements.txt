@@ -6,4 +6,5 @@ duckdb==1.5.6
 dagster==1.13.25
 dagster-webserver==1.13.25
 lxml==6.1.2  # 원문 XML 복구 파싱 (docs/decisions/0007-xml-parser.md)
+neo4j==6.3.1  # Neo4j 드라이버 (Phase 3~, docker-compose.yml의 서버 2026.06.0과 짝). 6.4는 갓 나와 피함
 # 임베딩·재순위 모델(torch, sentence-transformers)은 requirements-ml.txt — 노트북 전용. CI는 설치하지 않는다 (테스트는 가짜 임베더)
