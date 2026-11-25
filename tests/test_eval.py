@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from eval.draft import draft_questions, fill_question, seed_questions, with_particle
+from eval.draft import TEMPLATES_BY_KEY, draft_questions, fill_question, next_draft_number, seed_questions, with_particle
 from eval.locate import locate
 from eval.metrics import Hit, hit_at_k, reciprocal_rank, score_question, summarize
 from eval.questions import NO_ANSWER, QuestionFormatError, load_questions, parse_question
@@ -169,6 +169,28 @@ class RetrieverAndDraftTest(unittest.TestCase):
         self.assertEqual([(q.type, q.question) for q in previous], [("시점", "2024년 말 기준 KB금융지주의 최대주주는 누구이고 지분율은 몇 %인가?")])
         self.assertEqual([q for q in drafts if q.evidence_rcept_no == ["20250320000001"]], [])  # 파싱 안 된 정정본은 제외
         self.assertEqual(len(draft_questions(self.con, max_total=2)), 2)
+
+    def test_draft_second_round_templates_filter_cap_and_id_start(self):
+        insert_sections(self.con, [
+            (KB_2025, 7, "II. 사업의 내용 > 3. 영업의 현황 > 가. 자본적정성", "", [{"caption": None, "unit": "%", "header_rows": 1, "rows": [["구분", "2025"], ["총자본비율", "16.5"]]}]),
+            (KB_2025, 8, "XI. 그 밖에 투자자 보호를 위하여 필요한 사항 > 3. 제재 등과 관련된 사항", "해당사항 없음", []),
+            (KB_2025, 9, "III. 재무에 관한 사항 > 주석 > 4. 금융위험관리 > (3) 시장위험", "VaR로 측정한다", []),
+        ])
+        keys = ["capital_adequacy", "sanction", "market_risk", "solvency"]
+        drafts = draft_questions(self.con, template_keys=keys, start=95)
+        self.assertEqual([q.source.split("/")[1] for q in drafts], ["capital_adequacy", "sanction", "market_risk"])   # 지급여력(보험)은 KB에 없음
+        self.assertEqual([q.id for q in drafts], ["d095", "d096", "d097"])                                              # 기존 d094 다음부터
+        self.assertEqual(drafts[0].question, "2025년 말 기준 KB금융지주의 BIS 총자본비율은 몇 %인가?")
+        self.assertEqual((drafts[0].type, drafts[1].type, drafts[2].type), ("정형표", "서술", "서술"))
+        self.assertIn("가. 자본적정성", drafts[0].evidence_section)
+        self.assertEqual(len(draft_questions(self.con, template_keys=keys, per_template=1, start=1)), 3)              # 틀마다 상한 1 → 같음(회사 1곳)
+        self.assertEqual(len(draft_questions(self.con, template_keys=["ceo"], per_template=1)), 1)
+        # 번호 시작: questions.jsonl의 d### 최대 다음. 주석·p2-q1 같은 다른 id는 무시
+        qp = Path(self.tmp.name) / "q.jsonl"
+        qp.write_text('# 주석\n{"id": "d012", "x": 1}\n{"id": "p2-q1"}\n{"id": "d094", "x": 2}\n', encoding="utf-8")
+        self.assertEqual(next_draft_number(qp), 95)
+        self.assertEqual(next_draft_number(Path(self.tmp.name) / "없음.jsonl"), 1)
+        self.assertEqual(len(TEMPLATES_BY_KEY), 20)
 
     def test_draft_falls_back_to_parent_section_when_title_is_only_a_subheading(self):
         # 신한은행 분기보고서(사업보고서가 아님)는 초안 대상이 아니므로, 같은 꼴을 KB 2025에 넣어 확인

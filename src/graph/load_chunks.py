@@ -31,7 +31,7 @@ from typing import Iterator
 
 import duckdb
 
-from src.graph.client import connect, settings
+from src.graph.client import connect, settings, wait_until_ready
 from src.graph.text_normalize import normalize_for_fulltext
 from src.loaders.duckdb_store import connect as duck_connect
 from src.rag.embedding import MODELS
@@ -209,6 +209,7 @@ def main(argv=None) -> int:
 
     s = settings()
     with connect(s) as driver:
+        wait_until_ready(driver)
         if args.cmd == "build":
             with duck_connect(read_only=True) as con:
                 print(build(con, driver, args.model, args.strategy, args.rcept, args.batch, s.database))

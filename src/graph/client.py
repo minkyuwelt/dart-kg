@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -44,10 +45,32 @@ def connect(s: Neo4jSettings | None = None):
     return driver
 
 
+def wait_until_ready(driver, timeout: float = 90.0, log=print) -> None:
+    """`docker compose up -d`가 끝나도 Neo4j는 안에서 30초~1분 더 준비한다. 그동안은 연결이 끊기므로(Connection reset) 될 때까지 기다린다."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    deadline = time.monotonic() + timeout
+    waited = False
+    while True:
+        try:
+            driver.verify_connectivity()
+            if waited:
+                log("")
+            return
+        except ServiceUnavailable:
+            if time.monotonic() > deadline:
+                raise SystemExit(f"Neo4j가 {timeout:.0f}초 안에 준비되지 않았습니다. `docker compose ps`로 상태를, `docker compose logs --tail 30 neo4j`로 로그를 확인하세요")
+            if not waited:
+                log("Neo4j 준비 중", end="", flush=True)
+                waited = True
+            log(".", end="", flush=True)
+            time.sleep(3)
+
+
 def ping(s: Neo4jSettings | None = None) -> dict:
     s = s or settings()
     with connect(s) as driver:
-        driver.verify_connectivity()
+        wait_until_ready(driver)
         version = driver.execute_query(
             "CALL dbms.components() YIELD name, versions, edition RETURN name, versions[0] AS version, edition",
             database_=s.database,

@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest import mock
 
-from src.graph.client import settings
+from src.graph.client import settings, wait_until_ready
 from src.graph.text_normalize import fulltext_query, normalize_for_fulltext
 
 
@@ -32,6 +32,30 @@ class TextNormalizeTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"NEO4J_PASSWORD": "pw", "NEO4J_BOLT_PORT": "27687"}), mock.patch("src.graph.client.load_dotenv"):
             s = settings()
         self.assertEqual((s.uri, s.user, s.password), ("bolt://127.0.0.1:27687", "neo4j", "pw"))
+
+    def test_wait_until_ready_retries_then_gives_up(self):
+        from neo4j.exceptions import ServiceUnavailable
+
+        class Flaky:
+            def __init__(self, fail_times):
+                self.left = fail_times
+                self.calls = 0
+
+            def verify_connectivity(self):
+                self.calls += 1
+                if self.left > 0:
+                    self.left -= 1
+                    raise ServiceUnavailable("not yet")
+
+        out = []
+        with mock.patch("src.graph.client.time.sleep"):
+            d = Flaky(2)
+            wait_until_ready(d, timeout=10, log=lambda *a, **k: out.append(a[0] if a else ""))
+            self.assertEqual(d.calls, 3)                                           # 두 번 실패 뒤 성공
+            self.assertEqual(out[0], "Neo4j 준비 중")
+            with mock.patch("src.graph.client.time.monotonic", side_effect=[0, 100, 100]):
+                with self.assertRaises(SystemExit):
+                    wait_until_ready(Flaky(5), timeout=90, log=lambda *a, **k: None)
 
 
 if __name__ == "__main__":
