@@ -321,3 +321,14 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```
 
    브라우저는 http://localhost:17474 (사용자 neo4j, 비밀번호는 `.env` 값). 멈추기는 `docker compose down`, 데이터까지 지우기는 `docker compose down -v`.
+
+14. **(Phase 3) 조각·벡터를 Neo4j에 넣기** — DuckDB의 `chunk`(section_path)와 `chunk_embedding`(kure-v3)을 `Document`·`Chunk` 노드와 `HAS_CHUNK` 관계로 넣고, 벡터 인덱스(1,024차원 코사인)와 전문검색 인덱스(`cjk`, 전처리된 `text_ft`)를 만듭니다. `MERGE`라 다시 돌려도 중복이 없고, 벡터가 없는 조각은 건너뛰고 수를 알려 줍니다. `reset`은 전부 지우고 인덱스만 다시 만듭니다(DuckDB에서 재생성할 수 있음을 확인하는 명령). 26만 조각 적재는 10~20분 어림.
+
+   ```bash
+   python -m src.graph.load_chunks build      # 임베딩이 끝난 뒤
+   python -m src.graph.load_chunks stats      # DuckDB 수 ↔ Neo4j 수 대조 → "일치"
+   python -m eval.run --retrieval-only --retriever neo4j:vector:kure-v3 --filter corp --label neo4j-vector
+   python -m eval.run --retrieval-only --retriever neo4j:fulltext --filter corp --label neo4j-fulltext
+   ```
+
+   벡터 인덱스는 근사 검색이라 DuckDB 전수 비교(`dense:kure-v3:section_path`)와 hit@5가 조금 다를 수 있습니다. 둘을 나란히 재어 [0009](docs/decisions/0009-embedding.md)에 적습니다.

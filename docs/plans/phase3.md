@@ -208,7 +208,7 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
 | 5 | `feat/chunking` + 0008 초안 | 청킹 3가지(`fixed`/`section`/`section_path`, 1,000자) 구현, `chunk` 테이블, 표는 행마다 "열이름: 값", 조각 위 키워드 검색 `--retriever chunk:<전략>` | **평가 세트 근거 보고서 약 30개**(`--from-eval`, 사용자 결정 2026-11-24) 청킹 → 조각 수·길이 분포, 전략별 hit@5 → 0008 1차 실험 결과 | 전략 사이 차이가 없으면 0009에서는 `section_path` 하나만 쓴다 |
 | 6 | `feat/embedding-poc` + 0009 | 임베딩 함수(모델 교체 가능), `chunk_embedding` 테이블, 재순위 함수, 비교 스크립트 | **모델 3~4개 × 청킹 3개 × 재순위 유/무 hit@5, GPU 시간** → 0008·0009 확정 | VRAM 부족이면 KURE-v1, 그래도 느리면 API 임베딩 |
 | 7 | `chore/neo4j-compose` + 0001 개정 | docker-compose, `.env.example`, `text_normalize.py`, 0004 스크립트 리팩터 | 컨테이너 기동, 포트 확인 | 포트 충돌 → `.env` |
-| 8 | `feat/neo4j-chunks` | 노드·인덱스 생성, DuckDB → Neo4j 적재, 품질 검사 | 전체 적재, 조각 수 일치, 0004 재측정 | 메모리 부족 → 힙 설정 |
+| 8 | `feat/neo4j-chunks` | 노드·인덱스 생성, DuckDB → Neo4j 적재, 품질 검사 | 전체 적재, 조각 수 일치, 0004 재측정 | 메모리 부족 → 힙 설정. 2026-11-25 웹 작성: `src/graph/load_chunks.py`(build/stats/reset), `--retriever neo4j:vector:<모델>`·`neo4j:fulltext`. 회사 필터는 후보 k×20 뒤 걸러냄(커뮤니티 벡터 인덱스에 pre-filter 없음) |
 | 9 | `feat/rag-ask` + 0010 | 하이브리드 검색, OpenAI 생성, CLI, `eval/run.py` 완성 | 평가 세트 전체 실행, 사람 채점 | 재현율 80% 미달 → 5·6으로 돌아가 조정 |
 | 10 | `feat/rag-assets` | Dagster 자산 4개, 스케줄 2개, 백필 통합 | 하루 운영 확인 | — |
 | 11 | `docs/phase3-done` | README·CLAUDE.md·devlog 갱신, 평가 결과 표 | — | — |
