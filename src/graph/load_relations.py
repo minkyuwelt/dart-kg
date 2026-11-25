@@ -43,6 +43,7 @@ import duckdb
 from src.graph.client import connect, settings, wait_until_ready
 from src.loaders.duckdb_store import connect as duck_connect
 from src.graph.names import NAME_CHARS, has_name, linked_names
+from src.graph.templates import is_ceo
 from src.loaders.investments import normalize_name
 
 LINEAGE_PATH = Path(__file__).resolve().parents[2] / "config" / "corp_lineage.csv"
@@ -90,7 +91,8 @@ UNWIND $rows AS row
 MATCH (p:Person {{pid: row.pid}})
 MATCH (c:Corp {{key: row.corp}})
 MERGE (p)-[r:HOLDS_POSITION {{row_key: row.row_key}}]->(c)
-SET r.title = row.title, r.registered = row.registered, r.outside = row.outside, r.full_time = row.full_time, {_TIME_SET}
+SET r.title = row.title, r.registered = row.registered, r.outside = row.outside, r.full_time = row.full_time,
+    r.duty = row.duty, r.ceo = row.ceo, {_TIME_SET}
 """
 
 FORMERLY_MERGE = """
@@ -206,7 +208,7 @@ def _one_line(text: str | None) -> str | None:
 def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict], int]:
     """(HOLDS_POSITION 행, Person 행, person_id가 없어 건너뛴 행 수). 생년월·성별은 여기서 버린다."""
     rows = _rows(con, """
-        SELECT source_rcept_no, row_seq, corp_code, person_id, ofcps, rgist_exctv_at, fte_at, valid_from, valid_to, superseded_by
+        SELECT source_rcept_no, row_seq, corp_code, person_id, ofcps, rgist_exctv_at, fte_at, chrg_job, valid_from, valid_to, superseded_by
         FROM executive ORDER BY source_rcept_no, row_seq""")
     names = dict(con.execute("SELECT person_id, nm FROM person").fetchall())
     out, persons, skipped = [], {}, 0
@@ -221,6 +223,8 @@ def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict
             # 직위 칸의 줄바꿈('기타\n비상무이사')은 공백 하나로. 원문은 DuckDB에 그대로 있다
             "title": _one_line(r["ofcps"]), "registered": _one_line(r["rgist_exctv_at"]), "outside": _one_line(r["rgist_exctv_at"]) == "사외이사",
             "full_time": r["fte_at"],
+            # 담당업무(한 줄로)와 대표이사 여부. 금융지주는 대표이사를 담당업무 칸에 적는다 (templates.is_ceo)
+            "duty": _one_line(r["chrg_job"]), "ceo": is_ceo(r["ofcps"], r["chrg_job"]),
             "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
             "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
         })

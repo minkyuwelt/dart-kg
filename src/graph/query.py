@@ -111,7 +111,10 @@ def _value(rel: dict) -> str:
             parts.append(rel["relate"])
         return ", ".join(parts)
     if t == "HOLDS_POSITION":
-        return " / ".join(x for x in (rel.get("title"), rel.get("registered")) if x)
+        text = " / ".join(x for x in (rel.get("title"), rel.get("registered")) if x)
+        if rel.get("ceo") and "대표이사" not in (rel.get("title") or ""):
+            text += " (담당업무: 대표이사)"   # 직위 칸에는 '회장'만 있는 경우. LLM이 대표이사를 알아보게
+        return text
     if t == "FORMERLY":
         return " ".join(x for x in (_s(rel.get("on")), rel.get("reason")) if x)
     return ""

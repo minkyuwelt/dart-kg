@@ -50,14 +50,14 @@ class Spec:
 
 
 SPECS = [
-    Spec("g01", "추론", "2025년 12월 31일 기준 우리은행의 최대주주의 최대주주는 누구인가?", "holder_chain", "최대주주", "두 회사 보고서의 최대주주 표에서 기말 지분율 최대 행"),
+    Spec("g01", "추론", "2025년 12월 31일 기준 우리은행의 최대주주의 최대주주는 누구인가?", "holder_chain", "주주에 관한 사항", "두 회사 보고서의 최대주주 표에서 기말 지분율 최대 행"),
     Spec("g02", "추론", "2025년 12월 31일 기준 신한라이프생명보험의 최대주주가 지분 100%를 가진 회사는 몇 곳인가?", "holder_then_owned", "출자", "최대주주(회사)의 타법인출자 표에서 기말 지분율 100%인 행 수"),
     Spec("g03", "추론", "2023년 3월 31일 기준 KB국민카드 최대주주의 대표이사는 누구인가?", "holder_then_title", "임원", "최대주주 회사의 그 시점 보고서 임원 표에서 대표이사"),
     Spec("g04", "계층", "2025년 12월 31일 기준 KB금융지주 아래 손자회사까지(2단계) 포함하면 회사는 모두 몇 곳인가?", "descendants_count", "출자", "지주 출자 표 + 자회사들의 출자 표. 같은 회사가 두 경로로 나오면 한 번만"),
     Spec("g05", "계층", "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?", "indirect_only", "출자", "자회사 출자 표에만 있고 지주 출자 표에는 없는 회사"),
     Spec("g06", "계층", "2025년 12월 31일 기준 우리금융지주 아래 2단계까지의 출자 대상 중 국내 공시 대상이 아닌 곳(해외 법인·펀드 등)은 몇 곳인가?", "unresolved_count", "출자", "corp_code가 없는 출자 대상. 두 자회사가 같은 펀드에 출자하면 그래프는 둘로 센다(0011 ②)"),
     Spec("g07", "의미", "우리종합금융은 지금 어느 회사로 이어지고, 그 공시는 어느 회사 이름으로 이어 보나?", "lineage", "연혁", "합병으로 corp_code가 바뀐 회사 → 지금 회사. corp_lineage.csv 줄과 근거(우리금융지주 2025 사업보고서 20260313001235)"),
-    Spec("g08", "의미", "신한금융투자의 2021년 12월 31일 기준 최대주주는 누구였나?", "lineage_holders", "최대주주", "옛 이름 시절 보고서의 최대주주 표"),
+    Spec("g08", "의미", "신한금융투자의 2021년 12월 31일 기준 최대주주는 누구였나?", "lineage_holders", "주주에 관한 사항", "옛 이름 시절 보고서의 최대주주 표"),
     Spec("g09", "의미", "KB생명보험의 공시는 지금 어느 회사로 이어지나?", "lineage", "연혁", "KB라이프생명보험 연혁의 합병 기재. 수집 대상이 아니므로 corp_lineage.csv가 있어야 그래프가 답함"),
     Spec("g10", "통합", "2025년 12월 31일 기준 4대 금융지주 중 두 곳 이상에서 동시에 사외이사인 사람이 있는가?", "shared_outside_holdings", "임원", "네 지주의 사외이사 명단. 없으면 '없음'이 정답"),
     Spec("g11", "통합", "2025년 12월 31일 기준 KB금융지주 임원 중 KB 계열 자회사 임원을 함께 맡은 사람은 누구인가?", "shared_in_group", "임원", "지주 임원 표와 자회사 임원 표에 같은 사람(이름·생년월·성별)"),
@@ -88,7 +88,28 @@ def _rows(con, sql: str, params: list) -> list[dict]:
 def holders_at(con, corp: str, as_of: date) -> list[dict]:
     return _rows(con, f"""SELECT nm, holder_corp_code, trmend_posesn_stock_qota_rt AS pct, relate, source_rcept_no
                           FROM major_shareholder WHERE corp_code = ? AND {AS_OF_FILTER}
+                            AND replace(nm, ' ', '') NOT IN ('계', '합계')   -- 합계 행은 주주가 아니다 (holder_total이 따로 씀)
                           ORDER BY pct DESC NULLS LAST, row_seq""", [corp, as_of, as_of])
+
+
+def holder_total(con, corp: str, as_of: date) -> float | None:
+    """최대주주 표의 합계 지분율 (본인 + 특수관계인). 공시의 '최대주주'는 이 묶음이다
+    (우리은행 2025 사업보고서: '우리금융지주의 최대주주는 우리금융지주 우리사주조합 외 1인 … 7.76%' = 5.75% + 2.01%).
+    표에 '계' 행이 있으면 그 값, 없으면 보통주 행의 합."""
+    rows = _rows(con, f"""SELECT nm, stock_knd, trmend_posesn_stock_qota_rt AS pct FROM major_shareholder
+                          WHERE corp_code = ? AND {AS_OF_FILTER}""", [corp, as_of, as_of])
+    total = [r["pct"] for r in rows if (r["nm"] or "").replace(" ", "") in ("계", "합계") and r["pct"] is not None]
+    if total:
+        return round(max(total), 2)
+    common = [r["pct"] for r in rows if r["pct"] is not None and "우선" not in (r["stock_knd"] or "")]
+    return round(sum(common), 2) if common else None
+
+
+def _with_total(con, corp: str, as_of: date, h: dict) -> str:
+    total = holder_total(con, corp, as_of)
+    if total is None or h["pct"] is None or abs(total - h["pct"]) < 0.005:
+        return _pct(h["pct"])
+    return f"{_pct(h['pct'])}, 특수관계인 포함 최대주주 표 합계 {total:g}%"
 
 
 def top_holder(con, corp: str, as_of: date, corp_only: bool = False) -> dict | None:
@@ -106,7 +127,8 @@ def investments_at(con, investor: str, as_of: date) -> list[dict]:
 def execs_at(con, corp: str, as_of: date) -> list[dict]:
     # 직위 칸의 줄바꿈은 공백 하나로 (그래프 적재와 같게)
     return _rows(con, f"""SELECT nm, person_id, regexp_replace(ofcps, '\\s+', ' ', 'g') AS ofcps,
-                                 regexp_replace(rgist_exctv_at, '\\s+', ' ', 'g') AS rgist_exctv_at, source_rcept_no
+                                 regexp_replace(rgist_exctv_at, '\\s+', ' ', 'g') AS rgist_exctv_at,
+                                 regexp_replace(chrg_job, '\\s+', ' ', 'g') AS chrg_job, source_rcept_no
                           FROM executive WHERE corp_code = ? AND {AS_OF_FILTER} ORDER BY row_seq""", [corp, as_of, as_of])
 
 
@@ -158,13 +180,13 @@ def _holder_chain(con, corp, as_of, mentions, lineage, question: str = "") -> Dr
         return Draft("(그 시점 최대주주 행 없음)")
     d.cite(h1["source_rcept_no"])
     d.names |= {h1["nm"]}
-    parts = [f"{corp_name(con, corp)}의 최대주주: {h1['nm']} ({_pct(h1['pct'])})"]
+    parts = [f"{corp_name(con, corp)}의 최대주주: {h1['nm']} ({_with_total(con, corp, as_of, h1)})"]
     if h1["holder_corp_code"]:
         h2 = top_holder(con, h1["holder_corp_code"], as_of)
         if h2:
             d.cite(h2["source_rcept_no"])
             d.names |= {h2["nm"]}
-            parts.append(f"{h1['nm']}의 최대주주: {h2['nm']} ({_pct(h2['pct'])}, {h2['relate'] or ''})")
+            parts.append(f"{h1['nm']}의 최대주주: {h2['nm']} ({_with_total(con, h1['holder_corp_code'], as_of, h2)}, {h2['relate'] or ''})")
         else:
             parts.append(f"{h1['nm']}의 최대주주 행 없음")
     else:
@@ -180,8 +202,9 @@ def _holder_then_owned(con, corp, as_of, mentions, lineage, question: str = "") 
     m = re.search(r"(\d+(?:\.\d+)?)\s*%", question)
     pct = float(m.group(1)) if m else 100.0
     owned = [r for r in investments_at(con, h1["holder_corp_code"], as_of) if (r["pct"] or 0) >= pct]
-    d = Draft(f"최대주주 {h1['nm']}가 {pct:g}% 이상 가진 회사 {len(owned)}곳: " + ", ".join(r["investee_name"] for r in owned), count=len(owned))
-    d.cite(h1["source_rcept_no"], *(r["rcept_no"] for r in owned[:1]))
+    label = f"{pct:g}%" if pct >= 100 else f"{pct:g}% 이상"
+    d = Draft(f"최대주주 {h1['nm']}가 {label} 가진 회사 {len(owned)}곳: " + ", ".join(r["investee_name"] for r in owned), count=len(owned))
+    d.cite(*(r["rcept_no"] for r in owned[:1]), h1["source_rcept_no"])   # 답이 있는 보고서(최대주주의 출자 표)를 먼저
     d.names |= {h1["nm"], *(r["investee_name"] for r in owned)}
     return d
 
@@ -190,9 +213,10 @@ def _holder_then_title(con, corp, as_of, mentions, lineage, question: str = "") 
     h1 = top_holder(con, corp, as_of, corp_only=True)
     if not h1:
         return Draft("(회사 최대주주 없음)")
-    ceos = [e for e in execs_at(con, h1["holder_corp_code"], as_of) if title_matches(e["ofcps"], "대표이사")]
-    d = Draft(f"최대주주 {h1['nm']}의 대표이사: " + (", ".join(f"{e['nm']}({e['ofcps']})" for e in ceos) or "그 시점 임원 표에 대표이사 없음"))
-    d.cite(h1["source_rcept_no"], *(e["source_rcept_no"] for e in ceos[:1]))
+    ceos = [e for e in execs_at(con, h1["holder_corp_code"], as_of) if title_matches(e["ofcps"], "대표이사", e["chrg_job"])]
+    d = Draft(f"최대주주 {h1['nm']}의 대표이사: " + (", ".join(f"{e['nm']}(직위 {e['ofcps']}, 담당업무 {e['chrg_job'] or '-'})" for e in ceos)
+                                                    or "그 시점 임원 표에 대표이사 없음"))
+    d.cite(*(e["source_rcept_no"] for e in ceos[:1]), h1["source_rcept_no"])   # 답이 있는 보고서(임원 표)를 먼저
     d.names |= {h1["nm"], *(e["nm"] for e in ceos)}
     return d
 
@@ -250,7 +274,7 @@ def _lineage_holders(con, corp, as_of, mentions, lineage, question: str = "") ->
     d = _lineage(con, corp, as_of, mentions, lineage, question)
     rows = holders_at(con, corp, as_of)
     if rows:
-        d.answer = f"{as_of.isoformat()} 최대주주: {rows[0]['nm']} ({_pct(rows[0]['pct'])}). " + d.answer
+        d.answer = f"{as_of.isoformat()} 최대주주: {rows[0]['nm']} ({_with_total(con, corp, as_of, rows[0])}). " + d.answer
         d.evidence.insert(0, rows[0]["source_rcept_no"])
         d.names |= {rows[0]["nm"]}
     else:
@@ -292,7 +316,7 @@ def _shared_in_group(con, corp, as_of, mentions, lineage, question: str = "") ->
 
 
 def _person_history(con, corp, as_of, mentions, lineage, question: str = "") -> Draft:
-    ceos = [e for e in execs_at(con, corp, as_of) if title_matches(e["ofcps"], "대표이사") and e["person_id"]]
+    ceos = [e for e in execs_at(con, corp, as_of) if title_matches(e["ofcps"], "대표이사", e["chrg_job"]) and e["person_id"]]
     if not ceos:
         return Draft("(그 시점 대표이사 행 없음)")
     pid = ceos[0]["person_id"]
