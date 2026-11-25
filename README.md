@@ -391,3 +391,10 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```
 
    Dagster에서는 `graph_job`(자산 `neo4j_relations`, 검사 `neo4j_relations_match`)으로 실행합니다. 스케줄은 노트북 검증 뒤에 붙입니다. `load_chunks reset`은 Neo4j를 전부 지우므로 그 뒤에는 이것도 다시 돌립니다. `FILED`(회사 → 보고서)는 이미 있는 `Document`에만 잇기 때문에, 조각을 먼저 넣고 이것을 나중에 돌립니다.
+
+20. **(Phase 4) 그래프 질의** — 질문을 라우터가 보고 고정 Cypher 템플릿 8개 중 하나(또는 둘을 이어서)로 보냅니다. LLM이 Cypher를 쓰지 않고, 템플릿의 빈칸(회사·날짜·깊이)만 규칙으로 채웁니다. 회사 이름은 DuckDB 사전(수집 대상·공시에 나온 옛 이름·`corp_lineage.csv`)으로 corp_code를 찾고, 두 회사를 가리키는 이름은 쓰지 않습니다. 결과는 관계 표(유효 기간·근거 접수번호가 옆에) + 파생 값(간접 지분율·재직 기간, 규칙 이름과 함께) + 근거 공시 조각이고, `graph:hybrid:<모델>` 검색기는 그 조각을 Phase 3 하이브리드 검색과 RRF로 합칩니다. 템플릿에 안 맞는 질문은 Phase 3 검색 그대로입니다([0011](docs/decisions/0011-graph-schema-and-graphrag.md)).
+
+   ```bash
+   python -m src.graph.query "2025년 12월 31일 기준 우리은행의 최대주주의 최대주주는 누구인가?"   # 실행 기록 + 관계 표 + 근거 조각 (LLM 없음)
+   python -m eval.run --retrieval-only --retriever graph:hybrid:kure-v3 --filter corp                           # 평가: 검색만 / 그래프만(graph:only) / 결합 비교
+   ```
