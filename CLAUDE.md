@@ -38,7 +38,7 @@ Phase 4 설계 전 조사: `docs/plans/phase4-research.md` — 논문·도구마
 src/collectors/    DART API 호출
 src/loaders/       DuckDB 적재
 src/pipeline/      Dagster 자산·스케줄 정의
-config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_overrides.csv)
+config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_overrides.csv, person_merges.csv, corp_lineage.csv)
 src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 src/reports/       (Phase 3) 변화 리포트 (0012)

@@ -39,8 +39,8 @@ phase3.md 11절 그대로다. 조사(phase4-research 5절 1)에서 이 범위를
 
 | 노드 | 키 | 출처 (DuckDB) | 속성 |
 |---|---|---|---|
-| `Corp` | `corp_code` (없으면 `name:` + 정규화 이름, ②) | `corp`, `target_corp`, `investment`, `major_shareholder` | `name`(지금 이름), `names`(공시에 나온 이름 목록, ①), `role`(holding/subsidiary/null), `has_corp_code` |
-| `Person` | `person_id` (0006) | `person` | `name`만. **생년월·성별은 올리지 않는다** (식별에만 쓰고 표시하지 않음, 0006·0012) |
+| `Corp` | `corp_code` (없으면 `name:{보고한 회사 corp_code}:{정규화 이름}`, ②·⑤) | `corp`, `target_corp`, `investment`, `major_shareholder` | `name`(지금 이름), `names`(공시에 나온 이름 목록, ①), `role`(holding/subsidiary/null), `has_corp_code` |
+| `Person` | `pid` = `person_id`(0006)의 해시 앞 16자리 | `person` | `name`만. **생년월·성별은 올리지 않는다** (식별에만 쓰고 표시하지 않음, 0006·0012). `person_id`를 키로 그대로 쓰면 그 안의 생년월이 질의 결과로 샐 수 있어 해시로 바꾼다 |
 | `Document` | `rcept_no` | `disclosure`, `document` | 이미 Phase 3에서 생김 |
 | `Chunk` | `chunk_id` | `chunk` | 이미 Phase 3에서 생김 |
 
@@ -61,10 +61,12 @@ phase3.md 11절 그대로다. 조사(phase4-research 5절 1)에서 이 범위를
 | | 질문 | 결정 | 이유 |
 |---|---|---|---|
 | ① | 사명 변경·합병 | corp_code가 같으면 노드 하나에 이름 목록(`names`). corp_code가 바뀐 경우만 `FORMERLY` | corp_code가 회사 식별자라는 원칙(CLAUDE.md). 이름이 바뀌어도 같은 법인이면 같은 노드여야 시점 질의가 끊기지 않는다 |
-| ② | corp_code 없는 출자 대상(해외 법인·펀드) | 같은 `Corp` 라벨, 키는 `name:`+정규화 이름, `has_corp_code=false` | "지주의 출자 대상 전부"를 탐색 한 번으로 얻는다. 라벨을 나누면 T2·T3마다 두 경우를 따로 써야 한다. 이름 키는 출자 표 안에서만 쓰고, 이름으로 다른 회사와 잇지 않는다 |
+| ② | corp_code 없는 출자 대상(해외 법인·펀드) | 같은 `Corp` 라벨, 키는 `name:`+정규화 이름, `has_corp_code=false` | "지주의 출자 대상 전부"를 탐색 한 번으로 얻는다. 라벨을 나누면 T2·T3마다 두 경우를 따로 써야 한다. 이름 키에 **보고한 회사**를 넣어, 다른 회사 표에 나온 같은 이름과도 합치지 않는다(개인 주주 동명이인 때문. 대신 두 자회사가 같은 해외 펀드에 출자하면 노드가 둘 — g06에서 셀 때 주의) |
 | ③ | 특수관계인 관계 | 보류 | 질문 11개·그래프 질문 12개 중 이 관계가 필요한 것이 없다. 최대주주 표의 `relate` 값은 `OWNS` 속성으로만 남긴다 |
 | ④ | 연도·분기 보조 노드 | 만들지 않음 | 관계의 시간 속성 필터로 "그 시점 그래프"를 얻는다(phase4-research 1.3). 노드를 두면 같은 날짜를 두 곳에 적게 된다 |
 | ⑤ | corp_code 없는 **최대주주**(국민연금·우리사주조합·개인 등) | ②와 같은 이름 노드(`Corp` 라벨, `has_corp_code=false`). 개인 주주도 `Person`에 잇지 않는다 | 최대주주 표에는 생년월이 없어 `person_id`를 만들 수 없다. 이름이 같다고 임원 `Person`과 이으면 추측이다(0006). 라벨이 `Corp`인 것이 어색하지만, 질문 g01처럼 "체인 끝에 누가 있나"만 보면 되므로 탐색을 하나로 두는 쪽을 택했다 — 이 항목은 초안에서 새로 나온 것이라 PR에서 의견을 묻는다 |
+
+**다시 만들기 (2026-11-25, `feat/graph-relations`):** 관계 층(Corp·Person과 그 관계)은 적재할 때마다 지우고 통째로 다시 넣는다. DuckDB 관계 테이블도 rebuild로 통째로 다시 만들어져 행이 사라질 수 있는데, MERGE만 하면 사라진 행이 Neo4j에 남기 때문이다. 수만 행이라 몇 초면 된다. 조각 층(Document·Chunk)은 건드리지 않는다. `FILED`는 이미 있는 Document에만 잇는다.
 
 ## 결정 3. 세 층 (사실 / 파생 / 해석)
 
