@@ -8,6 +8,7 @@
     corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
                                               ├────────▶ report_details ─▶ relations  (Phase 2)
                                               └────────▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo4j_chunks  (Phase 3)
+    relations ─▶ neo4j_relations  (Phase 4)
 
     corp_codes          : corpCode.xml 전체 → corp 테이블 (API 1건)
     holding_investments : 지주 4곳의 최신 사업보고서 타법인 출자현황 → investment 테이블 (API 4건)
@@ -27,6 +28,8 @@
     chunk_embeddings    : (Phase 3) 벡터가 없거나 본문 해시가 바뀐 조각만 노트북 GPU로 임베딩(chunk_embedding). API 0건
     neo4j_chunks        : (Phase 3) DuckDB와 조각 수가 다른 보고서만 Neo4j에 MERGE. Neo4j(Docker)가 꺼져 있으면 실패하고
                           다음 날 스케줄이 다시 시도한다 (실패가 정상 상태)
+    neo4j_relations     : (Phase 4, 0011) 관계 테이블 → Neo4j Corp·Person·OWNS·HOLDS_POSITION·FORMERLY·FILED. 지우고 통째로 다시 넣는다.
+                          스케줄 없음 — 노트북에서 검증할 때까지 graph_job으로 직접 실행
 
 왜 월 × 회사 파티션인가
     - 일 단위로 나누면 5년 백필 호출이 30배가 된다 (59곳 기준 일 단위 약 107,000건 vs 월 단위 3,540건)
@@ -56,6 +59,8 @@ from src.graph.client import wait_until_ready
 from src.graph.load_chunks import DEFAULT_MODEL, DEFAULT_STRATEGY, pending_count, stale_documents
 from src.graph.load_chunks import build as build_neo4j_chunks
 from src.graph.load_chunks import stats as neo4j_chunk_stats
+from src.graph.load_relations import build as build_neo4j_relations
+from src.graph.load_relations import stats as neo4j_relation_stats
 from src.loaders.chunks import build_chunks, parsed_rcept_nos, unchunked_rcept_nos
 from src.loaders.collect import collect_corps, collect_disclosures, collect_document, collect_investments, collect_report_details
 from src.loaders.documents import missing_documents, missing_documents_of_report, rebuild_sections, target_corp_codes, unparsed_documents
@@ -729,10 +734,37 @@ def neo4j_chunks_match() -> dg.AssetCheckResult:
                                metadata={"duckdb": want, "neo4j": have, "indexes": dg.MetadataValue.json(s["neo4j"]["indexes"])})
 
 
+@dg.asset(
+    group_name="graph",
+    deps=[relations],
+    description="(Phase 4, 0011) 관계 테이블 → Neo4j 그래프. 관계 층만 지우고 다시 넣는다(조각 층은 그대로). Neo4j가 꺼져 있으면 실패.",
+)
+def neo4j_relations(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    with graph_connect() as driver:
+        wait_until_ready(driver, timeout=NEO4J_READY_TIMEOUT_SEC, log=context.log.info)
+        with write_connection() as con:
+            out = build_neo4j_relations(con, driver, log=context.log.info)
+    return dg.MaterializeResult(metadata=out)
+
+
+@dg.asset_check(asset=neo4j_relations, description="Neo4j OWNS·HOLDS_POSITION·FORMERLY 수 = DuckDB 행 수인지 (Neo4j가 꺼져 있으면 경고)")
+def neo4j_relations_match() -> dg.AssetCheckResult:
+    from neo4j.exceptions import ServiceUnavailable
+
+    try:
+        with graph_connect() as driver, connect(read_only=True) as con:
+            driver.verify_connectivity()
+            s = neo4j_relation_stats(con, driver)
+    except (ServiceUnavailable, OSError) as e:
+        return dg.AssetCheckResult(passed=False, severity=dg.AssetCheckSeverity.WARN, metadata={"error": f"Neo4j에 연결하지 못함: {type(e).__name__}"})
+    return dg.AssetCheckResult(passed=s["match"], metadata={"duckdb": dg.MetadataValue.json(s["duckdb"]), "neo4j": dg.MetadataValue.json(s["neo4j"])})
+
+
 RAG_CHECKS = (documents_complete, chunks_nonempty, chunks_cover_parsed, chunk_embeddings_complete, neo4j_chunks_match)
 
 documents_job = dg.define_asset_job("documents_job", selection=dg.AssetSelection.assets(documents))
 rag_index_job = dg.define_asset_job("rag_index_job", selection=dg.AssetSelection.assets(chunks, chunk_embeddings, neo4j_chunks))
+graph_job = dg.define_asset_job("graph_job", selection=dg.AssetSelection.assets(neo4j_relations))
 
 
 @dg.schedule(job=documents_job, cron_schedule="0 8 * * *", execution_timezone="Asia/Seoul")
@@ -783,9 +815,10 @@ def daily_rag_index(context: dg.ScheduleEvaluationContext):
 
 defs = dg.Definitions(
     assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations, change_report,
-            documents, chunks, chunk_embeddings, neo4j_chunks],
-    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS, *RAG_CHECKS],
-    jobs=[targets_job, disclosures_job, report_details_job, relations_job, documents_job, rag_index_job],
+            documents, chunks, chunk_embeddings, neo4j_chunks, neo4j_relations],
+    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS, *RAG_CHECKS,
+                  neo4j_relations_match],
+    jobs=[targets_job, disclosures_job, report_details_job, relations_job, documents_job, rag_index_job, graph_job],
     schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations, daily_documents, daily_rag_index],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)
     executor=dg.in_process_executor,

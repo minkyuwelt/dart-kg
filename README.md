@@ -382,3 +382,12 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    | `GET /corps` | 수집 대상 회사 목록 |
    | `GET /corps/{corp_code}/executives` | `as_of`·`outside_only` → 그 날짜의 임원 (생년월은 내보내지 않음) |
    | `GET /corps/{corp_code}/shareholders` | `as_of` → 그 날짜의 최대주주·지분율 |
+
+19. **(Phase 4) 관계 그래프 적재** — Phase 2의 관계 테이블(출자·최대주주·임원)을 Neo4j의 `Corp`·`Person` 노드와 `OWNS`·`HOLDS_POSITION` 관계로 옮깁니다. DuckDB 행 하나가 관계 하나이고, 시간 속성(`valid_from`·`valid_to`·`source_rcept_no`·`superseded_by`)은 DuckDB 값 그대로입니다. corp_code가 없는 상대(해외 법인·펀드·국민연금·개인 주주)는 보고한 회사 안에서만 이름으로 묶은 노드가 되고, 사람 노드에는 생년월이 들어가지 않습니다. 매번 관계 층만 지우고 통째로 다시 넣습니다(조각 층은 그대로). 합병으로 corp_code가 바뀐 회사는 `config/corp_lineage.csv`에 근거 접수번호와 함께 적으면 `FORMERLY`로 이어집니다. 근거는 [0011](docs/decisions/0011-graph-schema-and-graphrag.md).
+
+   ```bash
+   python -m src.graph.load_relations build     # 지우고 다시 넣기 → 끝에 DuckDB ↔ Neo4j 수 대조
+   python -m src.graph.load_relations stats     # 대조만
+   ```
+
+   Dagster에서는 `graph_job`(자산 `neo4j_relations`, 검사 `neo4j_relations_match`)으로 실행합니다. 스케줄은 노트북 검증 뒤에 붙입니다. `load_chunks reset`은 Neo4j를 전부 지우므로 그 뒤에는 이것도 다시 돌립니다. `FILED`(회사 → 보고서)는 이미 있는 `Document`에만 잇기 때문에, 조각을 먼저 넣고 이것을 나중에 돌립니다.
