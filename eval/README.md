@@ -7,7 +7,7 @@
 | 파일 | 역할 | 커밋 |
 |---|---|---|
 | `eval/questions.jsonl` | 질문. 한 줄에 하나 (형식: `eval/questions.py` 설명) | O |
-| `eval/questions.draft.jsonl` | `python -m eval.draft`가 만든 후보. 정답을 채워 `questions.jsonl`로 옮긴다 | X (데이터에서 생성) |
+| `eval/questions.draft.jsonl` | `python -m eval.draft`·`eval.graph_draft`가 만든 후보. 정답을 채워 `questions.jsonl`로 옮긴다 | X (데이터에서 생성) |
 | `eval/results/` | `python -m eval.run` 결과 | X |
 
 ## 빠른 길: `python -m eval.review`
@@ -69,6 +69,21 @@ python -m eval.review --type 정형표   # 유형 하나만
    키워드 기본선의 hit@5·MRR이 나온다. 이 숫자가 임베딩(6번 PR)·하이브리드(8번 PR)와 비교하는 바닥이다.
 
 7. `questions.jsonl`을 커밋해 push한다. 결과 파일은 커밋하지 않는다.
+
+## 그래프 질문 12개 (Phase 4, 결정 0011)
+
+추론·계층·의미·통합 갈래마다 3개. 정답 **초안**은 DuckDB 관계 테이블(Phase 2에서 검증)에서 SQL로 만든다 — 그래프를 거치지 않은 기준 답이라, 그래프 답과 대조하면 적재·템플릿 버그가 드러난다.
+
+```bash
+python -m eval.graph_draft              # 초안 12개 → questions.draft.jsonl (g01~g12만 바꿔 씀, 이미 ready면 건너뜀)
+python -m eval.graph_draft --compare    # + 그래프로도 풀어 대조 (Neo4j에 조각·관계가 있어야 함). "일치 12/12"가 목표
+python -m eval.review --type 다중경로     # 초안 답과 근거 원문을 보며 뷰어로 확인 → a(초안 그대로 저장) 또는 고친 답을 쳐서 저장
+```
+
+- 초안은 `status: draft`다. 사람이 근거 접수번호로 뷰어를 열어 확인한 것만 `a`로 ready가 된다. `a`는 확인을 대신하지 않는다.
+- 질문에는 `graph_kind` 칸이 붙고, `eval.run`이 갈래별 점수를 따로 낸다.
+- "의미" 갈래(g07~g09)의 합병 관계는 연혁 글에만 있다. 초안은 공시 목록에 나온 이름 순서까지만 보여 주므로, 연혁으로 확인한 뒤 corp_code가 바뀐 경우는 `config/corp_lineage.csv`에 근거 접수번호와 함께 적는다(그래야 그래프가 답한다).
+- 대조에서 "다름"이 나오면 먼저 SQL 답이 뷰어와 맞는지 본다. SQL이 맞으면 그래프 쪽(적재 수·템플릿) 문제다.
 
 ## 규칙
 

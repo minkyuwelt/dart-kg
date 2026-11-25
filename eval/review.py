@@ -13,6 +13,7 @@
   m         → 원문 더 보기
   e <섹션>   → 근거 섹션 바꾸기 (틀이 짚은 섹션에 답이 없고 다른 섹션에 있을 때. locate로 찾은 경로의 일부를 붙인다)
   d         → 이 후보 삭제 (질문이 어색하거나 답이 없을 때)
+  a         → 초안 답을 그대로 저장 (그래프 질문처럼 DuckDB에서 초안 답을 만든 후보만. 뷰어로 확인한 뒤에만 쓴다)
   q         → 종료
 "없음" 유형은 원문이 없으므로 뷰어의 본문 검색으로 확인한 뒤 y를 치면 ready가 된다.
 
@@ -94,6 +95,8 @@ def question_lines(q: Question, index: int, total: int) -> list[str]:
         out.append(f"뷰어: https://dart.fss.or.kr/dsaf001/main.do?rcpNo={r}")
     if q.note:
         out.append(f"메모: {q.note.split('뷰어:')[0].strip()}")
+    if q.answer and not q.is_ready:
+        out.append(f"초안 답 (DuckDB에서 만든 것, 미확인): {q.answer}")
     return out
 
 
@@ -168,7 +171,8 @@ def review(con, questions_path: Path, draft_path: Path, todo: list[Question], in
             shown = _show(preview, 0, print_fn)
         while True:
             try:
-                raw = input_fn("정답 (Enter=건너뛰기, m=더 보기, e <섹션>=근거 바꾸기, d=삭제, q=종료): ").strip()
+                hint = ", a=초안 답 저장" if q.answer else ""
+                raw = input_fn(f"정답 (Enter=건너뛰기, m=더 보기, e <섹션>=근거 바꾸기, d=삭제{hint}, q=종료): ").strip()
             except EOFError:
                 raw = "q"
             if raw == "q":
@@ -190,6 +194,11 @@ def review(con, questions_path: Path, draft_path: Path, todo: list[Question], in
                 else:
                     shown = _show(preview, shown, print_fn)
                 continue
+            if raw == "a":
+                if not q.answer:
+                    print_fn("초안 답이 없는 후보입니다. 정답을 직접 쳐 주세요.")
+                    continue
+                raw = q.answer
             if raw == "":
                 stats["skipped"] += 1
             elif raw == "d":

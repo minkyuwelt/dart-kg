@@ -11,6 +11,7 @@
 - evidence_section    (선택) 근거 섹션 경로 또는 그 일부. 예: "VII. 주주에 관한 사항 > 1. 최대주주". 섹션 기준 hit@k에 쓴다
 - source          누가 어떻게 만들었나 (예: phase2-Q1, draft-2026-11-25, 사람)
 - note            (선택) 메모
+- graph_kind      (선택, Phase 4) 그래프 질문의 갈래: 추론 / 계층 / 의미 / 통합 (0011 결정 1). 갈래별 점수를 따로 본다
 
 정답과 접수번호는 **사람이 DART 뷰어에서 확인한 것만** 적는다. 추측으로 적지 않는다 (계획 4절).
 """
@@ -24,6 +25,7 @@ from src.loaders.duckdb_store import REPO_ROOT
 DEFAULT_QUESTIONS = REPO_ROOT / "eval" / "questions.jsonl"
 TYPES = ("정형표", "서술", "시점", "없음", "다중경로")
 STATUSES = ("ready", "draft")
+GRAPH_KINDS = ("추론", "계층", "의미", "통합")
 NO_ANSWER = "공시에 없음"
 RCEPT_NO_LEN = 14
 
@@ -44,6 +46,7 @@ class Question:
     evidence_section: str | None = None
     source: str | None = None
     note: str | None = None
+    graph_kind: str | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -55,6 +58,8 @@ class Question:
              "source": self.source}
         if self.note:
             d["note"] = self.note
+        if self.graph_kind:
+            d["graph_kind"] = self.graph_kind
         return d
 
 
@@ -72,12 +77,14 @@ def parse_question(raw: dict, where: str = "") -> Question:
         raise bad(f"status는 {STATUSES} 중 하나여야 합니다: {raw['status']!r}")
     if raw["phase"] not in (3, 4):
         raise bad(f"phase는 3 또는 4여야 합니다: {raw['phase']!r}")
+    if raw.get("graph_kind") is not None and raw["graph_kind"] not in GRAPH_KINDS:
+        raise bad(f"graph_kind는 {GRAPH_KINDS} 중 하나여야 합니다: {raw['graph_kind']!r}")
     evidence = raw.get("evidence_rcept_no") or []
     if not isinstance(evidence, list) or any(not (isinstance(r, str) and len(r) == RCEPT_NO_LEN and r.isdigit()) for r in evidence):
         raise bad(f"evidence_rcept_no는 14자리 숫자 문자열의 목록이어야 합니다: {evidence!r}")
     q = Question(id=str(raw["id"]), question=raw["question"], type=raw["type"], phase=raw["phase"], status=raw["status"],
                  answer=raw.get("answer"), evidence_rcept_no=evidence, evidence_section=raw.get("evidence_section"),
-                 source=raw.get("source"), note=raw.get("note"))
+                 source=raw.get("source"), note=raw.get("note"), graph_kind=raw.get("graph_kind"))
     if q.is_ready:
         # ready는 사람이 확인했다는 뜻이므로 정답과 근거가 갖춰져야 한다
         if not q.answer:
