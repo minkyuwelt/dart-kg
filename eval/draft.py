@@ -3,6 +3,8 @@
     python -m eval.draft                       # 대상 회사의 최신 사업보고서로 후보 생성 → eval/questions.draft.jsonl
     python -m eval.draft --seed                # Phase 2 질문 4개(접수번호 해결)도 함께
     python -m eval.draft --corps 00688996 --max 20
+    python -m eval.draft --templates capital_adequacy solvency ncr asset_quality segment lawsuit sanction market_risk liquidity_risk --per-template 4
+                                               # 2차 틀만, 틀마다 4개 → 30개 안팎. 번호는 questions.jsonl의 d### 다음부터
 
 어떻게 만드나
 - 회사마다 가장 최신 사업보고서(정정본이면 최신 정정본)와 그 전 연도 사업보고서를 disclosure·document에서 고른다
@@ -57,8 +59,22 @@ TEMPLATES = [
     Template("fair_value", "서술", r"중요한 회계정책", "{corp}은 상장주식 등 금융자산의 공정가치를 어떻게 측정하는가?", "공정가치 평가 방법(공시가격·외부평가기관·DCF 등). 수준 1·2·3 정의는 없는 보고서가 있음"),
     Template("history", "서술", r"회사의 연혁", "{corp}의 {year}년 중 주요 연혁은 무엇인가?", "연혁 표에서 해당 연도 행"),
     Template("committees", "서술", r"이사회에 관한 사항|이사회 내 위원회", "{corp} 이사회 안에는 어떤 위원회가 있는가?", "이사회 내 위원회 목록"),
+    # --- 2차 틀 (2026-11-25, 계획 4절 "개수 늘리기": 종류를 넓혀 55개 안팎으로. usecases 질문 10·11) ---
+    # 금융업 사업보고서는 업종마다 건전성 지표 이름이 다르다: 은행·지주 BIS, 보험 K-ICS(옛 RBC), 증권 NCR. 각자 다른 회사에서만 걸린다
+    Template("capital_adequacy", "정형표", r"자본\s*적정성|BIS", "{year}년 말 기준 {corp}의 BIS 총자본비율은 몇 %인가?", "자본적정성 표의 총자본비율(BIS 자기자본비율). 연결 기준이면 그렇게 적는다"),
+    Template("solvency", "정형표", r"지급여력|K-ICS|RBC", "{year}년 말 기준 {corp}의 지급여력비율(K-ICS)은 몇 %인가?", "지급여력비율 표의 기말 값. 경과조치 적용 전·후가 둘 다 있으면 적용 후"),
+    Template("ncr", "정형표", r"순자본비율|NCR", "{year}년 말 기준 {corp}의 순자본비율(NCR)은 몇 %인가?", "순자본비율 표의 기말 값"),
+    Template("asset_quality", "정형표", r"자산\s*건전성|고정이하", "{year}년 말 기준 {corp}의 고정이하여신비율은 몇 %인가?", "자산건전성 표의 고정이하여신비율(기말)"),
+    Template("segment", "정형표", r"영업의 현황|부문별|사업부문|영업부문", "{corp}의 {year}년 영업수익에서 비중이 가장 큰 사업 부문은 무엇인가?", "부문별 영업수익(또는 영업이익) 표에서 가장 큰 부문 이름과 비중"),
+    # XI. 그 밖에 투자자 보호를 위하여 필요한 사항 아래: 2. 우발부채 등에 관한 사항(소송), 3. 제재 등과 관련된 사항
+    Template("lawsuit", "서술", r"우발부채|소송", "{year}년 말 기준 {corp}가 피소되어 진행 중인 소송은 몇 건이고 주요 건은 무엇인가?", "우발부채 섹션의 피소 소송 건수·소송가액, 대표 사건 1개"),
+    Template("sanction", "서술", r"제재", "{corp}가 {year}년 사업보고서에 적은 금융당국 제재는 무엇인가?", "제재 현황 표/문단: 제재 기관·일자·내용. 없으면 '해당사항 없음'이라고 적혀 있는지"),
+    # 주석 금융위험관리 아래 소제목. credit_risk(신용위험)와 짝 — 서술 유형을 10개 이상으로
+    Template("market_risk", "서술", r"시장위험", "{corp}는 시장위험(금리·환율·주가)을 어떻게 측정하고 관리하는가?", "시장위험 관리 문단 요지: 측정 방법(VaR 등)과 관리 조직 2~3문장"),
+    Template("liquidity_risk", "서술", r"유동성\s*위험", "{corp}는 유동성위험을 어떻게 관리하는가?", "유동성위험 관리 문단 요지 2~3문장"),
 ]
 TIMEPOINT_KEYS = ("largest_holder", "ceo")  # 전 연도 보고서에 쓰는 틀
+TEMPLATES_BY_KEY = {t.key: t for t in TEMPLATES}
 
 SEEDS = [  # Phase 2 시점 질의 5개 중 4개. Q5(정정 전후 차이)는 API가 최신 정정본만 줘서 비교 대상이 없어 뺌 (0005)
     {"id": "p2-q1", "type": "시점", "phase": 3, "question": "2023년 3월 31일 기준 신한은행의 최대주주는 누구이고 지분율은 몇 %인가?",
@@ -141,28 +157,45 @@ def fill_question(template: str, corp: str, year: str) -> str:
     return template.format(corp=corp, year=year)
 
 
-def pick_templates(corp_code: str, role: str) -> list[Template]:
+def pick_templates(corp_code: str, role: str, templates: list[Template] | None = None) -> list[Template]:
+    templates = templates or TEMPLATES
     if role == "holding":
-        return TEMPLATES
-    start = int(corp_code) % len(TEMPLATES)  # 회사마다 다른 틀이 고르게 걸리도록
-    return [TEMPLATES[(start + i) % len(TEMPLATES)] for i in range(SUBSIDIARY_TEMPLATES)]
+        return templates
+    start = int(corp_code) % len(templates)  # 회사마다 다른 틀이 고르게 걸리도록
+    return [templates[(start + i) % len(templates)] for i in range(min(SUBSIDIARY_TEMPLATES, len(templates)))]
 
 
-def draft_questions(con: duckdb.DuckDBPyConnection, corp_codes: list[str] | None = None, max_total: int | None = None) -> list[Question]:
+def next_draft_number(questions_path: Path) -> int:
+    """새 초안의 번호는 questions.jsonl에 이미 있는 d### 다음부터. 같은 id가 생기면 review가 ready 줄을 덮어쓰기 때문이다."""
+    if not questions_path.exists():
+        return 1
+    nums = [int(m.group(1)) for line in questions_path.read_text(encoding="utf-8").splitlines()
+            if (m := re.match(r'\s*\{"id":\s*"d(\d+)"', line))]
+    return max(nums, default=0) + 1
+
+
+def draft_questions(con: duckdb.DuckDBPyConnection, corp_codes: list[str] | None = None, max_total: int | None = None,
+                    template_keys: list[str] | None = None, per_template: int | None = None, start: int = 1) -> list[Question]:
+    """template_keys로 틀을 고르면(2차 틀만 등) 지주는 그 틀 전부, 자회사는 그중 2개. per_template은 틀마다 후보 상한(지주가 먼저라 지주 위주가 된다)."""
     today = date.today().isoformat()
     out: list[Question] = []
+    chosen = [TEMPLATES_BY_KEY[k] for k in template_keys] if template_keys else None
+    per_key: dict[str, int] = {}
     for rep in latest_reports(con, corp_codes):
-        templates = pick_templates(rep["corp_code"], rep["role"])
+        templates = pick_templates(rep["corp_code"], rep["role"], chosen)
         if rep["year_rank"] == 2:
             templates = [t for t in templates if t.key in TIMEPOINT_KEYS]
         for t in templates:
+            if per_template and per_key.get(t.key, 0) >= per_template:
+                continue
             found = find_section(con, rep["rcept_no"], t.title_re) or (t.parent_re and find_section(con, rep["rcept_no"], t.parent_re, shallowest=True))
             if not found:
                 continue
             path, _ = found
+            per_key[t.key] = per_key.get(t.key, 0) + 1
             qtype = "시점" if rep["year_rank"] == 2 else t.type
             out.append(Question(
-                id=f"d{len(out) + 1:03d}", question=fill_question(t.question, rep["corp_name"], rep["year"]),
+                id=f"d{start + len(out):03d}", question=fill_question(t.question, rep["corp_name"], rep["year"]),
                 type=qtype, phase=3, status="draft", answer=None, evidence_rcept_no=[rep["rcept_no"]],
                 evidence_section=path, source=f"draft-{today}/{t.key}",
                 note=f"확인할 것: {t.answer_hint}. 뷰어: {VIEWER_URL.format(rcept_no=rep['rcept_no'])}",
@@ -212,9 +245,15 @@ def main(argv=None) -> int:
     ap.add_argument("--corps", nargs="*", help="corp_code로 회사 제한")
     ap.add_argument("--max", type=int, help="후보 수 상한")
     ap.add_argument("--seed", action="store_true", help="Phase 2 질문 4개도 접수번호를 채워 넣는다")
+    ap.add_argument("--templates", nargs="*", choices=sorted(TEMPLATES_BY_KEY), metavar="KEY",
+                    help="이 틀만 (예: 2차 틀 capital_adequacy solvency ncr asset_quality segment lawsuit sanction market_risk liquidity_risk)")
+    ap.add_argument("--per-template", type=int, help="틀마다 후보 상한 (지주 4곳이 먼저 채워진다)")
+    ap.add_argument("--questions", type=Path, default=REPO_ROOT / "eval" / "questions.jsonl", help="새 초안 번호를 이 파일의 d### 다음부터 매긴다")
     args = ap.parse_args(argv)
+    start = next_draft_number(args.questions)
     with connect(read_only=True) as con:
-        questions = (seed_questions(con) if args.seed else []) + draft_questions(con, args.corps, args.max)
+        questions = (seed_questions(con) if args.seed else []) + draft_questions(
+            con, args.corps, args.max, template_keys=args.templates, per_template=args.per_template, start=start)
     args.out.write_text("".join(json.dumps(q.to_dict(), ensure_ascii=False) + "\n" for q in questions), encoding="utf-8")
     by_type = {}
     for q in questions:
