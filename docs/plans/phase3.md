@@ -213,7 +213,8 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
 | 7 | `chore/neo4j-compose` + 0001 개정 | docker-compose, `.env.example`, `text_normalize.py`, 0004 스크립트 리팩터 | 컨테이너 기동, 포트 확인 | 포트 충돌 → `.env` |
 | 8 | `feat/neo4j-chunks` | 노드·인덱스 생성, DuckDB → Neo4j 적재, 품질 검사 | 전체 적재, 조각 수 일치, 0004 재측정 | 메모리 부족 → 힙 설정. 2026-11-25 웹 작성: `src/graph/load_chunks.py`(build/stats/reset), `--retriever neo4j:vector:<모델>`·`neo4j:fulltext`. 회사 필터는 후보 k×20 뒤 걸러냄(커뮤니티 벡터 인덱스에 pre-filter 없음) |
 | 9 | `feat/rag-ask` + 0010 | 하이브리드 검색, OpenAI 생성, CLI, `eval/run.py` 완성 | 평가 세트 전체 실행, 사람 채점 | 재현율 80% 미달 → 5·6으로 돌아가 조정 |
-| 10 | `feat/rag-assets` | Dagster 자산 4개, 스케줄 2개, 백필 통합 | 하루 운영 확인 | — |
+| 10a | `feat/rag-assets` | Dagster 자산 4개(`documents`·`chunks`·`chunk_embeddings`·`neo4j_chunks`), 검사 5개, 스케줄 2개(`daily_documents` 08:00, `daily_rag_index` 09:00) | `rag_index_job` 1회 실행 → `neo4j_chunks_match` 통과, 하루 운영 확인 | Neo4j 꺼짐 → 실패가 정상, 다음 날 재시도. 2026-11-25 웹 작성: 세 자산 모두 증분(조각 없는 보고서·벡터 없는 조각·Neo4j와 수가 다른 보고서만). 백필 스크립트는 그대로 두고, 자산은 DuckDB 상태로 완료를 판단하므로 통합 코드가 따로 없음 |
+| 10b | `feat/change-report` + 0012 | 변화 리포트 1차(최근 공시가 최대주주·임원·출자에 만든 변화 → markdown), 알림 수단 비교(Python vs n8n) | 지난주 기준 리포트 1건 | 사용자 결정 2026-11-25: 10a·10b로 나눔 |
 | 11 | `docs/phase3-done` | README·CLAUDE.md·devlog 갱신, 평가 결과 표 | — | — |
 
 6번이 가장 길고 가장 중요하다. 여기서 나온 숫자가 0008·0009을 정하고, 그 뒤는 정해진 대로 만든다.

@@ -48,7 +48,7 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 
 단계를 자르는 기준은 **"다시 만들 수 있는가"**입니다. 원본(1)은 API 한도 때문에 한 번 받으면 지키고, 그 아래(2)(3)는 코드만으로 다시 만들 수 있어야 합니다. 그래서 노트북을 반납해 DuckDB 파일을 잃어도 하루(약 6,600건)면 복구됩니다.
 
-매일 운영은 Dagster 스케줄이 맡습니다. 06:30 대상 목록 확인 → 07:00 이번 달 공시 목록 → 07:30 그날 접수된 정기보고서 → 08:30 관계 테이블 재생성. 노트북이 꺼져 있던 날은 다음에 켜진 날 따라잡습니다.
+매일 운영은 Dagster 스케줄이 맡습니다. 06:30 대상 목록 확인 → 07:00 이번 달 공시 목록 → 07:30 그날 접수된 정기보고서 → 08:00 그 보고서의 원문 → 08:30 관계 테이블 재생성 → 09:00 원문 색인(파싱·청킹·임베딩·Neo4j). 노트북이 꺼져 있던 날은 다음에 켜진 날 따라잡습니다.
 
 ## 내 역할
 
@@ -173,7 +173,8 @@ docs/devlog/       날짜별 개발 일지
 
 ```
 corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
-                                          └────────▶ report_details ─▶ relations   (Phase 2)
+                                          ├────────▶ report_details ─▶ relations   (Phase 2)
+                                          └────────▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo4j_chunks   (Phase 3)
 ```
 
 | 자산 | 내용 | API 호출 |
@@ -184,6 +185,10 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 | `disclosures` | 한 회사의 한 달치 공시 목록 → `raw_api_response`(원본) + `disclosure` 테이블. 파티션 = 월 × 회사 | 파티션당 보통 1건 |
 | `report_details` | (Phase 2) 한 회사의 한 정기보고서에서 주요정보 4종(타법인 출자·최대주주·최대주주 변동·임원) 원본 저장. 파티션 = 회사 × 보고서(`2025-11011` = 사업연도-보고서종류). 공시 목록에 그 보고서가 없으면 API 없이 건너뜀 | 보고서당 4건 |
 | `relations` | (Phase 2) 원본 전체에서 `investment`·`major_shareholder`·`major_shareholder_change`·`executive` 테이블 재생성. 시간 컬럼은 [0005](docs/decisions/0005-temporal-model.md) | 0건 |
+| `documents` | (Phase 3) 한 회사의 한 정기보고서 원문 ZIP 저장(정정본 각각). 파티션 = 회사 × 보고서. `document` 테이블에 없는 접수번호만 받음 | 보고서당 보통 0~1건 |
+| `chunks` | (Phase 3) 새 원문을 파싱(`document_section`)하고 조각이 없는 보고서만 자름(`chunk`). 청킹 규칙을 바꿨으면 `full_rebuild: true`로 전체 다시 | 0건 |
+| `chunk_embeddings` | (Phase 3) 벡터가 없거나 본문이 바뀐 조각만 노트북 GPU로 임베딩(`chunk_embedding`, kure-v3). 1,000개당 약 55초 | 0건 |
+| `neo4j_chunks` | (Phase 3) DuckDB와 조각 수가 다른 보고서만 Neo4j에 `MERGE`. Neo4j(Docker)가 꺼져 있으면 실패하고 다음 날 다시 시도 | 0건 |
 
 대상 범위를 정한 근거는 [docs/decisions/0002-target-scope.md](docs/decisions/0002-target-scope.md)에 있습니다.
 
@@ -343,3 +348,9 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```
 
    LLM 답의 채점은 사람이 합니다(맞음/부분/틀림/근거 없는 주장). `eval/results/*_llm_*.md`의 채점 칸을 채운 뒤 결과를 0010에 적습니다.
+
+16. **(Phase 3) 색인 자동화** — 8~14번을 매일 Dagster가 이어서 합니다. Automation에서 `daily_documents`(08:00, 그날 새로 접수된 정기보고서의 원문)와 `daily_rag_index`(09:00, 파싱 → 청킹 → 임베딩 → Neo4j)를 켭니다. 세 단계 모두 "아직 안 된 것만" 처리하므로 평소에는 몇 초에 끝나고, 보고서가 접수된 날만 보고서당 몇 분(임베딩)이 걸립니다. 색인 스케줄은 새 원문이 저장됐거나 지난 색인이 Neo4j 단계에서 멈췄을 때만 run을 만듭니다. 처음 한 번은 화면에서 `rag_index_job`을 직접 실행해 기존 명령어(11·12·14번)로 만든 상태와 같은지(`neo4j_chunks_match` 검사) 확인합니다. 스크립트로 백필한 원문·조각·벡터는 자산이 다시 만들지 않습니다.
+
+   ```bash
+   DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions   # 화면에서 rag_index_job 실행 → 스케줄 2개 켜기
+   ```

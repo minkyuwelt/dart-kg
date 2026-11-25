@@ -122,6 +122,24 @@ def missing_documents(con: duckdb.DuckDBPyConnection, corp_codes: list[str], fro
     return rows
 
 
+def missing_documents_of_report(con: duckdb.DuckDBPyConnection, corp_code: str, bsns_year: str, reprt_code: str) -> list[dict]:
+    """한 회사의 한 보고서(회사 × 보고서 파티션)에서 원문이 아직 없는 접수번호. 정정본도 각각 (Dagster documents 자산용).
+
+    주요정보 API와 달리 원문은 정정본마다 다르므로 최신 정정본만 받지 않고 목록에 있는 접수번호를 모두 받는다.
+    """
+    have = {r[0] for r in con.execute("SELECT rcept_no FROM document").fetchall()}
+    return [r for r in periodic_reports_of(con, corp_code)
+            if (r["bsns_year"], r["reprt_code"]) == (bsns_year, reprt_code) and r["rcept_no"] not in have]
+
+
+def unparsed_documents(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """정상 수신(status '000')했지만 document_parse 행이 하나도 없는 접수번호. 새로 받은 원문을 파싱할 때 쓴다 (chunks 자산)."""
+    rows = con.execute(
+        "SELECT d.rcept_no FROM document d ANTI JOIN document_parse p USING (rcept_no) WHERE d.status = '000' ORDER BY d.rcept_no"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def target_corp_codes(con: duckdb.DuckDBPyConnection) -> list[str]:
     return [r[0] for r in con.execute("SELECT corp_code FROM target_corp ORDER BY corp_code").fetchall()]
 
