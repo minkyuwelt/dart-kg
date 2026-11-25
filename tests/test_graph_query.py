@@ -154,6 +154,26 @@ class GraphQueryTest(unittest.TestCase):
         lineage = [{"former_corp_code": "00000077", "former_name": "옛날은행"}]
         self.assertEqual(find_corps(self.con, "옛날은행은?", lineage)[0].corp_code, "00000077")
 
+    def test_find_corps_uses_names_linked_in_investment_tables(self):
+        # DART 등록명이 '케이비국민카드'여도 지주 출자 표에 corp_code로 연결된 'KB국민카드'로 찾는다 (src/graph/names.py)
+        self.con.execute("UPDATE corp SET corp_name = '케이비국민카드' WHERE corp_code = ?", [KBCARD])
+        self.con.execute("UPDATE target_corp SET corp_name = '케이비국민카드' WHERE corp_code = ?", [KBCARD])
+        self.con.execute("DELETE FROM disclosure WHERE corp_code = ?", [KBCARD])
+        self.con.execute(
+            """INSERT INTO investment (rcept_no, row_seq, investor_corp_code, bsns_year, reprt_code, inv_prm_raw, investee_name,
+                                       investee_corp_code, resolve_method, loaded_at)
+               VALUES ('20220301000001', 1, ?, '2021', '11011', 'KB국민카드', 'KB국민카드', ?, 'hangul', now()),
+                      ('20220301000001', 2, ?, '2021', '11011', '-', '-', NULL, 'not_found', now())""", [KBH, KBCARD, KBH])
+        self.assertEqual([m.corp_code for m in find_corps(self.con, "KB국민카드 최대주주의 대표이사")], [KBCARD])
+
+    def test_title_aliases(self):
+        self.assertTrue(T.title_matches("은행장", "대표이사"))      # 은행은 대표이사를 은행장으로 적는다
+        self.assertFalse(T.title_matches("부행장", "대표이사"))
+        self.assertTrue(T.title_matches("대표이사 사장", "대표이사"))
+        self.assertTrue(T.title_matches("아무 직위", None))
+        self.assertIn("은행장", T.TEMPLATES["person_history"].cypher)
+        self.assertIn(f"LIMIT {T.DESCENDANTS_LIMIT}", T.TEMPLATES["descendants"].cypher)
+
     def test_abbreviation_is_not_rename(self):
         p = self.plan("2025년 12월 31일 기준 KB금융 아래 손자회사까지 포함하면 몇 곳인가?")
         self.assertEqual([s.template for s in p.steps], ["descendants"])

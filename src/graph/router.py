@@ -19,6 +19,7 @@ from datetime import date
 
 import duckdb
 
+from src.graph.names import linked_names
 from src.graph.templates import MAX_DEPTH
 
 _STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
@@ -76,11 +77,9 @@ def _bare(name: str) -> str:
 
 def name_dictionary(con: duckdb.DuckDBPyConnection, lineage: list[dict] | None = None) -> dict[str, str]:
     """이름(공백·법인 표기 뗀 꼴) → corp_code. 같은 이름이 두 corp_code를 가리키면 그 이름은 뺀다 (추측하지 않음).
-    출처: target_corp, 공시 목록의 공시 당시 이름(옛 이름 포함), corp_lineage.csv의 옛 이름."""
-    pairs = con.execute(
-        """SELECT corp_code, corp_name FROM target_corp
-           UNION SELECT DISTINCT corp_code, corp_name FROM disclosure WHERE corp_name IS NOT NULL"""
-    ).fetchall()
+    출처: target_corp, src/graph/names.py의 이름 목록(공시 목록·출자 표·최대주주 표에서 corp_code로 연결된 이름),
+    corp_lineage.csv의 옛 이름."""
+    pairs = con.execute("SELECT corp_code, corp_name FROM target_corp").fetchall() + linked_names(con)
     pairs += [(r["former_corp_code"], r["former_name"]) for r in (lineage or []) if r.get("former_name")]
     seen: dict[str, set[str]] = {}
     for code, name in pairs:

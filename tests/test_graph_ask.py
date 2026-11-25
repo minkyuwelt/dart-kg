@@ -158,7 +158,7 @@ class ApiGraphTest(DbTest):
         self.assertEqual(g["trace"]["steps"][0]["template"], "descendants")
         self.assertEqual(g["relations"][0]["dst"], "자회사0")
         self.assertTrue(g["relations"][0]["url"].endswith("20260301000003"))
-        self.assertIn("1단계 1곳", g["derived"][-1]["value"])
+        self.assertIn("1단계 1곳", g["derived"][0]["value"])   # 합계 줄이 맨 앞 (LLM 표에서 잘리지 않게)
         self.assertEqual(g["n"], 2)
         self.assertFalse(g["cited"])
 

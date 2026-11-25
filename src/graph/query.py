@@ -31,6 +31,7 @@ from src.graph import templates as T
 from src.graph.router import Plan, route
 
 MAX_RELATION_ROWS = 50   # LLM에 넘기는 관계 행 상한 (phase4-research 3절 5번 예산)
+MAX_DERIVED_ROWS = 50    # LLM에 넘기는 파생 값 줄 상한. 계산(derive)은 전체로 하고 표에만 자른다
 EVIDENCE_LIMIT = 20
 
 
@@ -180,9 +181,10 @@ def _derive_descendants(s: StepResult) -> list[dict]:
     hop_counts: dict[int, int] = {}
     for b in best.values():
         hop_counts[b["min_hops"]] = hop_counts.get(b["min_hops"], 0) + 1
-    out.append({"rule": "출자 경로: 단계별 회사 수", "subject": s.params.get("corp"),
-                "value": ", ".join(f"{h}단계 {n}곳" for h, n in sorted(hop_counts.items())) + f" (합계 {len(best)}곳, "
-                         f"corp_code 없음 {sum(1 for b in best.values() if not b['has_corp_code'])}곳)"})
+    # 합계 줄을 맨 앞에: 회사별 줄이 1,000개를 넘으면 LLM 표(to_text)는 앞쪽만 넘기므로 합계가 잘리지 않게
+    out.insert(0, {"rule": "출자 경로: 단계별 회사 수", "subject": s.params.get("corp"),
+                   "value": ", ".join(f"{h}단계 {n}곳" for h, n in sorted(hop_counts.items())) + f" (합계 {len(best)}곳, "
+                            f"corp_code 없음 {sum(1 for b in best.values() if not b['has_corp_code'])}곳)"})
     return out
 
 
@@ -254,7 +256,9 @@ def to_text(ctx: GraphContext) -> str:
         lines.append(f"(관계 {ctx.truncated}개 더 있음 — 잘림)")
     if ctx.derived:
         lines.append("[파생 값 — 규칙으로 계산, 공시에 그대로 적힌 값 아님]")
-        lines += [f"{d['subject']}: {d['value']}  (규칙: {d['rule']})" for d in ctx.derived]
+        lines += [f"{d['subject']}: {d['value']}  (규칙: {d['rule']})" for d in ctx.derived[:MAX_DERIVED_ROWS]]
+        if len(ctx.derived) > MAX_DERIVED_ROWS:
+            lines.append(f"(파생 값 {len(ctx.derived) - MAX_DERIVED_ROWS}개 더 있음 — 잘림. 합계는 위 '단계별 회사 수' 줄)")
     if not ctx.relations:
         lines.append("(그래프에서 찾은 관계 없음)")
     return "\n".join(lines)

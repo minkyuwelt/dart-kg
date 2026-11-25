@@ -26,6 +26,7 @@
 
 import csv
 import re
+import unicodedata
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -59,8 +60,9 @@ def normalize_name(raw: str) -> tuple[str, str | None]:
     """출자 대상 이름을 정규화한다. (정규화한 이름, 주식 종류)를 돌려준다.
 
     순서가 중요하다: 각주 '(주3)'를 먼저 지워야 법인 표기 '(주)'와 헷갈리지 않는다.
+    맨 앞의 NFKC는 전각 글자를 보통 글자로 바꾼다 ('ＰＯＳＣＯ' → 'POSCO', 'Ⅳ' → 'IV'). 같은 회사가 표기만 달라 갈라지지 않게
     """
-    s = raw.replace("\n", " ")
+    s = unicodedata.normalize("NFKC", raw).replace("\n", " ")
     share = SHARE_CLASS_RE.search(s)
     s = SHARE_CLASS_RE.sub("", s)
     s = FOOTNOTE_RE.sub("", s)

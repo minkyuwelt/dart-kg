@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import unicodedata
 import sys
 from dataclasses import dataclass, field
 from datetime import date
@@ -31,7 +32,9 @@ from eval.draft import DEFAULT_OUT
 from eval.questions import DEFAULT_QUESTIONS, Question, load_questions
 from eval.review import line_id, read_lines, write_lines
 from src.graph.load_relations import load_lineage
-from src.graph.router import find_corps, group_of, holdings, parse_as_of
+from src.graph.names import NAME_CHARS
+from src.graph.router import _bare, find_corps, group_of, holdings, parse_as_of
+from src.graph.templates import title_matches
 from src.loaders.as_of import AS_OF_FILTER
 from src.loaders.duckdb_store import connect
 
@@ -95,11 +98,15 @@ def top_holder(con, corp: str, as_of: date, corp_only: bool = False) -> dict | N
 
 def investments_at(con, investor: str, as_of: date) -> list[dict]:
     return _rows(con, f"""SELECT investee_name, investee_corp_code, trmend_blce_qota_rt AS pct, rcept_no
-                          FROM investment WHERE investor_corp_code = ? AND {AS_OF_FILTER} ORDER BY row_seq""", [investor, as_of, as_of])
+                          FROM investment WHERE investor_corp_code = ? AND {AS_OF_FILTER}
+                            AND regexp_matches(investee_name, '{NAME_CHARS}')  -- '-' 같은 빈 이름 행은 그래프에도 없다
+                          ORDER BY row_seq""", [investor, as_of, as_of])
 
 
 def execs_at(con, corp: str, as_of: date) -> list[dict]:
-    return _rows(con, f"""SELECT nm, person_id, ofcps, rgist_exctv_at, source_rcept_no
+    # 직위 칸의 줄바꿈은 공백 하나로 (그래프 적재와 같게)
+    return _rows(con, f"""SELECT nm, person_id, regexp_replace(ofcps, '\\s+', ' ', 'g') AS ofcps,
+                                 regexp_replace(rgist_exctv_at, '\\s+', ' ', 'g') AS rgist_exctv_at, source_rcept_no
                           FROM executive WHERE corp_code = ? AND {AS_OF_FILTER} ORDER BY row_seq""", [corp, as_of, as_of])
 
 
@@ -183,7 +190,7 @@ def _holder_then_title(con, corp, as_of, mentions, lineage, question: str = "") 
     h1 = top_holder(con, corp, as_of, corp_only=True)
     if not h1:
         return Draft("(회사 최대주주 없음)")
-    ceos = [e for e in execs_at(con, h1["holder_corp_code"], as_of) if "대표이사" in (e["ofcps"] or "")]
+    ceos = [e for e in execs_at(con, h1["holder_corp_code"], as_of) if title_matches(e["ofcps"], "대표이사")]
     d = Draft(f"최대주주 {h1['nm']}의 대표이사: " + (", ".join(f"{e['nm']}({e['ofcps']})" for e in ceos) or "그 시점 임원 표에 대표이사 없음"))
     d.cite(h1["source_rcept_no"], *(e["source_rcept_no"] for e in ceos[:1]))
     d.names |= {h1["nm"], *(e["nm"] for e in ceos)}
@@ -285,7 +292,7 @@ def _shared_in_group(con, corp, as_of, mentions, lineage, question: str = "") ->
 
 
 def _person_history(con, corp, as_of, mentions, lineage, question: str = "") -> Draft:
-    ceos = [e for e in execs_at(con, corp, as_of) if "대표이사" in (e["ofcps"] or "") and e["person_id"]]
+    ceos = [e for e in execs_at(con, corp, as_of) if title_matches(e["ofcps"], "대표이사") and e["person_id"]]
     if not ceos:
         return Draft("(그 시점 대표이사 행 없음)")
     pid = ceos[0]["person_id"]
@@ -334,11 +341,21 @@ _TOTAL_RE = re.compile(r"합계 (\d+)곳")
 _NO_CODE_RE = re.compile(r"corp_code 없음 (\d+)곳")
 
 
+def _same(name: str) -> str:
+    """이름 대조용: 띄어쓰기·법인 표기·전각을 뗀 꼴 ('우리금융지주 우리사주조합' = '우리금융지주우리사주조합')."""
+    return _bare(unicodedata.normalize("NFKC", name or ""))
+
+
 def graph_view(ctx) -> tuple[set[str], int | None, int | None]:
-    """GraphContext → (나온 이름들, 합계 곳 수, corp_code 없는 곳 수)."""
+    """GraphContext → (나온 이름들, 합계 곳 수, corp_code 없는 곳 수).
+    이름은 관계 표뿐 아니라 경로 위 노드의 names(공시에 나온 다른 이름, '신한금융지주회사' = 신한지주)까지 본다."""
     names = set()
     for r in ctx.relations:
         names |= {r["src"], r["dst"]}
+    for st in ctx.steps:
+        for p in st.paths:
+            for n in p.get("nodes", []):
+                names |= {n.get("name") or "", *(n.get("names") or [])}
     total = no_code = None
     for d in ctx.derived:
         names.add(str(d["subject"]))
@@ -348,7 +365,7 @@ def graph_view(ctx) -> tuple[set[str], int | None, int | None]:
             total = int(m.group(1))
         if (m := _NO_CODE_RE.search(d["value"])):
             no_code = int(m.group(1))
-    return names, total, no_code
+    return {_same(n) for n in names if n}, total, no_code
 
 
 def compare(spec: Spec, d: Draft, ctx) -> dict:
@@ -356,7 +373,11 @@ def compare(spec: Spec, d: Draft, ctx) -> dict:
     if ctx is None:
         return {"id": spec.id, "ok": False, "why": "라우터가 그래프 템플릿을 고르지 않음"}
     names, total, no_code = graph_view(ctx)
-    missing = sorted(n for n in d.names if n not in names)
+    if not d.names and not d.count and not ctx.relations:
+        # 둘 다 아무것도 못 찾음: "일치"로 세지 않는다 (둘 다 틀렸을 수 있다 — 예: 은행장을 대표이사로 못 찾던 g12)
+        return {"id": spec.id, "ok": None, "templates": [s.template for s in ctx.steps], "graph_relations": 0,
+                "why": "SQL·그래프 둘 다 결과 없음 — 사람이 확인"}
+    missing = sorted(n for n in d.names if _same(n) not in names)
     out = {"id": spec.id, "templates": [s.template for s in ctx.steps], "graph_relations": len(ctx.relations), "missing_names": missing}
     if d.count is not None:
         graph_count = no_code if spec.solver == "unresolved_count" else total
@@ -400,12 +421,12 @@ def main(argv=None) -> int:
                     results.append(compare(s, d, build_context(s.question, driver, con, lineage=lineage, database=st.database)))
             print("\n그래프 대조:")
             for r in results:
-                mark = "일치" if r["ok"] else "다름"
+                mark = {True: "일치", False: "다름", None: "둘다없음"}[r["ok"]]
                 extra = f"  ({r['why']})" if r.get("why") else ""
                 if r.get("missing_names"):
                     extra += f"  그래프에 없는 이름: {', '.join(r['missing_names'][:5])}"
                 print(f"  {r['id']} {mark}  템플릿 {r.get('templates')}  관계 {r.get('graph_relations')}{extra}")
-            print(f"일치 {sum(r['ok'] for r in results)}/{len(results)}")
+            print(f"일치 {sum(r['ok'] is True for r in results)}/{len(results)}, 둘 다 결과 없음 {sum(r['ok'] is None for r in results)}")
     wrote, skipped = write_drafts([to_question(s, d) for s, d in drafts], args.out, args.questions)
     print(f"\n초안 {wrote}개를 {args.out.name}에 썼습니다 (이미 ready {skipped}개는 건너뜀). 다음: python -m eval.review --type 다중경로")
     return 0
