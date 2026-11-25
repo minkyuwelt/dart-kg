@@ -12,6 +12,7 @@ CLI (노트북, API 호출 없음, GPU 사용):
     python -m src.rag.embedding build --model kure-v3 --strategy section_path          # 그 전략의 조각 전부 임베딩
     python -m src.rag.embedding build --model kure-v1 --strategy section_path --limit 2000   # 시간 재기용
     python -m src.rag.embedding build --model kure-v3 --strategy section_path --fp16         # 16비트로 (약 2배 빠름)
+    python -m src.rag.embedding build --model bge-m3 --strategy section_path --batch 16       # 배치 크기 (기본 8)
     python -m src.rag.embedding stats                                                # 모델·전략별 임베딩 수
 """
 
@@ -97,7 +98,7 @@ def pending_chunks(con: duckdb.DuckDBPyConnection, model_name: str, strategy: st
     return con.execute(sql, params).fetchall()
 
 
-def embed_chunks(con: duckdb.DuckDBPyConnection, embedder: Embedder, strategy: str, batch_size: int = 32,
+def embed_chunks(con: duckdb.DuckDBPyConnection, embedder: Embedder, strategy: str, batch_size: int = 8,
                  limit: int | None = None, log=print) -> dict:
     """전략의 조각을 임베딩해 chunk_embedding에 넣는다. 돌려주는 값: {"pending", "embedded", "seconds", "per_1000"}."""
     todo = pending_chunks(con, embedder.name, strategy, limit)
@@ -105,8 +106,10 @@ def embed_chunks(con: duckdb.DuckDBPyConnection, embedder: Embedder, strategy: s
     if not todo:
         return stats
     t0 = time.perf_counter()
-    for start in range(0, len(todo), batch_size * 8):  # 배치 몇 개마다 한 번씩 DB에 쓴다 (중간에 끊겨도 그만큼은 남는다)
-        part = todo[start: start + batch_size * 8]
+    step = max(batch_size * 8, 256)  # 배치 몇 개마다 한 번씩 DB에 쓴다 (중간에 끊겨도 그만큼은 남는다). 배치가 작아도 DB 쓰기는 256개씩
+    for start in range(0, len(todo), step):
+        part = todo[start: start + step]
+        t_part = time.perf_counter()
         vectors = embedder.encode([t[2] for t in part], batch_size=batch_size)
         ids = [t[0] for t in part]
         con.begin()
@@ -119,8 +122,9 @@ def embed_chunks(con: duckdb.DuckDBPyConnection, embedder: Embedder, strategy: s
             con.rollback()
             raise
         stats["embedded"] += len(part)
-        elapsed = time.perf_counter() - t0
-        log(f"  {stats['embedded']:,}/{len(todo):,}  {elapsed:,.0f}초  (1,000개당 {elapsed / stats['embedded'] * 1000:,.1f}초)")
+        now = time.perf_counter()
+        elapsed, recent = now - t0, (now - t_part) / len(part) * 1000
+        log(f"  {stats['embedded']:,}/{len(todo):,}  {elapsed:,.0f}초  (1,000개당 누적 {elapsed / stats['embedded'] * 1000:,.1f}초, 최근 구간 {recent:,.1f}초)")
     stats["seconds"] = round(time.perf_counter() - t0, 1)
     stats["per_1000"] = round(stats["seconds"] / stats["embedded"] * 1000, 1)
     return stats
@@ -141,7 +145,7 @@ def main(argv=None) -> int:
     b = sub.add_parser("build")
     b.add_argument("--model", required=True, help=" / ".join(MODELS))
     b.add_argument("--strategy", default="section_path")
-    b.add_argument("--batch", type=int, default=32)
+    b.add_argument("--batch", type=int, default=8, help="GPU 배치 크기. 8GB에서 fp32는 8, fp16은 16까지 안전 (0009)")
     b.add_argument("--limit", type=int, help="앞에서 n개만 (시간 재기)")
     b.add_argument("--device", help="cuda / cpu (기본 자동)")
     b.add_argument("--fp16", action="store_true", help="16비트로 계산 (GPU에서 약 2배 빠름)")
