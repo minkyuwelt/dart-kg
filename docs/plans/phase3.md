@@ -260,7 +260,8 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
   사용자가 준 후보 자료(2026-11-25, **원문 미확인 — 조사 문서 쓸 때 하나씩 확인**): Agentic GraphRAG for Financial Data(ETH, 2026-04, arxiv 2605.18770 — 정형 필드는 규칙으로 "강한 노드",
   비정형 글은 LLM으로 "약한 노드"; 우리 세 층과 같은 발상이되 약한 노드를 그래프에 넣는 점이 다름 → 넣되 구분 표시가 나은지 다시 본다), FinKario(ACL 2026 — 리포트 기반 이중 구조 KG, 갱신 속도),
   FinReflectKG-HalluBench(2026-03, arxiv 2603.20252 — 금융 GraphRAG 환각 측정; 답변 평가 지표에 참고), Knowledge Graph Construction for Stock Markets(CIKM 2025 WS, arxiv 2601.11528 — 한국 연구진, 주식시장 KG 스키마),
-  FinSage(arxiv 2504.14493 — 공시 QA에서 GraphRAG·LightRAG가 기대에 못 미친 반대 사례; "그래프가 어느 질문에서 이득인지 먼저 정한다"는 우리 순서의 근거), Graph-Assisted LLMs 서베이(ACL 2026 Findings), KG-LLM 워크숍 @ LREC 2026(Text2Cypher 신뢰도, GroundedKG-RAG)
+  Zep/Graphiti(neo4j 블로그 — 에이전트 장기 기억용 bi-temporal KG: 엣지마다 t_valid/t_invalid, 충돌은 지우지 않고 무효 처리. **우리 0005와 같은 모델**(valid_from/valid_to·source_rcept_no/superseded_by, 이미 구현·검증). 다른 점은 입력이 LLM 추출인 것.
+  Phase 4에서는 Neo4j 엣지 시간 속성과 시점 필터 Cypher 패턴을 참고), FinSage(arxiv 2504.14493 — 공시 QA에서 GraphRAG·LightRAG가 기대에 못 미친 반대 사례; "그래프가 어느 질문에서 이득인지 먼저 정한다"는 우리 순서의 근거), Graph-Assisted LLMs 서베이(ACL 2026 Findings), KG-LLM 워크숍 @ LREC 2026(Text2Cypher 신뢰도, GroundedKG-RAG)
 - **FIBO는 참고 어휘로만.** 0011에 "우리 관계 ↔ FIBO 용어" 대응표 한 절 (research 5절의 판단)
 - **미결 (0011에서 의견을 묻는다):** ① 사명 변경·합병 — corp_code가 같으면 한 노드에 이름 이력, corp_code가 바뀌면 `FORMERLY` 관계(권함)
   ② corp_code 없는 출자 대상(해외 자회사·펀드) — 이름만 가진 `Corp` 노드 vs 별도 라벨 ③ "특수관계인" 관계 — 질문에서 필요해질 때까지 보류(권함)
