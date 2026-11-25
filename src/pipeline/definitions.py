@@ -6,7 +6,8 @@
 
 자산 구성 (화살표는 의존 관계)
     corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
-                                              └────────▶ report_details ─▶ relations  (Phase 2)
+                                              ├────────▶ report_details ─▶ relations  (Phase 2)
+                                              └────────▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo4j_chunks  (Phase 3)
 
     corp_codes          : corpCode.xml 전체 → corp 테이블 (API 1건)
     holding_investments : 지주 4곳의 최신 사업보고서 타법인 출자현황 → investment 테이블 (API 4건)
@@ -19,6 +20,12 @@
                           disclosure 목록에 그 보고서가 없으면 API를 부르지 않고 건너뛴다 (0건)
     relations           : (Phase 2) 원본 전체에서 investment·major_shareholder·major_shareholder_change·executive·person
                           테이블을 다시 만들고 시간을 닫는다(valid_to·superseded_by, 0005). API 0건
+    documents           : (Phase 3) 한 회사의 한 정기보고서 원문 ZIP(document.xml) 저장. 파티션은 report_details와 같은
+                          회사 × 보고서. 정정본은 접수번호가 달라 각각 받는다. 아직 없는 접수번호만 받으므로 API는 보통 0~1건
+    chunks              : (Phase 3) 새 원문을 파싱(document_section)하고 아직 조각이 없는 보고서만 자른다(chunk). API 0건
+    chunk_embeddings    : (Phase 3) 벡터가 없거나 본문 해시가 바뀐 조각만 노트북 GPU로 임베딩(chunk_embedding). API 0건
+    neo4j_chunks        : (Phase 3) DuckDB와 조각 수가 다른 보고서만 Neo4j에 MERGE. Neo4j(Docker)가 꺼져 있으면 실패하고
+                          다음 날 스케줄이 다시 시도한다 (실패가 정상 상태)
 
 왜 월 × 회사 파티션인가
     - 일 단위로 나누면 5년 백필 호출이 30배가 된다 (59곳 기준 일 단위 약 107,000건 vs 월 단위 3,540건)
@@ -43,7 +50,14 @@ import dagster as dg
 import duckdb
 
 from src.collectors.corp_code import HOLDING_CORPS, get_api_key
-from src.loaders.collect import collect_corps, collect_disclosures, collect_investments, collect_report_details
+from src.graph.client import connect as graph_connect
+from src.graph.client import wait_until_ready
+from src.graph.load_chunks import DEFAULT_MODEL, DEFAULT_STRATEGY, pending_count, stale_documents
+from src.graph.load_chunks import build as build_neo4j_chunks
+from src.graph.load_chunks import stats as neo4j_chunk_stats
+from src.loaders.chunks import build_chunks, parsed_rcept_nos, unchunked_rcept_nos
+from src.loaders.collect import collect_corps, collect_disclosures, collect_document, collect_investments, collect_report_details
+from src.loaders.documents import missing_documents, missing_documents_of_report, rebuild_sections, target_corp_codes, unparsed_documents
 from src.loaders.duckdb_store import connect, is_lock_error
 from src.loaders.investments import rebuild_investments
 from src.loaders.periodic_reports import (
@@ -55,6 +69,7 @@ from src.loaders.periodic_reports import (
 )
 from src.loaders.relations import rebuild_relations
 from src.loaders.targets import latest_business_report_year, rebuild_target_corps
+from src.rag.embedding import embed_chunks
 
 # DuckDB 파일 잠금에 걸렸을 때 다시 시도하는 횟수와 간격(초).
 # 노트북에서 DuckDB를 잠깐 열어 둔 경우 몇 분 뒤에는 풀리는 경우가 대부분이다.
@@ -486,6 +501,15 @@ def daily_report_details(context: dg.ScheduleEvaluationContext):
     07:00 daily_disclosures가 남긴 실행 메타데이터(periodic_reports)를 Dagster 인스턴스에서 읽는다.
     DuckDB는 열지 않는다. 정기보고서가 없는 날은 건너뛰므로 평소 API 0건, 보고서 접수 시기에 보고서당 4건.
     """
+    yield from _runs_for_new_periodic_reports(context, run_prefix="")
+
+
+def _runs_for_new_periodic_reports(context: dg.ScheduleEvaluationContext, run_prefix: str):
+    """최근 disclosures 실행 메타데이터(periodic_reports)에서 새 정기보고서를 모아 회사 × 보고서 파티션 run을 만든다.
+
+    report_details(주요정보)와 documents(원문)가 같은 파티션을 쓰므로 둘이 공유한다. run_key 앞에 run_prefix를 붙여
+    두 스케줄의 run이 서로 구분된다. DuckDB는 열지 않는다.
+    """
     now = context.scheduled_execution_time
     today = now.astimezone(KST).date()
     wanted: set[tuple[str, str]] = set()
@@ -505,7 +529,7 @@ def daily_report_details(context: dg.ScheduleEvaluationContext):
             context.log.warning(f"파티션에 없는 조합 건너뜀: {corp_code} {report}")
             continue
         yield dg.RunRequest(
-            run_key=f"{today.isoformat()}|{corp_code}|{report}",
+            run_key=f"{run_prefix}{today.isoformat()}|{corp_code}|{report}",
             partition_key=dg.MultiPartitionKey({"corp": corp_code, "report": report}),
         )
 
@@ -521,11 +545,225 @@ def daily_relations(context: dg.ScheduleEvaluationContext):
     yield dg.RunRequest(run_key=f"relations|{today.isoformat()}")
 
 
+# ───────────────────────────── Phase 3: 공시 원문 RAG 색인 ─────────────────────────────
+# 임베딩 모델·청킹 전략은 결정 문서(0008 section_path 1,000자, 0009 kure-v3 fp16 배치 8)를 따른다.
+# 바꾸려면 여기 상수와 결정 문서를 함께 고친다. 모델을 바꾸면 전체를 다시 임베딩한다 (26만 조각 ≈ 3시간 반, 2026-11-25 측정)
+RAG_MODEL = DEFAULT_MODEL
+RAG_STRATEGY = DEFAULT_STRATEGY
+RAG_EMBED_BATCH = 8
+NEO4J_READY_TIMEOUT_SEC = 30  # 컨테이너가 떠 있으면 바로 연결된다. 꺼져 있으면 이만큼 기다렸다 실패한다
+DOCUMENTS_SAVED_METADATA_KEY = "saved"  # daily_rag_index 스케줄이 DuckDB를 열지 않고 "새 원문이 있었나"를 읽는 곳
+
+
+@dg.asset(
+    group_name="rag",
+    partitions_def=report_detail_partitions,
+    deps=[target_corps],
+    description="(Phase 3) 한 회사의 한 정기보고서 원문 ZIP 저장(정정본 각각). 아직 없는 접수번호만 받으므로 보통 API 0~1건.",
+)
+def documents(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    """disclosure 목록에서 이 보고서의 접수번호(정정본 포함)를 찾아, document 테이블에 없는 것만 받는다.
+
+    완료 기록은 Dagster가 아니라 DuckDB document 테이블이다 (backfill_documents 스크립트와 같은 판단).
+    그래서 스크립트로 백필한 보고서는 이 자산이 돌아도 API를 부르지 않는다.
+    파싱은 여기서 하지 않는다 — ZIP을 지키는 일과 파싱 규칙(0007)은 수명이 다르다. 파싱은 chunks 자산이 한다.
+    """
+    keys = context.partition_key.keys_by_dimension
+    corp_code, report = keys["corp"], keys["report"]
+    bsns_year, reprt_code = split_report_partition_key(report)
+    with write_connection() as con:
+        todo = missing_documents_of_report(con, corp_code, bsns_year, reprt_code)
+        if not todo:
+            return dg.MaterializeResult(metadata={"corp_code": corp_code, "report": report, "api_calls": 0,
+                                                  DOCUMENTS_SAVED_METADATA_KEY: 0, "skipped": "받을 원문 없음 (목록에 없거나 이미 저장)"})
+        saved, no_file, api_calls = [], [], 0
+        for r in todo:
+            context.log.info(f"{corp_code} {r['report_nm']} ({r['rcept_no']}) 원문 수신")
+            result = collect_document(con, get_api_key(), r["rcept_no"])
+            api_calls += result["api_calls"]
+            (no_file if result.get("no_file") else saved).append(r["rcept_no"])
+    return dg.MaterializeResult(metadata={"corp_code": corp_code, "report": report, "api_calls": api_calls,
+                                          DOCUMENTS_SAVED_METADATA_KEY: len(saved), "saved_rcept_no": ", ".join(saved) or "없음",
+                                          "no_file": ", ".join(no_file) or "없음"})
+
+
+@dg.asset_check(asset=documents, description="대상 회사의 정기보고서(2021~) 중 원문이 없는 것이 몇 개인지")
+def documents_complete() -> dg.AssetCheckResult:
+    # 범위를 사업보고서만으로 줄여 둔 동안은 계속 경고가 뜬다. 채우려면 python -m src.pipeline.backfill_documents
+    with connect(read_only=True) as con:
+        missing = missing_documents(con, target_corp_codes(con), FIRST_REPORT_YEAR)
+    by_kind: dict[str, int] = {}
+    for r in missing:
+        by_kind[r["reprt_code"]] = by_kind.get(r["reprt_code"], 0) + 1
+    return dg.AssetCheckResult(passed=not missing, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"missing": len(missing), "missing_by_reprt_code": dg.MetadataValue.json(by_kind)})
+
+
+class ChunksConfig(dg.Config):
+    # 청킹 규칙(0008)을 고쳤을 때 true. 조각을 전부 다시 만들고, 본문 해시가 바뀐 조각은 chunk_embeddings가 다시 임베딩한다 (오래 걸림)
+    full_rebuild: bool = False
+
+
+@dg.asset(
+    group_name="rag",
+    deps=[documents],
+    description="(Phase 3) 새 원문을 파싱하고 조각이 없는 보고서만 자른다. full_rebuild=true면 전체 다시. API 0건.",
+)
+def chunks(context: dg.AssetExecutionContext, config: ChunksConfig) -> dg.MaterializeResult:
+    with write_connection() as con:
+        to_parse = unparsed_documents(con)
+        parse = rebuild_sections(con, to_parse) if to_parse else {"files": 0, "files_failed": 0, "sections": 0}
+        rcept_nos = parsed_rcept_nos(con, None) if config.full_rebuild else unchunked_rcept_nos(con, RAG_STRATEGY)
+        context.log.info(f"파싱 {len(to_parse)}개, 자를 보고서 {len(rcept_nos)}개 ({'전체' if config.full_rebuild else '조각 없는 것만'})")
+        built = build_chunks(con, rcept_nos, [RAG_STRATEGY]) if rcept_nos else {"chunks": {RAG_STRATEGY: 0}, "no_sections": []}
+        total = con.execute("SELECT count(*) FROM chunk WHERE strategy = ?", [RAG_STRATEGY]).fetchone()[0]
+    return dg.MaterializeResult(metadata={"strategy": RAG_STRATEGY, "parsed_documents": len(to_parse), "parsed_files": parse["files"],
+                                          "parse_failed_files": parse["files_failed"], "chunked_documents": len(rcept_nos),
+                                          "new_chunks": built["chunks"][RAG_STRATEGY], "no_sections": len(built["no_sections"]),
+                                          "total_chunks": total})
+
+
+@dg.asset_check(asset=chunks, description="조각 본문이 비어 있지 않은지")
+def chunks_nonempty() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        empty = con.execute("SELECT count(*) FROM chunk WHERE strategy = ? AND (trim(text) = '' OR trim(embed_text) = '')",
+                            [RAG_STRATEGY]).fetchone()[0]
+    return dg.AssetCheckResult(passed=empty == 0, metadata={"empty_chunks": empty})
+
+
+@dg.asset_check(asset=chunks, description="파싱된 보고서마다 조각이 있는지")
+def chunks_cover_parsed() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        missing = unchunked_rcept_nos(con, RAG_STRATEGY)
+    return dg.AssetCheckResult(passed=not missing, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"parsed_without_chunks": len(missing), "examples": ", ".join(missing[:5]) or "없음"})
+
+
+def make_embedder():
+    """임베딩 모델을 연다. 모델 로딩(torch, 2GB)은 비싸므로 임베딩할 조각이 있을 때만 부른다. 테스트는 이 함수를 가짜로 바꾼다."""
+    from src.rag.embedding import LocalEmbedder  # torch·sentence-transformers는 노트북에만 설치(requirements-ml.txt)
+
+    return LocalEmbedder(RAG_MODEL, fp16=True)
+
+
+@dg.asset(
+    group_name="rag",
+    deps=[chunks],
+    description="(Phase 3) 벡터가 없거나 해시가 바뀐 조각만 임베딩(노트북 GPU). API 0건.",
+)
+def chunk_embeddings(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    with write_connection() as con:
+        have, pending = pending_count(con, RAG_MODEL, RAG_STRATEGY)
+        if pending == 0:
+            return dg.MaterializeResult(metadata={"model": RAG_MODEL, "pending": 0, "embedded": 0, "total": have})
+        context.log.info(f"임베딩할 조각 {pending:,}개 (1,000개당 약 55초)")
+        stats = embed_chunks(con, make_embedder(), RAG_STRATEGY, batch_size=RAG_EMBED_BATCH, log=context.log.info)
+        have, pending = pending_count(con, RAG_MODEL, RAG_STRATEGY)
+    return dg.MaterializeResult(metadata={**{k: v for k, v in stats.items() if v is not None}, "total": have, "still_pending": pending})
+
+
+@dg.asset_check(asset=chunk_embeddings, description="벡터 없는(또는 본문이 바뀐) 조각이 0개인지")
+def chunk_embeddings_complete() -> dg.AssetCheckResult:
+    with connect(read_only=True) as con:
+        have, pending = pending_count(con, RAG_MODEL, RAG_STRATEGY)
+    return dg.AssetCheckResult(passed=pending == 0, metadata={"embedded": have, "pending": pending})
+
+
+@dg.asset(
+    group_name="rag",
+    deps=[chunk_embeddings],
+    description="(Phase 3) 조각 수가 다른 보고서만 Neo4j에 MERGE. Neo4j가 꺼져 있으면 실패 → 다음 날 다시.",
+)
+def neo4j_chunks(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    # Neo4j를 먼저 연다. 꺼져 있으면 DuckDB를 건드리지 않고 바로 실패한다
+    with graph_connect() as driver:
+        wait_until_ready(driver, timeout=NEO4J_READY_TIMEOUT_SEC, log=context.log.info)
+        with write_connection() as con:
+            todo = stale_documents(con, RAG_MODEL, RAG_STRATEGY, driver)
+            if not todo:
+                counts = neo4j_chunk_stats(con, driver, RAG_MODEL, RAG_STRATEGY)
+                return dg.MaterializeResult(metadata={"documents": 0, "chunks": 0, "neo4j_chunks": counts["neo4j"]["chunks"],
+                                                      "skipped": "Neo4j와 DuckDB의 조각 수가 모두 같음"})
+            context.log.info(f"Neo4j에 넣을 보고서 {len(todo)}개")
+            stats = build_neo4j_chunks(con, driver, RAG_MODEL, RAG_STRATEGY, rcept_nos=todo, log=context.log.info)
+            counts = neo4j_chunk_stats(con, driver, RAG_MODEL, RAG_STRATEGY)
+    return dg.MaterializeResult(metadata={**stats, "neo4j_chunks": counts["neo4j"]["chunks"],
+                                          "duckdb_chunks_with_embedding": counts["duckdb"]["chunks_with_embedding"]})
+
+
+@dg.asset_check(asset=neo4j_chunks, description="Neo4j 조각 수 = DuckDB의 벡터 있는 조각 수인지 (Neo4j가 꺼져 있으면 경고)")
+def neo4j_chunks_match() -> dg.AssetCheckResult:
+    from neo4j.exceptions import ServiceUnavailable
+
+    try:
+        with graph_connect() as driver, connect(read_only=True) as con:
+            driver.verify_connectivity()
+            s = neo4j_chunk_stats(con, driver, RAG_MODEL, RAG_STRATEGY)
+    except (ServiceUnavailable, OSError) as e:
+        return dg.AssetCheckResult(passed=False, severity=dg.AssetCheckSeverity.WARN, metadata={"error": f"Neo4j에 연결하지 못함: {type(e).__name__}"})
+    want, have = s["duckdb"]["chunks_with_embedding"], s["neo4j"]["chunks"]
+    return dg.AssetCheckResult(passed=want == have, severity=dg.AssetCheckSeverity.WARN,
+                               metadata={"duckdb": want, "neo4j": have, "indexes": dg.MetadataValue.json(s["neo4j"]["indexes"])})
+
+
+RAG_CHECKS = (documents_complete, chunks_nonempty, chunks_cover_parsed, chunk_embeddings_complete, neo4j_chunks_match)
+
+documents_job = dg.define_asset_job("documents_job", selection=dg.AssetSelection.assets(documents))
+rag_index_job = dg.define_asset_job("rag_index_job", selection=dg.AssetSelection.assets(chunks, chunk_embeddings, neo4j_chunks))
+
+
+@dg.schedule(job=documents_job, cron_schedule="0 8 * * *", execution_timezone="Asia/Seoul")
+def daily_documents(context: dg.ScheduleEvaluationContext):
+    """매일 08:00(KST), 최근 disclosures가 새로 본 정기보고서(정정본 포함)의 원문을 받는다. daily_report_details와 같은 입력.
+
+    DuckDB는 열지 않는다. 평소 API 0건, 보고서 접수 시기에 보고서당 1건.
+    """
+    yield from _runs_for_new_periodic_reports(context, run_prefix="documents|")
+
+
+def _latest_materialization_time(instance: dg.DagsterInstance, asset_key: dg.AssetKey) -> float | None:
+    event = instance.get_latest_materialization_event(asset_key)
+    return event.timestamp if event is not None else None
+
+
+def _recent_saved_documents(instance: dg.DagsterInstance, since: float) -> int:
+    """since 이후 documents 실행이 실제로 저장한 원문 수 (메타데이터 saved의 합). 건너뛴 실행은 0."""
+    total = 0
+    for record in _recent_materializations(instance, documents.key, since):
+        value = record.asset_materialization.metadata.get(DOCUMENTS_SAVED_METADATA_KEY)
+        total += int(value.value) if value is not None else 0
+    return total
+
+
+@dg.schedule(job=rag_index_job, cron_schedule="0 9 * * *", execution_timezone="Asia/Seoul")
+def daily_rag_index(context: dg.ScheduleEvaluationContext):
+    """매일 09:00(KST), 색인(chunks → chunk_embeddings → neo4j_chunks)을 돌릴 이유가 있으면 rag_index_job을 실행한다.
+
+    이유 둘 중 하나:
+    1) 최근 documents 실행이 새 원문을 저장했다 (메타데이터 saved > 0)
+    2) 지난 색인이 끝까지 가지 못했다 — neo4j_chunks의 마지막 성공이 chunk_embeddings보다 오래됐다
+       (Neo4j 컨테이너가 꺼져 있어 마지막 단계만 실패한 경우. 다음 날 다시 시도한다)
+    DuckDB는 열지 않는다.
+    """
+    now = context.scheduled_execution_time
+    today = now.astimezone(KST).date()
+    saved = _recent_saved_documents(context.instance, now.timestamp() - LOOKBACK_DAYS * 86400)
+    embedded_at = _latest_materialization_time(context.instance, chunk_embeddings.key)
+    indexed_at = _latest_materialization_time(context.instance, neo4j_chunks.key)
+    unfinished = embedded_at is not None and (indexed_at is None or indexed_at < embedded_at)
+    if saved == 0 and not unfinished:
+        yield dg.SkipReason(f"최근 {LOOKBACK_DAYS}일에 새 원문이 없고 지난 색인도 끝까지 갔습니다.")
+        return
+    context.log.info(f"색인 실행: 새 원문 {saved}개, 지난 색인 미완료 {unfinished}")
+    yield dg.RunRequest(run_key=f"rag_index|{today.isoformat()}")
+
+
 defs = dg.Definitions(
-    assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations],
-    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS],
-    jobs=[targets_job, disclosures_job, report_details_job, relations_job],
-    schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations],
+    assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations,
+            documents, chunks, chunk_embeddings, neo4j_chunks],
+    asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS, *RAG_CHECKS],
+    jobs=[targets_job, disclosures_job, report_details_job, relations_job, documents_job, rag_index_job],
+    schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations, daily_documents, daily_rag_index],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)
     executor=dg.in_process_executor,
 )
