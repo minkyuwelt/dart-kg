@@ -33,12 +33,14 @@ def evaluate(questions, retriever, k: int) -> dict:
         hits = retriever.search(q.question, k)
         seconds = round(time.perf_counter() - t0, 3)
         scores = score_question(hits, q.evidence_rcept_no, q.evidence_section, k)
-        per_question.append({"id": q.id, "type": q.type, "phase": q.phase, "question": q.question, **scores, "seconds": seconds,
+        per_question.append({"id": q.id, "type": q.type, "phase": q.phase, "graph_kind": q.graph_kind, "question": q.question, **scores, "seconds": seconds,
                              "top": [{"rcept_no": h.rcept_no, "section_id": h.section_id, "path": h.path, "score": h.score} for h in hits[:k]]})
-    by_type, by_phase = defaultdict(list), defaultdict(list)
+    by_type, by_phase, by_kind = defaultdict(list), defaultdict(list), defaultdict(list)
     for p in per_question:
         by_type[p["type"]].append(p)
         by_phase[str(p["phase"])].append(p)
+        if p["graph_kind"]:
+            by_kind[p["graph_kind"]].append(p)
     secs = [p["seconds"] for p in per_question]
     return {
         "overall": summarize(per_question),
@@ -47,6 +49,7 @@ def evaluate(questions, retriever, k: int) -> dict:
                     "median_seconds": round(sorted(secs)[len(secs) // 2], 3) if secs else None},
         "by_type": {t: summarize(v) for t, v in sorted(by_type.items())},
         "by_phase": {t: summarize(v) for t, v in sorted(by_phase.items())},
+        "by_graph_kind": {t: summarize(v) for t, v in sorted(by_kind.items())},   # 그래프 질문 갈래별 (0011)
         "questions": per_question,
     }
 
@@ -61,6 +64,8 @@ def print_report(result: dict, k: int) -> None:
         row(f"  {t}", s)
     for t, s in result["by_phase"].items():
         row(f"  phase {t}", s)
+    for t, s in result.get("by_graph_kind", {}).items():
+        row(f"  그래프 {t}", s)
     lat = result.get("latency") or {}
     if lat.get("mean_seconds") is not None:
         print(f"질문당 검색 시간: 평균 {lat['mean_seconds']:.2f}초, 중앙값 {lat['median_seconds']:.2f}초")
