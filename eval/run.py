@@ -12,6 +12,7 @@ DART API를 호출하지 않고, DuckDB는 읽기 전용으로 연다.
 import argparse
 import json
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -28,16 +29,22 @@ def evaluate(questions, retriever, k: int) -> dict:
     """ready이고 '없음'이 아닌 질문마다 검색 → 지표. 결과는 전체·유형별·phase별 요약과 질문별 상세."""
     per_question = []
     for q in questions:
+        t0 = time.perf_counter()
         hits = retriever.search(q.question, k)
+        seconds = round(time.perf_counter() - t0, 3)
         scores = score_question(hits, q.evidence_rcept_no, q.evidence_section, k)
-        per_question.append({"id": q.id, "type": q.type, "phase": q.phase, "question": q.question, **scores,
+        per_question.append({"id": q.id, "type": q.type, "phase": q.phase, "question": q.question, **scores, "seconds": seconds,
                              "top": [{"rcept_no": h.rcept_no, "section_id": h.section_id, "path": h.path, "score": h.score} for h in hits[:k]]})
     by_type, by_phase = defaultdict(list), defaultdict(list)
     for p in per_question:
         by_type[p["type"]].append(p)
         by_phase[str(p["phase"])].append(p)
+    secs = [p["seconds"] for p in per_question]
     return {
         "overall": summarize(per_question),
+        # 질문당 검색 시간(모델 로딩 제외). 재순위·필터의 지연 비교용 (0009 3단계). 첫 질문은 GPU 준비 때문에 느릴 수 있어 중앙값도 둔다
+        "latency": {"mean_seconds": round(sum(secs) / len(secs), 3) if secs else None,
+                    "median_seconds": round(sorted(secs)[len(secs) // 2], 3) if secs else None},
         "by_type": {t: summarize(v) for t, v in sorted(by_type.items())},
         "by_phase": {t: summarize(v) for t, v in sorted(by_phase.items())},
         "questions": per_question,
@@ -54,6 +61,9 @@ def print_report(result: dict, k: int) -> None:
         row(f"  {t}", s)
     for t, s in result["by_phase"].items():
         row(f"  phase {t}", s)
+    lat = result.get("latency") or {}
+    if lat.get("mean_seconds") is not None:
+        print(f"질문당 검색 시간: 평균 {lat['mean_seconds']:.2f}초, 중앙값 {lat['median_seconds']:.2f}초")
     misses = [p for p in result["questions"] if not p["hit_doc"]]
     if misses:
         print(f"\n상위 {k}개에 근거 공시가 없는 질문 {len(misses)}개:")
