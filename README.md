@@ -312,3 +312,12 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
 > ```
 
 > OpenDART API는 하루 약 20,000건까지 호출할 수 있습니다. 대상 회사를 늘릴 때는 호출 수를 먼저 계산하세요.
+
+13. **(Phase 3) Neo4j 띄우기** — 조각 벡터·전문검색과 (Phase 4) 관계 그래프를 담는 Neo4j를 Docker로 띄웁니다. `.env`에 `NEO4J_PASSWORD`를 적어야 뜨고, 노트북 쪽 포트는 기본 17474(브라우저)·17687(드라이버)입니다(7474·7687은 다른 수업이 씀). 메모리는 힙 2G + 페이지 캐시 4G(RAM 32GB 기준, `.env`로 조정). 데이터는 `data/neo4j/`에 남고, 지워도 DuckDB에서 다시 만들 수 있습니다. 한국어 전문검색 전처리는 `src/graph/text_normalize.py` 하나만 씁니다([0004](docs/decisions/0004-korean-fulltext.md)).
+
+   ```bash
+   docker compose up -d
+   python -m src.graph.client ping      # 연결됨 bolt://127.0.0.1:17687  Neo4j Kernel 2026.06.0 (community)  노드 0개
+   ```
+
+   브라우저는 http://localhost:17474 (사용자 neo4j, 비밀번호는 `.env` 값). 멈추기는 `docker compose down`, 데이터까지 지우기는 `docker compose down -v`.

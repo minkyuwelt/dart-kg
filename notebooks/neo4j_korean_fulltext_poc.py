@@ -89,15 +89,14 @@ QUERIES = {
 
 # --- 전처리 ---------------------------------------------------------------
 
-# 영문·숫자와 한글이 붙어 있으면 cjk 분석기가 그 덩어리를 쪼개지 않는다 ('KB금융지주이며' 전체가 토큰 하나)
-BOUNDARY_RE = re.compile(r"(?<=[A-Za-z0-9])(?=[가-힣])|(?<=[가-힣])(?=[A-Za-z0-9])")
-# 가운뎃점은 한글 자모로 분류되어 앞뒤 글자와 한 덩어리가 되므로 공백으로 바꾼다
-SEPARATOR_RE = re.compile(f"[{MIDDLE_DOT}·•・]")
+# 전처리 규칙은 src/graph/text_normalize.py 하나에만 둔다 (색인과 검색이 같은 함수를 써야 하므로). 여기서는 그것을 쓴다
+sys.path.insert(0, str(REPO_ROOT))
+from src.graph.text_normalize import normalize_for_fulltext  # noqa: E402
 
 
 def preprocess(text: str) -> str:
-    """색인과 검색에 똑같이 적용하는 전처리: 가운뎃점 → 공백, 영문·숫자와 한글 경계에 공백."""
-    return BOUNDARY_RE.sub(" ", SEPARATOR_RE.sub(" ", text))
+    """색인과 검색에 똑같이 적용하는 전처리 — src/graph/text_normalize.normalize_for_fulltext."""
+    return normalize_for_fulltext(text)
 
 
 def phrase_query(q: str) -> str:
