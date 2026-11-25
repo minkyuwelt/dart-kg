@@ -54,7 +54,7 @@ SPECS = [
     Spec("g02", "추론", "2025년 12월 31일 기준 신한라이프생명보험의 최대주주가 지분 100%를 가진 회사는 몇 곳인가?", "holder_then_owned", "출자", "최대주주(회사)의 타법인출자 표에서 기말 지분율 100%인 행 수"),
     Spec("g03", "추론", "2023년 3월 31일 기준 KB국민카드 최대주주의 대표이사는 누구인가?", "holder_then_title", "임원", "최대주주 회사의 그 시점 보고서 임원 표에서 대표이사"),
     Spec("g04", "계층", "2025년 12월 31일 기준 KB금융지주 아래 손자회사까지(2단계) 포함하면 회사는 모두 몇 곳인가?", "descendants_count", "출자", "지주 출자 표 + 자회사들의 출자 표. 같은 회사가 두 경로로 나오면 한 번만"),
-    Spec("g05", "계층", "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?", "indirect_only", "출자", "자회사 출자 표에만 있고 지주 출자 표에는 없는 회사"),
+    Spec("g05", "계층", "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분 50% 이상을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?", "indirect_only", "출자", "자회사 출자 표에서 기말 지분율 50% 이상이고 지주 출자 표에는 없는 회사. 2026-11-25 질문에 50% 기준을 넣음(기준 없이는 2,197곳)"),
     Spec("g06", "계층", "2025년 12월 31일 기준 우리금융지주 아래 2단계까지의 출자 대상 중 국내 공시 대상이 아닌 곳(해외 법인·펀드 등)은 몇 곳인가?", "unresolved_count", "출자", "corp_code가 없는 출자 대상. 두 자회사가 같은 펀드에 출자하면 그래프는 둘로 센다(0011 ②)"),
     Spec("g07", "의미", "우리종합금융은 지금 어느 회사로 이어지고, 그 공시는 어느 회사 이름으로 이어 보나?", "lineage", "연혁", "합병으로 corp_code가 바뀐 회사 → 지금 회사. corp_lineage.csv 줄과 근거(우리금융지주 2025 사업보고서 20260313001235)"),
     Spec("g08", "의미", "신한금융투자의 2021년 12월 31일 기준 최대주주는 누구였나?", "lineage_holders", "주주에 관한 사항", "옛 이름 시절 보고서의 최대주주 표"),
@@ -142,7 +142,7 @@ def _pct(v) -> str:
     return f"{v}%" if v is not None else "지분율 없음"
 
 
-def walk_down(con, root: str, as_of: date, depth: int = 2) -> dict[str, dict]:
+def walk_down(con, root: str, as_of: date, depth: int = 2, min_pct: float | None = None) -> dict[str, dict]:
     """출자를 따라 아래로. 그래프와 같은 키(corp_code, 없으면 name:{출자한 회사}:{이름})로 끝 회사별 최소 단계·경유."""
     best: dict[str, dict] = {}
     frontier = [(root, 0, [])]
@@ -151,10 +151,13 @@ def walk_down(con, root: str, as_of: date, depth: int = 2) -> dict[str, dict]:
         if d >= depth:
             continue
         for r in investments_at(con, code, as_of):
+            if min_pct is not None and (r["pct"] or 0) < min_pct:
+                continue   # 그래프 T2의 min_pct와 같은 뜻: 경로의 모든 단계가 기준 이상
             key = r["investee_corp_code"] or f"name:{code}:{r['investee_name']}"
             hops = d + 1
             if key not in best or hops < best[key]["hops"]:
-                best[key] = {"name": r["investee_name"], "hops": hops, "via": via, "has_code": bool(r["investee_corp_code"]), "rcept_no": r["rcept_no"]}
+                best[key] = {"name": r["investee_name"], "hops": hops, "via": via, "has_code": bool(r["investee_corp_code"]),
+                             "rcept_no": r["rcept_no"], "pct": r["pct"]}
             if r["investee_corp_code"] and key != root:
                 frontier.append((r["investee_corp_code"], hops, via + [r["investee_name"]]))
     best.pop(root, None)
@@ -230,9 +233,14 @@ def _descendants_count(con, corp, as_of, mentions, lineage, question: str = "") 
 
 
 def _indirect_only(con, corp, as_of, mentions, lineage, question: str = "") -> Draft:
-    best = walk_down(con, corp, as_of, 2)
-    only = {k: b for k, b in best.items() if b["hops"] == 2}
-    d = Draft(f"간접만 {len(only)}곳: " + "; ".join(f"{b['name']} ({' → '.join(b['via'])} 경유)" for b in only.values()), count=len(only))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*이상", question)
+    cut = float(m.group(1)) if m else None
+    best = walk_down(con, corp, as_of, 2, cut)
+    direct = {_same(r["investee_name"]) for r in investments_at(con, corp, as_of)}   # 지주가 직접 가진 이름 (지분율과 상관없이)
+    only = {k: b for k, b in best.items() if b["hops"] == 2 and _same(b["name"]) not in direct}
+    label = f"지분 {cut:g}% 이상, " if cut is not None else ""
+    d = Draft(f"간접만({label}지주 직접 출자 대상 제외) {len(only)}곳: "
+              + "; ".join(f"{b['name']} {b['pct']}% ({' → '.join(b['via'])} 경유)" for b in only.values()), count=len(only))
     d.cite(*(b["rcept_no"] for b in only.values()))
     d.names |= {b["name"] for b in only.values()}
     return d

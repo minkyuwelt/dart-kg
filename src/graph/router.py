@@ -204,7 +204,10 @@ def route(question: str, con: duckdb.DuckDBPyConnection, today: date | None = No
 
     # 계층: 아래로 (자회사·손자회사·간접)
     if re.search(r"손자|아래|거쳐|간접|자회사|출자\s*대상", q):
-        return plan("출자 아래로", Step("descendants", {"corp": corp, "as_of": iso, "depth": _depth(q, 2), "min_pct": None}))
+        # "지분 50% 이상"처럼 지분율 기준이 있으면 경로의 모든 단계에 같은 기준 (템플릿 T2의 min_pct, '이상' = >=)
+        cut = re.search(r"(\d+(?:\.\d+)?)\s*%\s*이상", q)
+        return plan("출자 아래로", Step("descendants", {"corp": corp, "as_of": iso, "depth": _depth(q, 2),
+                                                      "min_pct": float(cut.group(1)) if cut else None}))
 
     # 통합: 임원 이력
     if re.search(r"거쳤|거쳐\s*왔|이력|경력|어느\s*계열사", q):
