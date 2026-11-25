@@ -245,9 +245,10 @@ def build_context(question: str, driver, con, today: date | None = None, lineage
 def to_text(ctx: GraphContext) -> str:
     """LLM에 넘길 관계 표. 유효 기간과 근거 접수번호를 사실 바로 옆에 둔다 (phase4-research 2.1·2.3)."""
     lines = [f"[그래프 관계표] 기준일 {ctx.plan.as_of.isoformat()} · 규칙 '{ctx.plan.rule}'",
-             "출발,관계,도착,값,유효시작,유효끝,근거접수번호"]
+             "출발 | 관계 | 도착 | 값 | 유효시작 | 유효끝 | 근거접수번호"]
     for r in ctx.relations:
-        lines.append(",".join(str(x) if x is not None else "" for x in
+        # 쉼표가 아니라 " | "로 나눈다: 값 칸에 "100.0%, 최대주주"·"1,000원"처럼 쉼표가 들어가 칸이 밀리기 때문
+        lines.append(" | ".join(str(x) if x is not None else "" for x in
                               (r["src"], r["rel"], r["dst"], r["value"], r["valid_from"], r["valid_to"] or "(유효)", r["source_rcept_no"])))
     if ctx.truncated:
         lines.append(f"(관계 {ctx.truncated}개 더 있음 — 잘림)")

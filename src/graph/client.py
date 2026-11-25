@@ -41,7 +41,10 @@ def connect(s: Neo4jSettings | None = None):
     from neo4j import GraphDatabase  # 노트북·CI 모두 설치(requirements.txt)되지만, import 비용 때문에 함수 안에서
 
     s = s or settings()
-    driver = GraphDatabase.driver(s.uri, auth=(s.user, s.password))
+    # UNRECOGNIZED 경고("관계 종류 FORMERLY가 없음", "속성 superseded_by가 없음")는 끈다.
+    # 값이 아직 하나도 없을 때(이력 CSV가 비었거나, 정정된 관계가 없을 때) 나오는 정상 상황이라 출력만 가린다.
+    # 성능 경고 등 다른 종류는 그대로 둔다
+    driver = GraphDatabase.driver(s.uri, auth=(s.user, s.password), notifications_disabled_classifications=["UNRECOGNIZED"])
     return driver
 
 
