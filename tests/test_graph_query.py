@@ -191,7 +191,7 @@ class GraphQueryTest(unittest.TestCase):
         self.assertEqual(driver.calls[2][1]["rcepts"], ["R_CARD", "R_KBH"])
         self.assertEqual([h.rcept_no for h in ctx.evidence], ["R_CARD", "R_KBH"])
         text = Q.to_text(ctx)
-        self.assertIn("KB금융지주,OWNS,KB국민카드,100.0%", text)
+        self.assertIn("KB금융지주 | OWNS | KB국민카드 | 100.0% | ", text)
         self.assertIn("(유효)", text)
         trace = ctx.trace()
         self.assertEqual(trace["steps"][1]["params"]["corp"], KBH)
