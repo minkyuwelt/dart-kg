@@ -117,6 +117,17 @@ def parsed_rcept_nos(con: duckdb.DuckDBPyConnection, reprt_code: str | None) -> 
     return out
 
 
+def unchunked_rcept_nos(con: duckdb.DuckDBPyConnection, strategy: str) -> list[str]:
+    """섹션(document_section)은 있지만 이 전략의 조각이 없는 보고서 접수번호. 새 원문만 자를 때 쓴다 (chunks 자산)."""
+    rows = con.execute(
+        """SELECT DISTINCT s.rcept_no FROM document_section s
+           WHERE NOT EXISTS (SELECT 1 FROM chunk c WHERE c.rcept_no = s.rcept_no AND c.strategy = ?)
+           ORDER BY s.rcept_no""",
+        [strategy],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def chunk_stats(con: duckdb.DuckDBPyConnection) -> list[dict]:
     rows = con.execute(
         """SELECT strategy, count(*), count(DISTINCT rcept_no), sum(CASE WHEN kind = 'table' THEN 1 ELSE 0 END),

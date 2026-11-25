@@ -156,6 +156,30 @@ def build(con: duckdb.DuckDBPyConnection, driver, model: str = DEFAULT_MODEL, st
     return {"documents": len(docs), "chunks": done, "skipped_no_embedding": missing, "seconds": round(time.perf_counter() - t0, 1)}
 
 
+NEO4J_CHUNKS_PER_DOCUMENT = """
+MATCH (d:Document) OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+RETURN d.rcept_no AS rcept_no, count(c) AS n
+"""
+
+
+def stale_documents(con: duckdb.DuckDBPyConnection, model: str, strategy: str, driver, database: str = "neo4j") -> list[str]:
+    """DuckDB의 (벡터 있는) 조각 수와 Neo4j의 조각 수가 다른 보고서 접수번호. 그 보고서만 다시 적재하면 된다 (neo4j_chunks 자산).
+
+    Neo4j에는 "무엇이 새로 들어왔나"가 없으므로 보고서 단위로 수를 비교한다. 수가 같으면 같은 조각으로 본다
+    (chunk_id가 멱등 MERGE 키라서 같은 보고서를 다시 넣어도 중복은 생기지 않는다). Neo4j에만 있는 보고서는
+    여기서 지우지 않는다 — 통째로 맞추려면 CLI reset 뒤 build.
+    """
+    want = dict(con.execute(
+        """
+        SELECT c.rcept_no, count(*) FROM chunk c JOIN chunk_embedding e ON e.chunk_id = c.chunk_id
+        WHERE c.strategy = ? AND e.model_name = ? AND e.text_hash = c.text_hash GROUP BY 1
+        """,
+        [strategy, model],
+    ).fetchall())
+    have = {r["rcept_no"]: r["n"] for r in driver.execute_query(NEO4J_CHUNKS_PER_DOCUMENT, database_=database).records}
+    return sorted(r for r, n in want.items() if have.get(r) != n)
+
+
 def neo4j_counts(driver, database: str = "neo4j") -> dict:
     rec = driver.execute_query(
         """
