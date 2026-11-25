@@ -333,3 +333,13 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
 
    벡터 인덱스는 근사 검색이라 DuckDB 전수 비교(`dense:kure-v3:section_path`)와 hit@5가 조금 다를 수 있습니다. 둘을 나란히 재어 [0009](docs/decisions/0009-embedding.md)에 적습니다.
    벡터와 전문검색을 RRF로 합친 하이브리드는 `--retriever neo4j:hybrid:kure-v3`([0010](docs/decisions/0010-retrieval-and-llm.md)). 재순위(`--rerank nano`)는 하이브리드에만 붙습니다.
+
+15. **(Phase 3) 질문하고 답 받기** — 하이브리드 검색으로 조각 5개를 찾아 LLM(`gpt-6-luna`, `.env`의 `LLM_MODEL`로 교체)에 번호를 붙여 넘기고, 답과 인용 번호를 구조화 출력으로 받아 접수번호·섹션·DART 뷰어 링크를 붙입니다. 조각에 없는 내용은 "공시에서 찾지 못했습니다"라고 답합니다. `.env`에 `OPENAI_API_KEY`가 필요하고(노트북에서만 호출), 질문당 출력 토큰 상한과 하루 호출 한도(`data/llm_calls.json`)가 있습니다. 근거는 [0010](docs/decisions/0010-retrieval-and-llm.md).
+
+   ```bash
+   python -m src.rag.ask "2025년 신한은행의 주당 현금배당금은 얼마인가?"
+   python -m src.rag.ask "..." --no-llm                       # 검색 결과만 (키 없이)
+   python -m eval.run --retriever neo4j:hybrid:kure-v3 --filter corp --include-none --label llm-1   # 평가 세트 전체 → 채점표(markdown)
+   ```
+
+   LLM 답의 채점은 사람이 합니다(맞음/부분/틀림/근거 없는 주장). `eval/results/*_llm_*.md`의 채점 칸을 채운 뒤 결과를 0010에 적습니다.

@@ -52,5 +52,5 @@ class ChunkKeywordRetriever:
         ).fetchall()
         if self.reranker:
             ranked = rerank(self.reranker, question, rows, lambda r: r[5], k)
-            return [Hit(r[0], r[1], r[2], r[3], float(s), r[5][:120]) for r, s in ranked]
-        return [Hit(r[0], r[1], r[2], r[3], float(r[4]), r[5][:120]) for r in rows]
+            return [Hit(r[0], r[1], r[2], r[3], float(s), r[5][:120], r[5]) for r, s in ranked]
+        return [Hit(r[0], r[1], r[2], r[3], float(r[4]), r[5][:120], r[5]) for r in rows]

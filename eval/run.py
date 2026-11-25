@@ -71,27 +71,77 @@ def print_report(result: dict, k: int) -> None:
             print(f"  {p['id']} {p['question'][:40]}  (첫 정답 순위: {p['first_rank_doc'] or '없음'})")
 
 
+def answers_markdown(rows: list[dict], config: dict) -> str:
+    """사람 채점용 표. 질문·정답·LLM 답·인용 근거를 나란히. 채점 칸은 비워 둔다 (맞음/부분/틀림/근거없는주장)."""
+    out = [f"# LLM 답변 채점표 ({config['run_at']})", "", f"설정: {config}", "",
+           "채점 기준: 맞음 / 부분 / 틀림 / 근거없는주장(조각에 없는 말을 함). '없음' 유형은 '공시에서 찾지 못했습니다'가 정답.", ""]
+    for r in rows:
+        out += [f"## {r['id']} ({r['type']}) {r['question']}", "", f"- 정답: {r['gold']}", f"- LLM 답: {r['answer']}",
+                f"- 인용: {', '.join(r['cited']) or '(없음)'}", f"- 근거 공시 맞음(검색): {'예' if r['hit_doc'] else '아니오'}",
+                f"- 토큰: 입력 {r['input_tokens']:,} / 출력 {r['output_tokens']:,}", "- 채점: ", ""]
+    return "\n".join(out)
+
+
+def run_with_llm(args, target, llm=None, retriever=None) -> int:
+    """검색 + LLM 답을 만들어 채점표(markdown)와 JSON으로 남긴다. 채점은 사람이 한다 (계획 4절: LLM 채점은 사람 채점과 일치율 확인 뒤에만)."""
+    from eval.metrics import score_question as _score
+    from src.rag.ask import VIEWER_URL, ask
+    from src.rag.llm import OpenAILLM
+
+    llm = llm or OpenAILLM()
+    rows, t_in, t_out = [], 0, 0
+    with connect(read_only=True) as con:
+        retriever = retriever or make_retriever(args.retriever, con, corp_filter=args.filter == "corp", rerank=args.rerank)
+        for i, q in enumerate(target, 1):
+            res = ask(q.question, retriever, llm, args.k, con)
+            sc = _score(res.hits, q.evidence_rcept_no, q.evidence_section, args.k) if q.type != "없음" else {"hit_doc": None}
+            a = res.answer
+            cited = [f"[{n}] {res.labels[n - 1]} {VIEWER_URL.format(rcept_no=h.rcept_no)}" for n, h in res.cited_hits]
+            rows.append({"id": q.id, "type": q.type, "question": q.question, "gold": q.answer, "answer": a.text, "citations": a.citations, "cited": cited,
+                         "not_found": a.not_found, "hit_doc": sc.get("hit_doc"), "input_tokens": a.input_tokens, "output_tokens": a.output_tokens})
+            t_in += a.input_tokens
+            t_out += a.output_tokens
+            print(f"  {i}/{len(target)} {q.id} {'(없음)' if a.not_found else '답 ' + str(len(a.citations)) + '개 인용'}  토큰 {a.input_tokens:,}/{a.output_tokens:,}")
+    config = {"retriever": retriever.name, "filter": args.filter, "rerank": args.rerank, "k": args.k, "label": args.label, "llm": llm.name,
+              "questions": str(args.questions), "run_at": datetime.now().isoformat(timespec="seconds")}
+    n_none = sum(1 for r in rows if r["type"] == "없음")
+    none_ok = sum(1 for r in rows if r["type"] == "없음" and r["not_found"])
+    false_none = sum(1 for r in rows if r["type"] != "없음" and r["not_found"])
+    print(f"\n질문 {len(rows)}개, 토큰 입력 {t_in:,} / 출력 {t_out:,}. '없음' {n_none}개 중 '찾지 못함'으로 답한 것 {none_ok}개, 답이 있는 질문인데 '찾지 못함' {false_none}개")
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    stem = f"{datetime.now():%Y%m%d_%H%M}_llm_{retriever.name}" + (f"_{args.label}" if args.label else "")
+    (RESULTS_DIR / f"{stem}.json").write_text(json.dumps({"config": config, "rows": rows, "tokens": {"input": t_in, "output": t_out}}, ensure_ascii=False, indent=1), encoding="utf-8")
+    md = RESULTS_DIR / f"{stem}.md"
+    md.write_text(answers_markdown(rows, config), encoding="utf-8")
+    shown = md.relative_to(REPO_ROOT) if md.is_relative_to(REPO_ROOT) else md
+    print(f"채점표: {shown}  (채점 칸을 채운 뒤 결과를 0010에 적는다)")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Phase 3 평가 세트 실행")
     ap.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
-    ap.add_argument("--retrieval-only", action="store_true", help="검색만 측정 (LLM 호출 없음)")
+    ap.add_argument("--retrieval-only", action="store_true", help="검색만 측정 (LLM 호출 없음). 없으면 LLM 답까지 만들어 채점표(markdown)를 남긴다 — 노트북, OPENAI_API_KEY 필요")
     ap.add_argument("--retriever", default="keyword",
-                    help="검색 방식 (keyword | chunk:<전략> | dense:<모델>:<전략>). 전략 fixed/section/section_path, 모델 kure-v3/kure-v1/bge-m3")
+                    help="검색 방식 (keyword | chunk:<전략> | dense:<모델>:<전략> | neo4j:vector:<모델> | neo4j:hybrid:<모델> | neo4j:fulltext)")
     ap.add_argument("--filter", choices=["corp"], help="corp: 질문의 회사명으로 그 회사 보고서만 (chunk·dense)")
     ap.add_argument("--rerank", choices=["nano"], help="nano: 상위 30개를 KURE-Reranker-nano로 다시 매김 (chunk·dense, 노트북)")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--label", default="", help="결과 파일 이름에 붙일 설정 이름")
+    ap.add_argument("--include-none", action="store_true", help="LLM 평가에 '없음' 유형도 넣는다 (정답은 '공시에서 찾지 못했습니다')")
     args = ap.parse_args(argv)
-    if not args.retrieval_only:
-        sys.exit("LLM 단계는 9번 PR(feat/rag-ask)에서 구현합니다. 지금은 --retrieval-only로 실행하세요.")
 
     questions = load_questions(args.questions)
-    target = [q for q in questions if q.is_ready and q.type != "없음"]
+    with_none = (not args.retrieval_only) and args.include_none
+    target = [q for q in questions if q.is_ready and (with_none or q.type != "없음")]
     skipped = len(questions) - len(target)
-    print(f"질문 {len(questions)}개 중 검색 평가 대상 {len(target)}개 (draft·'없음' {skipped}개 제외)")
+    print(f"질문 {len(questions)}개 중 평가 대상 {len(target)}개 (draft{'' if with_none else "·'없음'"} {skipped}개 제외)")
     if not target:
         print("ready 상태의 질문이 없습니다. eval/README.md를 보고 질문을 채우세요.")
         return 1
+
+    if not args.retrieval_only:
+        return run_with_llm(args, target)
 
     with connect(read_only=True) as con:
         retriever = make_retriever(args.retriever, con, corp_filter=args.filter == "corp", rerank=args.rerank)

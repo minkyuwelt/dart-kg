@@ -19,6 +19,7 @@ class Hit:
     path: str
     score: float
     snippet: str = ""
+    text: str = ""          # 조각 전문 (LLM에 넘길 때 쓴다, 9b). 검색 점수 계산에는 쓰지 않는다
 
 
 def _matches(hit: Hit, evidence_rcept_no: list[str], evidence_section: str | None) -> bool:
