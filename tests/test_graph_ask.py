@@ -135,6 +135,19 @@ class AskGraphTest(DbTest):
         self.assertEqual(len(llm.calls), 1)               # 조각은 없지만 관계표가 있으니 LLM을 부른다
         self.assertTrue(result.graph_cited)
 
+    def test_graph_none_verdict_is_passed_even_without_relations(self):
+        # 겸직 0행: 관계 행은 없지만 파생 값('없음' 판정)이 있으니 관계표를 LLM에 넘긴다. 프롬프트 규칙 8이 "없음"으로 답하게 한다
+        from src.rag.llm import SYSTEM_PROMPT
+        driver = TemplateDriver({"shared_positions": [], "position_scope": [{"corp_key": KBH, "corp_name": "KB금융지주", "persons": 7}]})
+        r = GraphRetriever(driver, self.con, base=Base([]), today=TODAY)
+        llm = FakeLLM("없음 — 기준일 2025-12-31 회사 1곳의 사외이사 7명 중 두 곳 이상에 있는 사람 0명 [1].", [1])
+        result = ask("2025년 12월 31일 기준 4대 금융지주 중 두 곳 이상에서 동시에 사외이사인 사람이 있는가?", r, llm, k=3)
+        self.assertEqual(len(llm.calls), 1)
+        self.assertIn("없음 — 기준일 2025-12-31", llm.calls[0][1][-1].text)
+        self.assertTrue(result.graph_cited)
+        self.assertFalse(result.answer.not_found)
+        self.assertIn('"없음"(대조해 보니 없음)과 "찾지 못함"(모름)을 섞지 않습니다', SYSTEM_PROMPT)
+
     def test_neo4j_error_falls_back_to_rag(self):
         from neo4j.exceptions import CypherSyntaxError
 

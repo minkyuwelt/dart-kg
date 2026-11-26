@@ -290,6 +290,34 @@ class GraphQueryTest(unittest.TestCase):
         self.assertLess(text.index("[파생 값"), text.index("출발 | 관계 | 도착"))   # 파생 값이 관계 행보다 앞 (글자 상한에 잘리지 않게)
         self.assertIn("[관계 ", text)
 
+    def test_shared_positions_zero_rows_gives_none_verdict_with_scope(self):
+        # g10: 겸직이 0행이면 코드가 "없음 — 대조 범위"를 파생 값으로 적는다 (LLM이 "찾지 못함"으로 흐르지 않게, 2026-11-26)
+        scope = [{"corp_key": KBH, "corp_name": "KB금융지주", "persons": 7}, {"corp_key": SHH, "corp_name": "신한지주", "persons": 9}]
+        driver = TemplateDriver({"shared_positions": [], "position_scope": scope})
+        q = "2025년 12월 31일 기준 4대 금융지주 중 두 곳 이상에서 동시에 사외이사인 사람이 있는가?"
+        ctx = Q.build_context(q, driver, self.con, today=TODAY)
+        self.assertEqual([c[0] for c in driver.calls], ["shared_positions", "position_scope"])   # 0행일 때만 범위를 센다, 근거 조각 없음
+        self.assertEqual(driver.calls[1][1]["as_of"], driver.calls[0][1]["as_of"])
+        self.assertTrue(driver.calls[1][1]["outside_only"])
+        self.assertEqual(len(ctx.derived), 1)
+        self.assertTrue(ctx.derived[0]["value"].startswith("없음 — 기준일 2025-12-31 회사 2곳의 사외이사 16명 중 두 곳 이상에 있는 사람 0명"))
+        self.assertIn("KB금융지주 7명, 신한지주 9명", ctx.derived[0]["value"])
+        text = Q.to_text(ctx)
+        self.assertIn("없음 — ", text)
+        self.assertIn("관계 0행", text)
+        # 대조할 임원이 아예 없으면 '없음'이라 하지 않는다 (미적재·이름 연결 실패일 수 있음)
+        driver2 = TemplateDriver({"shared_positions": [], "position_scope": []})
+        ctx2 = Q.build_context(q, driver2, self.con, today=TODAY)
+        self.assertTrue(ctx2.derived[0]["value"].startswith("판정 불가"))
+        self.assertNotIn("없음 — ", Q.to_text(ctx2))
+        # 겸직이 있으면 판정 줄을 만들지 않고 범위도 세지 않는다
+        p1, kbh, shh = node("p1", "홍길동", "Person", None), node(KBH, "KB금융지주"), node(SHH, "신한지주")
+        driver3 = TemplateDriver({"shared_positions": [{"nodes": [p1, kbh], "rels": [pos("p1", "사외이사", "R1", "e1", "2025-12-31")]},
+                                                       {"nodes": [p1, shh], "rels": [pos("p1", "사외이사", "R2", "e2", "2025-12-31")]}]})
+        ctx3 = Q.build_context(q, driver3, self.con, today=TODAY)
+        self.assertNotIn("position_scope", [c[0] for c in driver3.calls])
+        self.assertEqual(ctx3.derived, [])
+
     def test_person_history_merges_consecutive_reports(self):
         p, bank, card = node("p9", "정상혁", "Person", None), node(SHBANK, "신한은행"), node("00000024", "신한카드")
         driver = TemplateDriver({"person_history": [

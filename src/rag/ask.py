@@ -66,7 +66,7 @@ def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None) -> AskR
     result = AskResult(question, hits, None, labels, graph, getattr(retriever, "error", None))
     if llm is None:
         return result
-    has_graph = graph is not None and bool(graph.relations)
+    has_graph = graph is not None and bool(graph.relations or graph.derived)   # 겸직 0행의 '없음' 판정은 파생 값에만 있다
     if not hits and not has_graph:
         result.answer = Answer(NOT_FOUND, [], getattr(llm, "name", ""))
         return result

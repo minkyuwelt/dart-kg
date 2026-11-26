@@ -117,7 +117,7 @@ def run_with_llm(args, target, llm=None, retriever=None) -> int:
             a = res.answer
             cited = [f"[{n}] {res.labels[n - 1]} {VIEWER_URL.format(rcept_no=h.rcept_no)}" for n, h in res.cited_hits]
             rows.append({"id": q.id, "type": q.type, "question": q.question, "gold": q.answer, "answer": a.text, "citations": a.citations, "cited": cited,
-                         "not_found": a.not_found, "hit_doc": sc.get("hit_doc"), "input_tokens": a.input_tokens, "output_tokens": a.output_tokens,
+                         "not_found": a.not_found, "answered_none": a.text.strip().startswith("없음"), "hit_doc": sc.get("hit_doc"), "input_tokens": a.input_tokens, "output_tokens": a.output_tokens,
                          "truncated": a.truncated, "graph": res.graph is not None,
                          "templates": [s.template for s in res.graph.plan.steps] if res.graph is not None and getattr(res.graph, "plan", None) else []})
             t_in += a.input_tokens
@@ -128,9 +128,10 @@ def run_with_llm(args, target, llm=None, retriever=None) -> int:
     n_none = sum(1 for r in rows if r["type"] == "없음")
     none_ok = sum(1 for r in rows if r["type"] == "없음" and r["not_found"])
     false_none = sum(1 for r in rows if r["type"] != "없음" and r["not_found"])
+    n_answered_none = sum(1 for r in rows if r.get("answered_none"))   # "없음"으로 시작하는 답(그래프 '없음' 판정, '-' 배당). "찾지 못함"(모름)과 다르다
     n_trunc = sum(1 for r in rows if r["truncated"])
     n_graph = sum(1 for r in rows if r["graph"])
-    print(f"\n질문 {len(rows)}개, 토큰 입력 {t_in:,} / 출력 {t_out:,}. '없음' {n_none}개 중 '찾지 못함'으로 답한 것 {none_ok}개, 답이 있는 질문인데 '찾지 못함' {false_none}개, "
+    print(f"\n질문 {len(rows)}개, 토큰 입력 {t_in:,} / 출력 {t_out:,}. '없음' {n_none}개 중 '찾지 못함'으로 답한 것 {none_ok}개, 답이 있는 질문인데 '찾지 못함' {false_none}개, '없음'으로 답한 것 {n_answered_none}개, "
           f"출력 상한에 잘린 답 {n_trunc}개, 그래프 관계표가 붙은 질문 {n_graph}개")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stem = f"{datetime.now():%Y%m%d_%H%M}_llm_{retriever.name}" + (f"_{args.label}" if args.label else "")
