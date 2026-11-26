@@ -1,0 +1,94 @@
+"""라우팅 정확도(eval/routing.py) 테스트. 작은 DuckDB에 회사 사전만 넣고 라우터를 돌린다. LLM 호출 없음.
+
+확인하는 것
+1) 그래프 질문 12개의 기대 템플릿이 0011 결정 4 표와 같다
+2) 규칙만으로 그래프 질문은 맞고, 일반 질문은 그래프로 가지 않는다 → 요약 수
+3) picker는 규칙이 못 고른 질문에서만 불리고, 일반 질문을 그래프로 보내면 틀린 것으로 센다
+4) markdown 표는 틀린 줄과 그래프 질문만 적는다
+"""
+
+import os
+import tempfile
+import unittest
+from datetime import date
+from pathlib import Path
+from unittest import mock
+
+from eval import routing as R
+from eval.graph_draft import SPECS
+from eval.questions import Question
+from src.graph.router import Plan, Step
+from src.loaders.duckdb_store import connect, upsert_disclosures
+from tests.test_graph_query import HNH, KBBANK, KBCARD, KBH, SHH, SHLIFE, SHSEC, WRBANK, WRH, WRSEC
+from tests.test_report_details import disclosure_row
+
+TODAY = date(2026, 11, 26)
+
+
+def q(id_, text, type_="서술", graph_kind=None):
+    return Question(id_, text, type_, 4 if graph_kind else 3, "ready", "답", graph_kind=graph_kind)
+
+
+class RoutingTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
+        env.start()
+        self.addCleanup(env.stop)
+        con = self.con = connect()
+        self.addCleanup(con.close)
+        corps = [(KBH, "KB금융지주"), (SHH, "신한지주"), (HNH, "하나금융지주"), (WRH, "우리금융지주"), (KBBANK, "KB국민은행"), (KBCARD, "KB국민카드"),
+                 (WRBANK, "우리은행"), (SHLIFE, "신한라이프생명보험"), (SHSEC, "신한투자증권"), (WRSEC, "우리투자증권"), ("00000023", "신한은행"),
+                 ("00000099", "KB생명보험"), ("00000043", "우리종합금융")]
+        for code, name in corps:
+            con.execute("INSERT INTO corp VALUES (?, ?, NULL, NULL, now())", [code, name])
+        for code, name in corps[:4]:
+            con.execute("INSERT INTO target_corp VALUES (?, ?, 'holding', NULL, NULL, NULL, '2025', now())", [code, name])
+        for code, name, parent in [(KBBANK, "KB국민은행", KBH), (KBCARD, "KB국민카드", KBH), (WRBANK, "우리은행", WRH), (SHLIFE, "신한라이프생명보험", SHH),
+                                   (SHSEC, "신한투자증권", SHH), (WRSEC, "우리투자증권", WRH), ("00000023", "신한은행", SHH)]:
+            con.execute("INSERT INTO target_corp VALUES (?, ?, 'subsidiary', ?, 100.0, NULL, '2025', now())", [code, name, parent])
+        upsert_disclosures(con, [disclosure_row("20220301000001", "사업보고서 (2021.12)", "20220301", SHSEC) | {"corp_name": "신한금융투자"}])
+        self.graph_qs = [q(s.id, s.question, graph_kind=s.graph_kind) for s in SPECS]
+        self.general_qs = [q("d001", "2025년 KB금융지주의 배당 성향은 얼마인가?"), q("d002", "신한은행의 2024년 BIS 비율은?"),
+                           q("n001", "우리은행 사업보고서에 직원 평균 연봉이 나오나?", type_="없음")]
+
+    def test_expected_templates_follow_0011_table(self):
+        self.assertEqual(R.expected_templates(self.graph_qs[0]), ["holder_chain"])                      # g01
+        self.assertEqual(R.expected_templates(self.graph_qs[1]), ["holder_chain", "descendants"])       # g02
+        self.assertEqual(R.expected_templates(self.graph_qs[2]), ["holder_chain", "facts_at"])          # g03
+        self.assertEqual([R.expected_templates(x) for x in self.graph_qs[3:6]], [["descendants"]] * 3)  # g04~g06
+        self.assertEqual(R.expected_templates(self.graph_qs[7]), ["corp_lineage", "facts_at"])         # g08
+        self.assertEqual([R.expected_templates(x) for x in self.graph_qs[9:11]], [["shared_positions"]] * 2)
+        self.assertEqual(R.expected_templates(self.graph_qs[11]), ["person_history"])
+        self.assertEqual(R.expected_templates(self.general_qs[0]), [])
+
+    def test_rules_only_counts(self):
+        rows = R.route_all(self.graph_qs + self.general_qs, self.con, lineage=[], today=TODAY)
+        s = R.summarize(rows)
+        self.assertEqual((s["graph_total"], s["general_total"]), (12, 3))
+        self.assertEqual(s["graph_ok"], 12, [(r.id, r.got) for r in rows if r.expected and not r.ok])
+        self.assertEqual((s["general_ok"], s["general_to_graph"], s["picker_calls"]), (3, 0, 0))
+        self.assertTrue(all(r.rule for r in rows if r.expected))
+
+    def test_picker_called_only_on_rule_misses_and_wrong_pick_counts_as_error(self):
+        def picker(question, as_of, mentions):
+            corp = mentions[0].corp_code if mentions else KBH
+            return Plan("LLM 고르기: holder_chain", [Step("holder_chain", {"corp": corp, "as_of": as_of.isoformat(), "depth": 2})], as_of, mentions)
+        rows = R.route_all(self.graph_qs + self.general_qs, self.con, lineage=[], today=TODAY, picker=picker)
+        s = R.summarize(rows)
+        self.assertEqual(s["picker_calls"], 3)                 # 규칙이 못 고른 일반 질문 3개에서만
+        self.assertEqual((s["graph_ok"], s["general_ok"], s["general_to_graph"]), (12, 0, 3))
+        self.assertTrue(all(r.used_picker for r in rows if not r.expected))
+
+    def test_markdown_lists_graph_rows_and_errors_only(self):
+        rows = R.route_all(self.graph_qs + self.general_qs, self.con, lineage=[], today=TODAY)
+        md = R.markdown(rows, "규칙만")
+        self.assertIn("그래프 질문: 12/12", md)
+        self.assertIn("일반 질문: 3/3", md)
+        self.assertIn("| g04 | 계층 | descendants | descendants |", md)
+        self.assertNotIn("d001", md)   # 맞은 일반 질문은 표에서 뺀다
+
+
+if __name__ == "__main__":
+    unittest.main()
