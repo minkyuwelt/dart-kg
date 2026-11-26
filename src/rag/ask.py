@@ -22,7 +22,7 @@ VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
 
 GRAPH_LABEL = "그래프 관계표 (공시의 지분·임원 표를 그래프로 따라간 결과, 파생 값은 규칙 계산)"
-GRAPH_MAX_CHARS = 6000   # 관계 행 50개 + 파생 값이 들어가는 길이 (0011 예산)
+GRAPH_MAX_CHARS = 9000   # 파생 값 80줄 + 관계 행 50개가 들어가는 길이. 6000에서는 g05의 파생 값이 잘렸다(2026-11-26). 0011 예산(총 약 12k 토큰) 안
 
 
 @dataclass
@@ -74,7 +74,10 @@ def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None) -> AskR
     if graph is not None:
         from src.graph.query import to_text
         passages.append(Passage(len(hits) + 1, GRAPH_LABEL, to_text(graph), max_chars=GRAPH_MAX_CHARS))
-    result.answer = llm.answer(question, passages)
+        # 관계표가 붙은 답은 길다(회사 목록·경유·이력). 기본 상한(600→1000)에서 g05·g12가 잘렸다(2026-11-26) → 그래프 상한(4,000)을 따로 쓴다
+        result.answer = llm.answer(question, passages, max_output_tokens=getattr(llm, "max_output_tokens_graph", None))
+    else:
+        result.answer = llm.answer(question, passages)
     return result
 
 

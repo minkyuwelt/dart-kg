@@ -9,7 +9,8 @@
 - 구조화 출력(JSON 스키마: answer, citations)으로 받아 프로그램이 인용 번호를 접수번호·링크로 바꾼다
 
 비용 보호
-- 질문당 출력 토큰 상한 LLM_MAX_OUTPUT_TOKENS(기본 600), 조각은 k개(기본 5) × 최대 1,000자
+- 질문당 출력 토큰 상한 LLM_MAX_OUTPUT_TOKENS(기본 1000), 그래프 관계표가 붙은 질문은 LLM_MAX_OUTPUT_TOKENS_GRAPH(기본 4000. 2,000에서는 g05의 45곳 나열이 잘렸다). 조각은 k개(기본 5) × 최대 1,000자
+  (2026-11-26 채점표: 상한 600에서 그래프 질문 g05·g12의 답이 잘려 "찾지 못함"으로 떨어짐. gpt-6-luna는 생각하는 토큰도 상한에 들어간다)
 - 하루 호출 한도 LLM_DAILY_LIMIT(기본 200): data/llm_calls.json에 날짜별 횟수를 적고 넘으면 멈춘다. 평가 세트 한 바퀴(36~60개)가 하루 한도 안
 
 API 키는 .env의 OPENAI_API_KEY (python-dotenv). 웹 환경에는 키가 없고 호출도 하지 않는다 — 노트북에서만.
@@ -37,9 +38,10 @@ SYSTEM_PROMPT = """당신은 금융지주 공시(사업보고서) 원문만 근�
 1. 아래 번호가 붙은 조각에 적힌 내용만으로 답합니다. 조각에 없는 사실은 쓰지 않습니다.
 2. 답의 문장마다 근거 조각 번호를 [1], [2]처럼 붙입니다. 여러 조각이면 [1][3].
 3. 질문에 답할 내용이 조각에 없으면 answer를 정확히 "{not_found}"로 쓰고 citations를 빈 목록으로 둡니다. 추측하지 않습니다.
-4. 숫자·이름·날짜는 조각에 적힌 그대로 씁니다(단위 포함). 요약은 2~4문장, 한국어.
+4. 숫자·이름·날짜는 조각에 적힌 그대로 씁니다(단위 포함). 표에서 '-'는 "해당 없음"이므로, 배당처럼 '-'로 적힌 항목은 "없음(공시에 '-'로 기재)"이라고 답합니다. 요약은 2~4문장, 한국어.
 5. citations에는 실제로 인용한 조각 번호만 넣습니다.
-6. "[그래프 관계표]" 조각은 공시의 관계 표(지분·임원)를 정리한 것입니다. 그 안의 "파생 값"은 규칙으로 계산한 값이므로 쓸 때 "계산값"이라고 밝힙니다. 유효 기간이 질문의 기준일과 맞는 행만 씁니다."""
+6. "[그래프 관계표]" 조각은 공시의 관계 표(지분·임원)를 정리한 것입니다. 그 안의 "파생 값"은 규칙으로 계산한 값이므로 쓸 때 "계산값"이라고 밝힙니다. 유효 기간이 질문의 기준일과 맞는 행만 씁니다.
+7. 질문에 기준일(예: "2024년 사업보고서 기준", "2024년 말")이 있고 관계표의 그 기준일에 유효한 행과 다른 조각의 내용이 다르면, 관계표의 행을 답으로 쓰고 조각의 값은 "보고서 제출 시점 기준으로는 …"이라고 덧붙입니다. 사업보고서의 임원 표는 제출일(다음 해 3월) 기준이라 기준일의 사람과 다를 수 있습니다."""
 
 ANSWER_SCHEMA = {
     "type": "object",
@@ -69,6 +71,7 @@ class Answer:
     input_tokens: int = 0
     output_tokens: int = 0
     raw: dict = field(default_factory=dict)
+    truncated: bool = False   # 출력 상한에 걸려 답이 잘림 (Responses API status 'incomplete'). 채점표에 표시한다
 
     @property
     def not_found(self) -> bool:
@@ -78,7 +81,7 @@ class Answer:
 class LLM(Protocol):
     name: str
 
-    def answer(self, question: str, passages: list[Passage]) -> Answer: ...
+    def answer(self, question: str, passages: list[Passage], max_output_tokens: int | None = None) -> Answer: ...
 
 
 def build_user_prompt(question: str, passages: list[Passage], max_chars: int = 1000) -> str:
@@ -139,7 +142,8 @@ def settings() -> dict:
     load_dotenv()
     return {
         "model": os.getenv("LLM_MODEL") or DEFAULT_MODEL,
-        "max_output_tokens": int(os.getenv("LLM_MAX_OUTPUT_TOKENS") or 600),
+        "max_output_tokens": int(os.getenv("LLM_MAX_OUTPUT_TOKENS") or 1000),
+        "max_output_tokens_graph": int(os.getenv("LLM_MAX_OUTPUT_TOKENS_GRAPH") or 4000),
         "daily_limit": int(os.getenv("LLM_DAILY_LIMIT") or 200),
         "api_key": os.getenv("OPENAI_API_KEY") or "",
     }
@@ -152,6 +156,7 @@ class OpenAILLM:
         s = settings()
         self.name = model or s["model"]
         self.max_output_tokens = max_output_tokens or s["max_output_tokens"]
+        self.max_output_tokens_graph = s["max_output_tokens_graph"]
         self.daily_limit = daily_limit or DailyLimit(s["daily_limit"])
         key = api_key or s["api_key"]
         if not key:
@@ -160,15 +165,17 @@ class OpenAILLM:
 
         self.client = OpenAI(api_key=key)
 
-    def answer(self, question: str, passages: list[Passage]) -> Answer:
+    def answer(self, question: str, passages: list[Passage], max_output_tokens: int | None = None) -> Answer:
+        """max_output_tokens를 넘기면 그 상한으로 (ask가 그래프 관계표가 붙은 질문에 max_output_tokens_graph를 넘긴다)."""
         self.daily_limit.take()
         resp = self.client.responses.create(
             model=self.name,
             instructions=SYSTEM_PROMPT.format(not_found=NOT_FOUND),
             input=build_user_prompt(question, passages),
-            max_output_tokens=self.max_output_tokens,
+            max_output_tokens=max_output_tokens or self.max_output_tokens,
             text={"format": {"type": "json_schema", "name": "grounded_answer", "schema": ANSWER_SCHEMA, "strict": True}},
         )
         text, cits = parse_answer(resp.output_text, len(passages))
         usage = getattr(resp, "usage", None)
-        return Answer(text, cits, self.name, getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0)
+        truncated = getattr(resp, "status", None) == "incomplete"
+        return Answer(text, cits, self.name, getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, truncated=truncated)

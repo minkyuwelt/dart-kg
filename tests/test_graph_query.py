@@ -146,6 +146,8 @@ class GraphQueryTest(unittest.TestCase):
         self.assertEqual(parse_as_of("2025.09.30 현재", TODAY)[0], date(2025, 9, 30))
         self.assertEqual(parse_as_of("지금 대표이사는?", TODAY), (TODAY, "날짜 없음 → 오늘"))
         self.assertEqual(parse_as_of("2024년 배당은?", TODAY)[0], TODAY)  # 연도만은 그해 말로 보지 않음
+        self.assertEqual(parse_as_of("2024년 사업보고서 기준 국민은행의 대표이사는?", TODAY)[0], date(2024, 12, 31))  # 사업연도 말
+        self.assertEqual(parse_as_of("2023년 3월 31일 기준 2024년 사업보고서의?", TODAY)[0], date(2023, 3, 31))  # 날짜가 있으면 그것이 먼저
 
     def test_find_corps(self):
         m = find_corps(self.con, "KB국민은행과 신한지주")
@@ -267,7 +269,10 @@ class GraphQueryTest(unittest.TestCase):
         self.assertIn("40.00%", derived["신한펀드"])       # 두 경로 중 큰 값 (100%×40%)
         self.assertIn("국내 공시 대상 아님", derived["신한펀드"])
         self.assertIn("1단계 2곳, 2단계 1곳 (합계 3곳, corp_code 없음 1곳)", derived[SHH])
-        self.assertIn("파생 값", Q.to_text(ctx))
+        text = Q.to_text(ctx)
+        self.assertIn("파생 값", text)
+        self.assertLess(text.index("[파생 값"), text.index("출발 | 관계 | 도착"))   # 파생 값이 관계 행보다 앞 (글자 상한에 잘리지 않게)
+        self.assertIn("[관계 ", text)
 
     def test_person_history_merges_consecutive_reports(self):
         p, bank, card = node("p9", "정상혁", "Person", None), node(SHBANK, "신한은행"), node("00000024", "신한카드")

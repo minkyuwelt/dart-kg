@@ -24,8 +24,9 @@ class FakeLLM:
     def __init__(self, text, citations):
         self.text, self.citations, self.calls = text, citations, []
 
-    def answer(self, question, passages):
+    def answer(self, question, passages, max_output_tokens=None):
         self.calls.append((question, passages))
+        self.last_max_output_tokens = max_output_tokens
         return Answer(self.text, self.citations, self.name, 100, 20)
 
 
