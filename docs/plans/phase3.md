@@ -1,7 +1,7 @@
 # Phase 3 계획: 공시 원문 RAG
 
 - 작성: 2026-11-24
-- 상태: 초안 (노트북에서 확인할 항목이 남아 있음 → "확인이 필요한 것"). 2026-11-24 갱신: GPU 있음, 생성 LLM은 OpenAI `gpt-6-luna`
+- 상태: **완료** (2026-11-26). 1절의 완료 기준 셋을 모두 채웠다 — ① 원문 193개 보고서·조각 269,066개(분기·반기는 평가 근거분만), ② 상위 5개 안 근거 공시 hit@5 0.979(기준 0.80), ③ 답의 인용·"찾지 못했습니다" 처리(없음 5/5, 근거없는주장 0). 결과 표는 README "결과"와 0010·0011. 12번 PR(`docs/phase3-done`)까지 끝남. 2026-11-24 갱신: GPU 있음, 생성 LLM은 OpenAI `gpt-6-luna`
 - 앞 단계: Phase 2 완료 (`docs/devlog/2026-11-23.md`)
 - 관련 결정: 0001(기술 스택, 구조 Y), 0004(한국어 전문검색), 0005(시간축), 0006(사람 식별)
 - 관련 조사: `phase3-research.md` (청킹·임베딩·재순위 논문과 최신 모델, 2026-11-24)
@@ -216,18 +216,18 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
 | 10a | `feat/rag-assets` | Dagster 자산 4개(`documents`·`chunks`·`chunk_embeddings`·`neo4j_chunks`), 검사 5개, 스케줄 2개(`daily_documents` 08:00, `daily_rag_index` 09:00) | `rag_index_job` 1회 실행 → `neo4j_chunks_match` 통과, 하루 운영 확인 | Neo4j 꺼짐 → 실패가 정상, 다음 날 재시도. 2026-11-25 웹 작성: 세 자산 모두 증분(조각 없는 보고서·벡터 없는 조각·Neo4j와 수가 다른 보고서만). 백필 스크립트는 그대로 두고, 자산은 DuckDB 상태로 완료를 판단하므로 통합 코드가 따로 없음 |
 | 10b | `feat/change-report` + 0012 | 변화 리포트 1차: `src/reports/changes.py`(스냅샷 비교, 변화 11종, markdown), CLI, Dagster 자산 `change_report`(relations 뒤, `relations_job`에 포함), 0012(변화 정의·문턱값·알림 수단) | `--since 2026-03-01 --until 2026-04-30` 사업보고서 시즌 리포트 1건 → 변화가 그럴듯한지 눈으로 확인 | 사용자 결정 2026-11-25: 10a·10b로 나눔, 문턱 0.1%p, 자산 포함. 2026-11-25 웹 작성 |
 | 11 | `feat/api` + 0013 | FastAPI(`src/api/main.py`): `/ask`·`/changes`·`/corps/{code}/executives·shareholders`(시점 질의, `src/loaders/as_of.py`)·`/health`. 임베더·Neo4j는 서버 시작 시 한 번, DuckDB는 요청마다 읽기 전용. 0013: FastAPI + Next.js, Vercel 배포(사용자 결정 2026-11-25, 비교 없이) | `uvicorn` 띄우고 `/docs`에서 `/ask` 1건, 질문 임베딩 시간 GPU vs `API_EMBED_DEVICE=cpu` | 2026-11-25 웹 작성 |
-| 12 | `docs/phase3-done` | README·CLAUDE.md·devlog 갱신, 평가 결과 표(0004·0009·0010·0012 노트북 결과) | — | — |
+| 12 | `docs/phase3-done` | README·CLAUDE.md·devlog 갱신, 평가 결과 표(0004·0009·0010·0012 노트북 결과) | — | 2026-11-26 완료. 결과 표는 README "결과" |
 
 6번이 가장 길고 가장 중요하다. 여기서 나온 숫자가 0008·0009을 정하고, 그 뒤는 정해진 대로 만든다.
 
 ## 8. 확인이 필요한 것 (노트북에서 또는 사용자가)
 
-1. ~~**노트북 GPU 유무.**~~ **있음 (2026-11-24 사용자 확인).** 남은 것은 VRAM 크기(`nvidia-smi`의 Memory-Usage 총량. KURE-v3는 4GB 이상이면 편함)와 WSL에서 PyTorch가 GPU를 보는지(`python -c "import torch; print(torch.cuda.is_available())"`). 6번 PR 전에 확인
-2. **`document.xml` 응답 실물.** ZIP 안 파일 이름, XML 인코딩, 크기. 2번 PR에서 1건 받아 확인. 웹 환경에서는 DART에 접근할 수 없다
-3. ~~**LLM API 키와 예산.**~~ **OpenAI `gpt-6-luna`로 결정 (2026-11-24 사용자 결정).** 남은 것은 `.env`에 `OPENAI_API_KEY`가 있는지와 월 한도 설정. 비용은 9번 PR에서 실측
-4. **원문 범위를 어디부터 할지.** 추천: 사업보고서(약 150개)로 2~9번을 끝내고, 분기·반기(약 470개)는 10번에서 백필. 임베딩 시간이 문제될 때 범위를 줄이는 가장 쉬운 축이다
-5. **논문 원문 확인.** 웹 환경에서 arxiv.org에 접근할 수 없어 `phase3-research.md`의 숫자 일부는 2차 자료 기준이다. 노트북에서 "확인 필요" 표시 4편을 열어 숫자를 맞춘다
-6. **디스크.** ZIP 수 GB + DuckDB 임베딩(30만 × 1024 × 4바이트 ≈ 1.2GB) + Neo4j 볼륨. WSL 디스크 여유 확인
+1. ~~노트북 GPU~~ RTX 4070 노트북 8GB, WSL에서 CUDA 인식(2026-11-24). fp32 배치 32는 VRAM을 넘겨 배치 8로(0009)
+2. ~~`document.xml` 응답 실물~~ 2번 PR에서 확인, 파서는 0007(2026-11-24)
+3. ~~LLM API 키와 예산~~ `gpt-6-luna`, 질문당 약 $0.0005, 평가 한 바퀴 약 $0.02~0.03(0010). 하루 호출 한도 200(`LLM_DAILY_LIMIT`)
+4. ~~원문 범위~~ 사업보고서 188개로 끝낸 뒤 평가 근거인 분기·반기 5개만 추가(193개). 분기·반기 전체 백필(약 470건)은 아직 — 필요한 질문이 생기면
+5. **논문 원문 확인.** 웹 환경에서 arxiv.org에 접근할 수 없어 `phase3-research.md`의 숫자 일부는 2차 자료 기준이다. 노트북에서 "확인 필요" 표시 4편을 열어 숫자를 맞춘다 — **아직 안 함**
+6. ~~디스크~~ Neo4j `data/neo4j/` 6.4GB(2026-11-26 확인), 문제 없음
 
 ## 9. 리스크와 대응
 
