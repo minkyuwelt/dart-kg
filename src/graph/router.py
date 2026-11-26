@@ -57,11 +57,15 @@ _DATE_PATTERNS = [
     (re.compile(r"(\d{4})[.-](\d{1,2})[.-](\d{1,2})"), lambda y, m, d: date(int(y), int(m), int(d))),
     (re.compile(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*말?"), lambda y, m: date(int(y), int(m), calendar.monthrange(int(y), int(m))[1])),
     (re.compile(r"(\d{4})\s*년\s*(?:말|연말|기말)"), lambda y: date(int(y), 12, 31)),
+    # "2024년 사업보고서 기준" = 그 사업연도 말(12-31) 기준. 평가 세트의 시점 질문이 이 표현을 쓴다.
+    # 없으면 아래 '날짜 없음 → 오늘'로 떨어져 2024년 질문에 지금 임원을 내놓는다 (2026-11-26 채점표 d004·d028에서 확인)
+    (re.compile(r"(\d{4})\s*년\s*사업보고서"), lambda y: date(int(y), 12, 31)),
 ]
 
 
 def parse_as_of(question: str, today: date | None = None) -> tuple[date, str]:
-    """(기준일, 어떻게 정했나). 날짜가 없거나 '현재·지금'이면 오늘. 'YYYY년'만 있으면 그해 말로 보지 않는다(뜻이 둘이라) → 오늘."""
+    """(기준일, 어떻게 정했나). 날짜가 없거나 '현재·지금'이면 오늘. 'YYYY년'만 있으면 그해 말로 보지 않는다(뜻이 둘이라) → 오늘.
+    'YYYY년 사업보고서'는 그 사업연도 말로 본다."""
     for pattern, make in _DATE_PATTERNS:
         m = pattern.search(question)
         if m:

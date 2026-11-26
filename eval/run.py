@@ -83,8 +83,21 @@ def answers_markdown(rows: list[dict], config: dict) -> str:
     for r in rows:
         out += [f"## {r['id']} ({r['type']}) {r['question']}", "", f"- 정답: {r['gold']}", f"- LLM 답: {r['answer']}",
                 f"- 인용: {', '.join(r['cited']) or '(없음)'}", f"- 근거 공시 맞음(검색): {'예' if r['hit_doc'] else '아니오'}",
-                f"- 토큰: 입력 {r['input_tokens']:,} / 출력 {r['output_tokens']:,}", "- 채점: ", ""]
+                f"- 그래프: {', '.join(r.get('templates') or []) or ('관계표 있음' if r.get('graph') else '안 씀')}",
+                f"- 토큰: 입력 {r['input_tokens']:,} / 출력 {r['output_tokens']:,}" + (" **(상한에 잘림)**" if r.get("truncated") else ""), "- 채점: ", ""]
     return "\n".join(out)
+
+
+def picker_on(choice: str, llm_mode: bool) -> bool:
+    """--picker auto는 LLM 답을 만들 때만 켠다. src.rag.ask CLI·API가 LLM이 있을 때 고르기를 붙이는 것과 같게 맞춘다."""
+    return llm_mode if choice == "auto" else choice == "on"
+
+
+def attach_picker(retriever, choice: str, llm_mode: bool) -> None:
+    """그래프 검색기(picker 속성이 있음)에만 LLM 고르기를 붙인다. 다른 검색기는 그대로."""
+    if picker_on(choice, llm_mode) and hasattr(retriever, "picker"):
+        from src.graph.picker import LLMPicker
+        retriever.picker = LLMPicker()
 
 
 def run_with_llm(args, target, llm=None, retriever=None) -> int:
@@ -97,22 +110,28 @@ def run_with_llm(args, target, llm=None, retriever=None) -> int:
     rows, t_in, t_out = [], 0, 0
     with connect(read_only=True) as con:
         retriever = retriever or make_retriever(args.retriever, con, corp_filter=args.filter == "corp", rerank=args.rerank)
+        attach_picker(retriever, getattr(args, "picker", "auto"), llm_mode=True)
         for i, q in enumerate(target, 1):
             res = ask(q.question, retriever, llm, args.k, con)
             sc = _score(res.hits, q.evidence_rcept_no, q.evidence_section, args.k) if q.type != "없음" else {"hit_doc": None}
             a = res.answer
             cited = [f"[{n}] {res.labels[n - 1]} {VIEWER_URL.format(rcept_no=h.rcept_no)}" for n, h in res.cited_hits]
             rows.append({"id": q.id, "type": q.type, "question": q.question, "gold": q.answer, "answer": a.text, "citations": a.citations, "cited": cited,
-                         "not_found": a.not_found, "hit_doc": sc.get("hit_doc"), "input_tokens": a.input_tokens, "output_tokens": a.output_tokens})
+                         "not_found": a.not_found, "hit_doc": sc.get("hit_doc"), "input_tokens": a.input_tokens, "output_tokens": a.output_tokens,
+                         "truncated": a.truncated, "graph": res.graph is not None,
+                         "templates": [s.template for s in res.graph.plan.steps] if res.graph is not None and getattr(res.graph, "plan", None) else []})
             t_in += a.input_tokens
             t_out += a.output_tokens
             print(f"  {i}/{len(target)} {q.id} {'(없음)' if a.not_found else '답 ' + str(len(a.citations)) + '개 인용'}  토큰 {a.input_tokens:,}/{a.output_tokens:,}")
     config = {"retriever": retriever.name, "filter": args.filter, "rerank": args.rerank, "k": args.k, "label": args.label, "llm": llm.name,
-              "questions": str(args.questions), "run_at": datetime.now().isoformat(timespec="seconds")}
+              "picker": picker_on(getattr(args, "picker", "auto"), llm_mode=True), "questions": str(args.questions), "run_at": datetime.now().isoformat(timespec="seconds")}
     n_none = sum(1 for r in rows if r["type"] == "없음")
     none_ok = sum(1 for r in rows if r["type"] == "없음" and r["not_found"])
     false_none = sum(1 for r in rows if r["type"] != "없음" and r["not_found"])
-    print(f"\n질문 {len(rows)}개, 토큰 입력 {t_in:,} / 출력 {t_out:,}. '없음' {n_none}개 중 '찾지 못함'으로 답한 것 {none_ok}개, 답이 있는 질문인데 '찾지 못함' {false_none}개")
+    n_trunc = sum(1 for r in rows if r["truncated"])
+    n_graph = sum(1 for r in rows if r["graph"])
+    print(f"\n질문 {len(rows)}개, 토큰 입력 {t_in:,} / 출력 {t_out:,}. '없음' {n_none}개 중 '찾지 못함'으로 답한 것 {none_ok}개, 답이 있는 질문인데 '찾지 못함' {false_none}개, "
+          f"출력 상한에 잘린 답 {n_trunc}개, 그래프 관계표가 붙은 질문 {n_graph}개")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stem = f"{datetime.now():%Y%m%d_%H%M}_llm_{retriever.name}" + (f"_{args.label}" if args.label else "")
     (RESULTS_DIR / f"{stem}.json").write_text(json.dumps({"config": config, "rows": rows, "tokens": {"input": t_in, "output": t_out}}, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -134,6 +153,8 @@ def main(argv=None) -> int:
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--label", default="", help="결과 파일 이름에 붙일 설정 이름")
     ap.add_argument("--include-none", action="store_true", help="LLM 평가에 '없음' 유형도 넣는다 (정답은 '공시에서 찾지 못했습니다')")
+    ap.add_argument("--picker", choices=["auto", "on", "off"], default="auto",
+                    help="그래프 검색기의 LLM 템플릿 고르기(규칙이 못 고른 질문만, 질문당 OpenAI 1건). auto: LLM 답을 만들 때는 켬(src.rag.ask·API와 같게), --retrieval-only면 끔")
     args = ap.parse_args(argv)
 
     questions = load_questions(args.questions)
@@ -150,9 +171,10 @@ def main(argv=None) -> int:
 
     with connect(read_only=True) as con:
         retriever = make_retriever(args.retriever, con, corp_filter=args.filter == "corp", rerank=args.rerank)
+        attach_picker(retriever, args.picker, llm_mode=False)
         result = evaluate(target, retriever, args.k)
     result["config"] = {"retriever": retriever.name, "filter": args.filter, "rerank": args.rerank, "k": args.k, "label": args.label, "questions": str(args.questions),
-                        "run_at": datetime.now().isoformat(timespec="seconds")}
+                        "picker": picker_on(args.picker, llm_mode=False), "run_at": datetime.now().isoformat(timespec="seconds")}
     print_report(result, args.k)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)

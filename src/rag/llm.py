@@ -9,7 +9,8 @@
 - 구조화 출력(JSON 스키마: answer, citations)으로 받아 프로그램이 인용 번호를 접수번호·링크로 바꾼다
 
 비용 보호
-- 질문당 출력 토큰 상한 LLM_MAX_OUTPUT_TOKENS(기본 600), 조각은 k개(기본 5) × 최대 1,000자
+- 질문당 출력 토큰 상한 LLM_MAX_OUTPUT_TOKENS(기본 1000), 그래프 관계표가 붙은 질문은 LLM_MAX_OUTPUT_TOKENS_GRAPH(기본 2000). 조각은 k개(기본 5) × 최대 1,000자
+  (2026-11-26 채점표: 상한 600에서 그래프 질문 g05·g12의 답이 잘려 "찾지 못함"으로 떨어짐. gpt-6-luna는 생각하는 토큰도 상한에 들어간다)
 - 하루 호출 한도 LLM_DAILY_LIMIT(기본 200): data/llm_calls.json에 날짜별 횟수를 적고 넘으면 멈춘다. 평가 세트 한 바퀴(36~60개)가 하루 한도 안
 
 API 키는 .env의 OPENAI_API_KEY (python-dotenv). 웹 환경에는 키가 없고 호출도 하지 않는다 — 노트북에서만.
@@ -69,6 +70,7 @@ class Answer:
     input_tokens: int = 0
     output_tokens: int = 0
     raw: dict = field(default_factory=dict)
+    truncated: bool = False   # 출력 상한에 걸려 답이 잘림 (Responses API status 'incomplete'). 채점표에 표시한다
 
     @property
     def not_found(self) -> bool:
@@ -78,7 +80,7 @@ class Answer:
 class LLM(Protocol):
     name: str
 
-    def answer(self, question: str, passages: list[Passage]) -> Answer: ...
+    def answer(self, question: str, passages: list[Passage], max_output_tokens: int | None = None) -> Answer: ...
 
 
 def build_user_prompt(question: str, passages: list[Passage], max_chars: int = 1000) -> str:
@@ -139,7 +141,8 @@ def settings() -> dict:
     load_dotenv()
     return {
         "model": os.getenv("LLM_MODEL") or DEFAULT_MODEL,
-        "max_output_tokens": int(os.getenv("LLM_MAX_OUTPUT_TOKENS") or 600),
+        "max_output_tokens": int(os.getenv("LLM_MAX_OUTPUT_TOKENS") or 1000),
+        "max_output_tokens_graph": int(os.getenv("LLM_MAX_OUTPUT_TOKENS_GRAPH") or 2000),
         "daily_limit": int(os.getenv("LLM_DAILY_LIMIT") or 200),
         "api_key": os.getenv("OPENAI_API_KEY") or "",
     }
@@ -152,6 +155,7 @@ class OpenAILLM:
         s = settings()
         self.name = model or s["model"]
         self.max_output_tokens = max_output_tokens or s["max_output_tokens"]
+        self.max_output_tokens_graph = s["max_output_tokens_graph"]
         self.daily_limit = daily_limit or DailyLimit(s["daily_limit"])
         key = api_key or s["api_key"]
         if not key:
@@ -160,15 +164,17 @@ class OpenAILLM:
 
         self.client = OpenAI(api_key=key)
 
-    def answer(self, question: str, passages: list[Passage]) -> Answer:
+    def answer(self, question: str, passages: list[Passage], max_output_tokens: int | None = None) -> Answer:
+        """max_output_tokens를 넘기면 그 상한으로 (ask가 그래프 관계표가 붙은 질문에 max_output_tokens_graph를 넘긴다)."""
         self.daily_limit.take()
         resp = self.client.responses.create(
             model=self.name,
             instructions=SYSTEM_PROMPT.format(not_found=NOT_FOUND),
             input=build_user_prompt(question, passages),
-            max_output_tokens=self.max_output_tokens,
+            max_output_tokens=max_output_tokens or self.max_output_tokens,
             text={"format": {"type": "json_schema", "name": "grounded_answer", "schema": ANSWER_SCHEMA, "strict": True}},
         )
         text, cits = parse_answer(resp.output_text, len(passages))
         usage = getattr(resp, "usage", None)
-        return Answer(text, cits, self.name, getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0)
+        truncated = getattr(resp, "status", None) == "incomplete"
+        return Answer(text, cits, self.name, getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, truncated=truncated)

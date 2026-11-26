@@ -146,6 +146,8 @@ class GraphQueryTest(unittest.TestCase):
         self.assertEqual(parse_as_of("2025.09.30 현재", TODAY)[0], date(2025, 9, 30))
         self.assertEqual(parse_as_of("지금 대표이사는?", TODAY), (TODAY, "날짜 없음 → 오늘"))
         self.assertEqual(parse_as_of("2024년 배당은?", TODAY)[0], TODAY)  # 연도만은 그해 말로 보지 않음
+        self.assertEqual(parse_as_of("2024년 사업보고서 기준 국민은행의 대표이사는?", TODAY)[0], date(2024, 12, 31))  # 사업연도 말
+        self.assertEqual(parse_as_of("2023년 3월 31일 기준 2024년 사업보고서의?", TODAY)[0], date(2023, 3, 31))  # 날짜가 있으면 그것이 먼저
 
     def test_find_corps(self):
         m = find_corps(self.con, "KB국민은행과 신한지주")
