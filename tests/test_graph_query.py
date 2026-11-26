@@ -102,6 +102,7 @@ class GraphQueryTest(unittest.TestCase):
             "2025년 12월 31일 기준 신한지주가 자회사를 거쳐서만 지분 50% 이상을 가진 회사는 어디이고, 각각 어느 자회사를 거치나?":
                 [("descendants", {"corp": SHH, "depth": 2, "min_pct": 50.0})],
             "2025년 12월 31일 기준 KB금융지주 아래 손자회사까지 몇 곳?": [("descendants", {"corp": KBH, "min_pct": None})],   # 기준 없으면 None
+            "2025년 말 기준 KB금융지주가 출자한 회사 중 기말 장부가액이 가장 큰 곳은 어디인가?": [("descendants", {"corp": KBH, "depth": 1, "as_of": "2025-12-31"})],  # 출자한 회사 → 1단계
             "2025년 12월 31일 기준 우리금융지주 아래 2단계까지의 출자 대상 중 국내 공시 대상이 아닌 곳(해외 법인·펀드 등)은 몇 곳인가?":
                 [("descendants", {"corp": WRH, "depth": 2})],
             "우리종합금융은 지금 어느 회사로 이어지고, 그 공시는 어느 회사 이름으로 이어 보나?": [("corp_lineage", {"corp": "00000043", "name": "우리종합금융"})],
@@ -269,6 +270,21 @@ class GraphQueryTest(unittest.TestCase):
         self.assertIn("40.00%", derived["신한펀드"])       # 두 경로 중 큰 값 (100%×40%)
         self.assertIn("국내 공시 대상 아님", derived["신한펀드"])
         self.assertIn("1단계 2곳, 2단계 1곳 (합계 3곳, corp_code 없음 1곳)", derived[SHH])
+        self.assertNotIn("장부가액 최대", str(ctx.derived))   # 관계에 장부가액이 없으면 그 줄은 없다
+
+    def test_descendants_derive_max_book_value_among_direct(self):
+        kbh, bank, card = node(KBH, "KB금융지주"), node(KBBANK, "KB국민은행"), node(KBCARD, "KB국민카드")
+        driver = TemplateDriver({"descendants": [
+            {"nodes": [kbh, bank], "rels": [owns(KBH, 100.0, "R1", "investment", "i1") | {"book_value": 14_821_721_000_000}]},
+            {"nodes": [kbh, card], "rels": [owns(KBH, 100.0, "R1", "investment", "i2") | {"book_value": 1_000_000_000}]},
+        ]})
+        ctx = Q.build_context("2025년 말 기준 KB금융지주가 출자한 회사 중 기말 장부가액이 가장 큰 곳은 어디인가?", driver, self.con, today=TODAY)
+        self.assertEqual(ctx.plan.rule, "출자한 회사")
+        self.assertEqual(ctx.steps[0].params["depth"], 1)
+        rows = {d["rule"]: d["value"] for d in ctx.derived}
+        self.assertEqual(rows["직접 출자 중 장부가액 최대"], "KB국민은행 14,821,721,000,000원 (14,821,721백만원, 직접 출자 2곳 중)")
+        text = Q.to_text(ctx)
+        self.assertLess(text.index("장부가액 최대"), text.index("출발 | 관계"))   # 파생 값이 관계 행보다 앞
         text = Q.to_text(ctx)
         self.assertIn("파생 값", text)
         self.assertLess(text.index("[파생 값"), text.index("출발 | 관계 | 도착"))   # 파생 값이 관계 행보다 앞 (글자 상한에 잘리지 않게)

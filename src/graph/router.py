@@ -213,6 +213,11 @@ def route(question: str, con: duckdb.DuckDBPyConnection, today: date | None = No
         return plan("출자 아래로", Step("descendants", {"corp": corp, "as_of": iso, "depth": _depth(q, 2),
                                                       "min_pct": float(cut.group(1)) if cut else None}))
 
+    # 계층 1단계: "X가 출자한 회사 중 …" (장부가액 최대 등). T2의 OWNS에 장부가액이 있어 표 조각을 읽는 것보다 정확하다
+    # (2026-11-26 채점표 d068·d094: 지주 출자 표 조각이 잘려 LLM이 최대값을 못 찾음). 깊이는 질문에 손자·단계가 없으면 1
+    if re.search(r"출자(한|하고\s*있는)?\s*회사|출자\s*중", q):
+        return plan("출자한 회사", Step("descendants", {"corp": corp, "as_of": iso, "depth": _depth(q, 1), "min_pct": None}))
+
     # 통합: 임원 이력
     if re.search(r"거쳤|거쳐\s*왔|이력|경력|어느\s*계열사", q):
         return plan("임원 이력", Step("person_history", {"corp": corp, "as_of": iso, "title": title, "person": None}))
