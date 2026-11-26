@@ -232,9 +232,29 @@ def evidence(driver, relations: list[dict], limit: int = EVIDENCE_LIMIT, databas
                  {"rcepts": rcepts, "sections": sections or None, "limit": limit, "per_doc": EVIDENCE_PER_DOC}, database)
     order = {r: i for i, r in enumerate(rcepts)}
     recs.sort(key=lambda r: (order.get(r["rcept_no"], len(order)), r.get("seq") or 0))   # Cypher도 같은 순서로 주지만, 가짜 드라이버(테스트)를 위해 한 번 더
+    recs = interleave_by_report(recs)
     n = len(recs)
     return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(n - i), (r["text"] or "")[:120], r["text"] or "")
             for i, r in enumerate(recs)]
+
+
+def interleave_by_report(recs: list[dict]) -> list[dict]:
+    """보고서별로 번갈아 놓는다: A1 B1 C1 A2 B2 C2 … (보고서 순서는 처음 나온 순서, 보고서 안 순서는 그대로).
+
+    왜: 그래프가 주는 값은 "어느 보고서를 봐야 하는가"다. 같은 보고서의 조각 3개가 1~3위를 다 차지하면
+    RRF에서 두 번째 보고서가 7위쯤으로 밀려 상위 5개에서 빠진다 (2026-11-25 평가 g05·g06: 지주 보고서가 1~3위, 정답인 자회사 보고서가 4~5위).
+    조정할 숫자가 없는 방법이라 질문 12개에 맞춘 가중치(과적합)를 피한다.
+    """
+    by_report: dict[str, list[dict]] = {}
+    for r in recs:
+        by_report.setdefault(r["rcept_no"], []).append(r)
+    out: list[dict] = []
+    queues = list(by_report.values())
+    while queues:
+        queues = [q for q in queues if q]
+        for q in queues:
+            out.append(q.pop(0))
+    return out
 
 
 def build_context(question: str, driver, con, today: date | None = None, lineage: list[dict] | None = None,
