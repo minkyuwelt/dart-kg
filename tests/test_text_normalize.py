@@ -42,6 +42,11 @@ class TextNormalizeTest(unittest.TestCase):
         vocab = section_vocabulary(["I. 회사의 개요 > 2. 회사의 연혁", "VII. 주주에 관한 사항 > 1. 배당에 관한 사항", "VIII. 임원 및 직원 등에 관한 사항"])
         self.assertTrue({"회사의", "회사", "연혁", "주주에", "주주", "배당에", "배당", "임원", "직원"} <= vocab)
         self.assertFalse({"관한", "사항", "개요"} & vocab)                        # 섹션을 가리키지 못하는 낱말은 사전에서 뺀다
+        # "주요"는 목차("주요 제품 및 서비스")에 있어도 수식어라 사전에서 뺀다 — 들어가면 "(연혁) AND (주요)"가 되어 연혁 절 조각이 빠짓다 (d033)
+        v2 = section_vocabulary(["II. 사업의 내용 > 2. 주요 제품 및 서비스", "I. 회사의 개요 > 2. 회사의 연혁", "VI. 임원 및 직원 등의 현황"])
+        self.assertNotIn("주요", v2); self.assertNotIn("현황", v2); self.assertIn("연혁", v2); self.assertIn("임원", v2); self.assertIn("제품", v2)
+        q2 = fulltext_query("케이비국민카드의 2025년 중 주요 연혁은 무엇인가?", v2)
+        self.assertTrue(q2.startswith('("연혁은" OR "연혁") OR'))
         q = fulltext_query("케이비국민카드의 2025년 중 주요 연혁은 무엇인가?", vocab)
         R = '("연혁은" OR "연혁")'
         self.assertEqual(q, f'{R} OR ({R} AND ("케이비국민카드의" OR "케이비국민카드")) OR ({R} AND ("2025 년" OR 2025*)) OR ({R} AND "주요")')

@@ -36,8 +36,23 @@ with connect(s) as driver:
     got = {h["seq"] for h in hits}
     print(f"\n섹션 조각 {len(want)}개 중 걸린 것 {len(want & got)}개, 안 걸린 seq: {sorted(want - got)}")
 
-    # 파서가 OR/AND/괄호/필드를 어떻게 읽는지 — 질의 꼴마다 이 보고서에서 걸린 조각 수와 섹션 조각(want) 중 걸린 수
     corp = q("MATCH (c:Chunk {rcept_no: $r}) RETURN c.corp_code AS c LIMIT 1", r=rcept)[0]["c"]
+    # 실제 검색기가 만드는 검색어: 섹션 사전(DuckDB chunk.path) → 필수 낱말 → Lucene 질의. 사전에 든 낱말이 질문을 너무 좁히는지 여기서 본다
+    from eval.retrievers.neo4j import load_section_words
+    from src.graph.text_normalize import fulltext_query, section_terms
+    from src.loaders.duckdb_store import connect as duck_connect
+    question = f"케이비국민카드의 2025년 중 주요 {term}은 무엇인가?"
+    with duck_connect(read_only=True) as con:
+        vocab = load_section_words(con) or set()
+    print(f"\n## 실제 검색어 (섹션 사전 {len(vocab)}개 낱말)")
+    print(f"  질문: {question}")
+    print(f"  필수(섹션) 낱말: {section_terms(question, vocab)}")
+    print(f"  Lucene 질의: {fulltext_query(question, vocab)}")
+    hs = q("CALL db.index.fulltext.queryNodes('chunk_text', $t, {limit: 200000}) YIELD node AS c WHERE c.rcept_no = $r RETURN c.seq AS seq",
+           t=f"corp_code:{corp} AND ({fulltext_query(question, vocab)})", r=rcept)
+    print(f"  → 이 보고서에서 {len(hs)}개, 섹션 조각 {len({h['seq'] for h in hs} & want)}/{len(want)}")
+
+    # 파서가 OR/AND/괄호/필드를 어떻게 읽는지 — 질의 꼴마다 이 보고서에서 걸린 조각 수와 섹션 조각(want) 중 걸린 수
     R = f'("{term}은" OR "{term}")'
     forms = [
         f'"{term}"',
