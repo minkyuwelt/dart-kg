@@ -149,6 +149,17 @@ class LoadChunksTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 make_retriever(bad, self.con, driver=drv, embedder=None if bad.endswith("nope") else FakeEmbedder())
 
+    def test_keep_latest_copy_drops_older_duplicates_only_for_undated_questions(self):
+        from eval.retrievers.neo4j import keep_latest_copy
+        old = {"rcept_no": "20240314000001", "file_name": "f", "section_id": 1, "path": "II. 사업의 내용 > 1. 사업의 개요", "score": 0.9, "text": "생명보험업"}
+        new = {**old, "rcept_no": "20260331000001", "score": 0.89}
+        other = {**old, "text": "배당", "score": 0.5}
+        self.assertEqual(keep_latest_copy([old, new, other]), [new, other])       # 같은 글은 최신 접수번호만, 순서는 그대로
+        drv = FakeDriver({"vector": [old, new, other], "fulltext": []})
+        r = make_retriever("neo4j:hybrid:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv)
+        self.assertEqual([h.rcept_no for h in r.search("주요 사업 부문은?", 3)], ["20260331000001", "20240314000001"])  # 복사본 제거 → 2개
+        self.assertEqual(len(r.search("2024년 주요 사업 부문은?", 3)), 3)         # 날짜 있는 질문은 그대로
+
     def test_rrf_and_hybrid_retriever(self):
         def rec(rcept, sid, text):
             return {"rcept_no": rcept, "file_name": rcept + ".xml", "section_id": sid, "path": f"p{sid}", "score": 1.0, "text": text}

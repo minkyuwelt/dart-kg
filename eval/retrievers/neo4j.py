@@ -58,6 +58,20 @@ ORDER BY in_section DESC, recency DESC, score DESC LIMIT $k
 _DATED_RE = re.compile(r"(?:19|20)\d{2}\s*년|\d{4}[.\-/]\d{1,2}|지난|작년|전년|당시|이전|직전|년도|기준")
 
 
+def keep_latest_copy(records: list[dict]) -> list[dict]:
+    """같은 글(text)이 여러 해 보고서에 있으면 접수번호가 가장 큰(=최신) 것만 남긴다. 순서는 남은 것의 원래 순서.
+
+    왜(2026-11-26 d007): "사업의 개요"처럼 해마다 거의 같은 글은 임베딩도 같아 벡터 상위에 5개년 복사본이 나란히 선다. 날짜 없는 질문에는
+    최신 보고서가 답이고, 복사본이 상위 5개 자리를 여럿 차지하는 것도 낭비다. 날짜 있는 질문에는 쓰지 않는다(그 해 보고서를 봐야 하므로).
+    """
+    latest: dict[str, str] = {}
+    for r in records:
+        key = r["text"] or ""
+        if key not in latest or (r["rcept_no"] or "") > latest[key]:
+            latest[key] = r["rcept_no"] or ""
+    return [r for r in records if (r["rcept_no"] or "") == latest[r["text"] or ""]]
+
+
 def has_date(question: str) -> bool:
     """질문이 특정 시점을 말하나. 아니면 전문검색은 최신 보고서를 먼저 놓는다 (FULLTEXT_QUERY의 $prefer_latest)."""
     return bool(_DATED_RE.search(question))
@@ -143,6 +157,8 @@ class Neo4jHybridRetriever:
             lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=self.fetch, corp=corp, k=self.fetch,
                                                                     section_words=words or None, prefer_latest=not has_date(question),
                                                                     database_=self.database).records])
+        if not has_date(question):
+            lists = [keep_latest_copy(lst) for lst in lists]   # 날짜 없는 질문: 같은 글의 여러 해 복사본 중 최신만 (d007)
         fused = rrf_fuse(lists)
         if self.reranker:
             top = [rec for rec, _ in fused[: self.rerank_candidates]]
