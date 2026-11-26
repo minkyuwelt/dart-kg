@@ -11,6 +11,8 @@ RRF(Reciprocal Rank Fusion): 조각마다 Σ 1/(RRF_K + 그 목록에서의 순�
 
 from __future__ import annotations
 
+import re
+
 import duckdb
 
 from eval.metrics import Hit
@@ -41,13 +43,24 @@ ORDER BY score DESC LIMIT $k
 
 # $section_words: 질문의 섹션 이름 낱말(text_normalize.section_terms). 섹션 경로에 그 말이 든 조각을 먼저 놓고 그 안에서 점수 순.
 # 왜: "연혁"은 연혁 절의 꼬리표에도, 주주 절 본문("최대주주의 주요 연혁")에도 있다. 질문이 섹션 이름을 말했으면 그 섹션의 조각이 답일 가능성이 훨씬 크다
+# $prefer_latest: 질문에 연도·날짜가 없으면 최신 보고서 조각을 먼저. 접수번호는 YYYYMMDD로 시작해 문자열 내림차순이 곧 최신순.
+# 왜(2026-11-26 d007): "신한라이프의 주요 사업 부문은?"에 5개년 보고서의 같은 "사업의 개요" 조각이 모두 걸려 옛 보고서가 앞자리를 차지했고,
+# RRF가 그것을 상위 5개에 섞어 정답(최신 보고서)이 밀렸다. 날짜 없는 질문은 "지금 기준"으로 답하는 것이 이 시스템의 원칙(라우터 기준일도 오늘)
 FULLTEXT_QUERY = f"""
 CALL db.index.fulltext.queryNodes('{FULLTEXT_INDEX}', $q, {{limit: $n}}) YIELD node AS c, score
 WHERE $corp IS NULL OR c.corp_code = $corp
-WITH c, score, CASE WHEN $section_words IS NOT NULL AND any(w IN $section_words WHERE c.path CONTAINS w) THEN 1 ELSE 0 END AS in_section
+WITH c, score, CASE WHEN $section_words IS NOT NULL AND any(w IN $section_words WHERE c.path CONTAINS w) THEN 1 ELSE 0 END AS in_section,
+     CASE WHEN $prefer_latest THEN c.rcept_no ELSE '' END AS recency
 RETURN c.rcept_no AS rcept_no, c.file_name AS file_name, c.section_id AS section_id, c.path AS path, score, c.text AS text
-ORDER BY in_section DESC, score DESC LIMIT $k
+ORDER BY in_section DESC, recency DESC, score DESC LIMIT $k
 """
+
+_DATED_RE = re.compile(r"(?:19|20)\d{2}\s*년|\d{4}[.\-/]\d{1,2}|지난|작년|전년|당시|이전|직전|년도|기준")
+
+
+def has_date(question: str) -> bool:
+    """질문이 특정 시점을 말하나. 아니면 전문검색은 최신 보고서를 먼저 놓는다 (FULLTEXT_QUERY의 $prefer_latest)."""
+    return bool(_DATED_RE.search(question))
 
 
 def load_section_words(con: duckdb.DuckDBPyConnection | None) -> set[str] | None:
@@ -94,7 +107,7 @@ class Neo4jFulltextRetriever:
         corp = guess_corp_code(self.con, question) if (self.corp_filter and self.con is not None) else None
         words = section_terms(question, self.section_words) if self.section_words else None
         return _hits(self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=k, corp=corp, k=k, section_words=words or None,
-                                               database_=self.database).records)
+                                               prefer_latest=not has_date(question), database_=self.database).records)
 
 
 def rrf_fuse(ranked_lists: list[list[dict]], key=lambda r: (r["rcept_no"], r["file_name"], r["section_id"], r["path"], r["text"])) -> list[tuple[dict, float]]:
@@ -128,7 +141,8 @@ class Neo4jHybridRetriever:
         if q:
             words = section_terms(question, self.section_words) if self.section_words else None
             lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=self.fetch, corp=corp, k=self.fetch,
-                                                                    section_words=words or None, database_=self.database).records])
+                                                                    section_words=words or None, prefer_latest=not has_date(question),
+                                                                    database_=self.database).records])
         fused = rrf_fuse(lists)
         if self.reranker:
             top = [rec for rec, _ in fused[: self.rerank_candidates]]

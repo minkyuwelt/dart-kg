@@ -137,7 +137,13 @@ class LoadChunksTest(unittest.TestCase):
         self.assertIn("db.index.fulltext.queryNodes('chunk_text'", q)
         self.assertEqual(p["q"], '("배당은" OR "배당") OR (("배당은" OR "배당") AND "KB 금융")')   # 섹션 낱말(배당) 필수, 회사명은 선택
         self.assertEqual(p["section_words"], ["배당은", "배당"])                 # 섹션 경로에 '배당'이 든 조각을 먼저
-        self.assertIn("ORDER BY in_section DESC, score DESC", q)
+        self.assertIn("ORDER BY in_section DESC, recency DESC, score DESC", q)
+        self.assertTrue(p["prefer_latest"])                                     # 연도 없는 질문 → 최신 보고서 먼저 (d007)
+        ft.search("2024년 KB금융 배당은?", 3)
+        self.assertFalse(drv.calls[-1][1]["prefer_latest"])
+        from eval.retrievers.neo4j import has_date
+        self.assertTrue(has_date("2024년 사업보고서 기준 대표이사는?")); self.assertTrue(has_date("2021년 12월 31일 기준"))
+        self.assertFalse(has_date("신한라이프생명보험의 주요 사업 부문은 무엇인가?"))
         self.assertEqual(ft.search("   ", 3), [])                               # 낱말이 없으면 질의하지 않음
         for bad in ("neo4j:vector", "neo4j:nope", "neo4j:vector:nope"):
             with self.assertRaises(SystemExit):
