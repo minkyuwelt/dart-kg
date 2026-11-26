@@ -95,6 +95,7 @@ class LoadChunksTest(unittest.TestCase):
         self.assertEqual((out["documents"], out["chunks"], out["skipped_no_embedding"]), (2, 0, 3))
         queries = [q for q, _ in drv.calls]
         self.assertEqual(queries[:5], [s.strip() for s in schema_statements(1024)])  # 제약·인덱스 먼저
+        self.assertIn("ON EACH [c.text_ft, c.corp_code]", schema_statements(1024)[-1])   # 회사 필터를 Lucene 안에서 걸기 위해 corp_code도 색인 (2026-11-26)
         self.assertIn("vector.dimensions`: 1024", queries[3])
         self.assertIn("`fulltext.analyzer`: 'cjk'", queries[4])
         self.assertEqual(queries[5], DOCUMENT_MERGE.strip())
@@ -167,7 +168,8 @@ class LoadChunksTest(unittest.TestCase):
         # 회사 필터 → 후보 20×20, corp 전달
         rc = make_retriever("neo4j:hybrid:kure-v3", self.con, corp_filter=True, embedder=FakeEmbedder(), driver=drv)
         rc.search("신한은행 배당", 2)
-        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 5000))    # 전문검색: 필터가 Lucene 뒤라 후보를 크게 (2026-11-26)
+        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 20))      # 전문검색: 회사를 Lucene 질의 안에서 거르므로 후보 = fetch
+        self.assertEqual(drv.calls[-1][1]["q"], 'corp_code:00149293 AND ("배당" OR ("배당" AND "신한은행"))')
         self.assertEqual((drv.calls[-2][1]["corp"], drv.calls[-2][1]["n"]), ("00149293", 400))     # 벡터: 20×20 그대로
         # 재순위는 하이브리드에만: '배당'이 든 d가 맨 위로
         from tests.test_embedding import FakeReranker

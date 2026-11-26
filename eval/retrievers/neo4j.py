@@ -21,10 +21,16 @@ from src.rag.embedding import Embedder
 from src.rag.rerank import Reranker, rerank
 
 RRF_K = 60
-# 회사 필터가 있을 때 전문검색이 Lucene에서 먼저 받아 오는 후보 수. 필터는 Lucene **뒤**에 걸리는데, 한 회사의 조각은 전체의 2%쯤(26만 중 약 4,500)이고
-# 전문검색 점수는 회사를 가리지 않아(다른 회사의 "연혁" 조각 1,300여 개가 같은 점수) 200개(20×20)로는 그 회사 조각이 거의 남지 않았다
-# (2026-11-26 d033: 필수 "연혁"에 KB국민카드 조각이 5개만 남음). Lucene은 수천 개도 수 ms라 크게 받는다. 벡터 쪽(근사 검색)은 그대로 20×20
-FULLTEXT_CANDIDATES_WITH_CORP = 5000
+
+
+def fulltext_with_corp(q: str, corp: str | None) -> str:
+    """회사 필터를 Lucene 질의 **안**에 넣는다: corp_code:00382199 AND (…). 인덱스에 corp_code 속성이 있어야 한다(load_chunks.FULLTEXT_PROPERTIES).
+
+    왜(2026-11-26, d033): 필터를 Cypher WHERE로 Lucene 뒤에 걸면, "연혁"처럼 지주 보고서의 계열회사 표에 수천 번 나오는 낱말은
+    다른 회사 조각(점수 4 이상)이 상위를 다 채워, 그 회사의 꼬리표 조각(점수 2~3)은 후보를 5,000개로 늘려도 들지 못했다.
+    질의 안에서 거르면 회사 조각만 놓고 순위를 매기므로 후보 수도 20으로 충분하다. Cypher WHERE는 안전장치로 남긴다.
+    """
+    return f"corp_code:{corp} AND ({q})" if corp else q
 
 VECTOR_QUERY = f"""
 CALL db.index.vector.queryNodes('{VECTOR_INDEX}', $n, $vec) YIELD node AS c, score
@@ -86,9 +92,9 @@ class Neo4jFulltextRetriever:
         if not q:
             return []
         corp = guess_corp_code(self.con, question) if (self.corp_filter and self.con is not None) else None
-        n = max(k * self.candidate_factor, FULLTEXT_CANDIDATES_WITH_CORP) if corp else k
         words = section_terms(question, self.section_words) if self.section_words else None
-        return _hits(self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n, corp=corp, k=k, section_words=words or None, database_=self.database).records)
+        return _hits(self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=k, corp=corp, k=k, section_words=words or None,
+                                               database_=self.database).records)
 
 
 def rrf_fuse(ranked_lists: list[list[dict]], key=lambda r: (r["rcept_no"], r["file_name"], r["section_id"], r["path"], r["text"])) -> list[tuple[dict, float]]:
@@ -120,10 +126,9 @@ class Neo4jHybridRetriever:
         lists = [[dict(r) for r in self.driver.execute_query(VECTOR_QUERY, n=n, vec=vec, corp=corp, k=self.fetch, database_=self.database).records]]
         q = fulltext_query(question, self.section_words)
         if q:
-            n_ft = max(n, FULLTEXT_CANDIDATES_WITH_CORP) if corp else n
             words = section_terms(question, self.section_words) if self.section_words else None
-            lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n_ft, corp=corp, k=self.fetch, section_words=words or None,
-                                                                    database_=self.database).records])
+            lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=self.fetch, corp=corp, k=self.fetch,
+                                                                    section_words=words or None, database_=self.database).records])
         fused = rrf_fuse(lists)
         if self.reranker:
             top = [rec for rec, _ in fused[: self.rerank_candidates]]
