@@ -35,3 +35,30 @@ with connect(s) as driver:
     want = {r["seq"] for r in rows}
     got = {h["seq"] for h in hits}
     print(f"\n섹션 조각 {len(want)}개 중 걸린 것 {len(want & got)}개, 안 걸린 seq: {sorted(want - got)}")
+
+    # 파서가 OR/AND/괄호/필드를 어떻게 읽는지 — 질의 꼴마다 이 보고서에서 걸린 조각 수와 섹션 조각(want) 중 걸린 수
+    corp = q("MATCH (c:Chunk {rcept_no: $r}) RETURN c.corp_code AS c LIMIT 1", r=rcept)[0]["c"]
+    R = f'("{term}은" OR "{term}")'
+    forms = [
+        f'"{term}"',
+        f'"{term}은"',
+        R,
+        f'"{term}" OR "주요"',
+        f'"{term}" AND "주요"',
+        f'{R} OR ({R} AND "주요")',
+        f'{R} OR ({R} AND ("2025 년" OR 2025*))',
+        f'{R} OR ({R} AND ("케이비국민카드의" OR "케이비국민카드"))',
+        f'corp_code:{corp}',
+        f'corp_code:{corp} AND "{term}"',
+        f'corp_code:{corp} AND ({R})',
+        f'corp_code:{corp} AND ({R} OR ({R} AND "주요"))',
+    ]
+    print(f"\n## 질의 꼴별 결과 (이 보고서 {rcept}, 섹션 조각 {len(want)}개 기준)")
+    for f in forms:
+        try:
+            hs = q("CALL db.index.fulltext.queryNodes('chunk_text', $t, {limit: 200000}) YIELD node AS c, score "
+                   "WHERE c.rcept_no = $r RETURN c.seq AS seq", t=f, r=rcept)
+            seqs = {h["seq"] for h in hs}
+            print(f"  {len(hs):4d}개, 섹션 조각 {len(seqs & want)}/{len(want)}  ←  {f}")
+        except Exception as e:  # noqa: BLE001 — 진단이라 파서 오류도 그대로 보여 준다
+            print(f"  오류 {type(e).__name__}: {str(e)[:100]}  ←  {f}")
