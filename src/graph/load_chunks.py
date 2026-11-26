@@ -40,6 +40,11 @@ DEFAULT_MODEL = "kure-v3"
 DEFAULT_STRATEGY = "section_path"
 VECTOR_INDEX = "chunk_embedding"
 FULLTEXT_INDEX = "chunk_text"
+# 전문검색 인덱스 속성. corp_code를 함께 넣는 이유(2026-11-26, d033): 회사 필터를 Lucene **안**에서 걸기 위해서다.
+# 전에는 Lucene이 전 회사에서 상위 n개를 고른 뒤 Cypher WHERE로 회사를 걸렀는데, "연혁"처럼 지주 보고서의 계열회사 표에 수천 번 나오는
+# 낱말은 다른 회사 조각이 상위를 다 채워 그 회사 조각이 n개(5,000까지 늘려도) 안에 들지 못했다. corp_code가 인덱스 속성이면
+# 질의에 `corp_code:00382199 AND (…)`을 넣어 회사 안에서 순위를 매긴다. cjk 분석기는 숫자열을 토큰 하나로 둔다
+FULLTEXT_PROPERTIES = ("text_ft", "corp_code")
 
 
 def schema_statements(dim: int) -> list[str]:
@@ -50,9 +55,44 @@ def schema_statements(dim: int) -> list[str]:
         "CREATE INDEX chunk_corp_code IF NOT EXISTS FOR (c:Chunk) ON (c.corp_code)",
         f"CREATE VECTOR INDEX {VECTOR_INDEX} IF NOT EXISTS FOR (c:Chunk) ON (c.embedding) "
         f"OPTIONS {{indexConfig: {{`vector.dimensions`: {dim}, `vector.similarity_function`: 'cosine'}}}}",
-        f"CREATE FULLTEXT INDEX {FULLTEXT_INDEX} IF NOT EXISTS FOR (c:Chunk) ON EACH [c.text_ft] "
-        "OPTIONS {indexConfig: {`fulltext.analyzer`: 'cjk'}}",
+        fulltext_index_statement(),
     ]
+
+
+def fulltext_index_statement() -> str:
+    props = ", ".join(f"c.{p}" for p in FULLTEXT_PROPERTIES)
+    return (f"CREATE FULLTEXT INDEX {FULLTEXT_INDEX} IF NOT EXISTS FOR (c:Chunk) ON EACH [{props}] "
+            "OPTIONS {indexConfig: {`fulltext.analyzer`: 'cjk'}}")
+
+
+def fulltext_index_properties(driver, database: str = "neo4j") -> list[str] | None:
+    """지금 Neo4j에 있는 전문검색 인덱스의 속성 목록. 없으면 None. stats가 코드(FULLTEXT_PROPERTIES)와 다른지 보여 준다."""
+    recs = driver.execute_query("SHOW FULLTEXT INDEXES YIELD name, properties WHERE name = $n RETURN properties", n=FULLTEXT_INDEX,
+                                database_=database).records
+    return list(recs[0]["properties"]) if recs else None
+
+
+def rebuild_fulltext_index(driver, database: str = "neo4j", timeout: float = 1800.0, log=print) -> list[str]:
+    """전문검색 인덱스를 지우고 코드의 속성(FULLTEXT_PROPERTIES)으로 다시 만든 뒤 ONLINE이 될 때까지 기다린다.
+
+    노드·벡터는 건드리지 않는다 — Neo4j가 뒤에서 조각 글을 다시 색인할 뿐이다(26만 조각에 몇 분). 인덱스 속성을 바꿀 때 한 번 돈다.
+    IF NOT EXISTS는 있는 인덱스를 바꾸지 않으므로 지우고 만드는 수밖에 없다.
+    """
+    driver.execute_query(f"DROP INDEX {FULLTEXT_INDEX} IF EXISTS", database_=database)
+    driver.execute_query(fulltext_index_statement(), database_=database)
+    log(f"인덱스 {FULLTEXT_INDEX} 다시 만듦: {list(FULLTEXT_PROPERTIES)} — 색인이 끝날 때까지 기다림")
+    t0 = time.perf_counter()
+    while True:
+        recs = driver.execute_query("SHOW INDEXES YIELD name, state, populationPercent WHERE name = $n RETURN state, populationPercent",
+                                    n=FULLTEXT_INDEX, database_=database).records
+        state, pct = (recs[0]["state"], recs[0]["populationPercent"]) if recs else ("?", 0)
+        if state == "ONLINE":
+            log(f"ONLINE ({time.perf_counter() - t0:.0f}초)")
+            return list(FULLTEXT_PROPERTIES)
+        if state == "FAILED" or time.perf_counter() - t0 > timeout:
+            raise RuntimeError(f"전문검색 인덱스 상태 {state} ({pct:.0f}%)")
+        log(f"  {state} {pct:.0f}%")
+        time.sleep(5)
 
 
 DOCUMENT_MERGE = """
@@ -229,6 +269,7 @@ def main(argv=None) -> int:
     r = sub.add_parser("reset")
     r.add_argument("--model", default=DEFAULT_MODEL)
     r.add_argument("--yes", action="store_true", help="확인 없이 지운다")
+    sub.add_parser("reindex-fulltext", help="전문검색 인덱스만 지우고 코드의 속성으로 다시 만든다 (노드·벡터 그대로, 몇 분)")
     args = ap.parse_args(argv)
 
     s = settings()
@@ -245,8 +286,13 @@ def main(argv=None) -> int:
             print(f"Neo4j   Document {n['documents']}  Chunk {n['chunks']:,}  HAS_CHUNK {n['rels']:,}")
             for name, state in n["indexes"].items():
                 print(f"  인덱스 {name}: {state}")
+            props = fulltext_index_properties(driver, s.database)
+            if props is not None and props != list(FULLTEXT_PROPERTIES):
+                print(f"  전문검색 인덱스 속성이 코드와 다름: Neo4j {props} vs 코드 {list(FULLTEXT_PROPERTIES)} → python -m src.graph.load_chunks reindex-fulltext")
             ok = d["documents"] == n["documents"] and d["chunks_with_embedding"] == n["chunks"] == n["rels"]
             print("일치" if ok else "불일치 — build를 다시 돌리면 빠진 것만 채워진다 (MERGE)")
+        elif args.cmd == "reindex-fulltext":
+            rebuild_fulltext_index(driver, s.database)
         else:
             if not args.yes and input("Neo4j의 노드·인덱스를 전부 지웁니다. 계속? (yes/no) ").strip() != "yes":
                 return 1

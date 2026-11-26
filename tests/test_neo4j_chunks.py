@@ -95,6 +95,7 @@ class LoadChunksTest(unittest.TestCase):
         self.assertEqual((out["documents"], out["chunks"], out["skipped_no_embedding"]), (2, 0, 3))
         queries = [q for q, _ in drv.calls]
         self.assertEqual(queries[:5], [s.strip() for s in schema_statements(1024)])  # 제약·인덱스 먼저
+        self.assertIn("ON EACH [c.text_ft, c.corp_code]", schema_statements(1024)[-1])   # 회사 필터를 Lucene 안에서 걸기 위해 corp_code도 색인 (2026-11-26)
         self.assertIn("vector.dimensions`: 1024", queries[3])
         self.assertIn("`fulltext.analyzer`: 'cjk'", queries[4])
         self.assertEqual(queries[5], DOCUMENT_MERGE.strip())
@@ -128,14 +129,36 @@ class LoadChunksTest(unittest.TestCase):
         # 전문검색: 검색어는 fulltext_query (따옴표 안 전처리)
         ft = make_retriever("neo4j:fulltext", self.con, driver=drv)
         self.assertEqual(ft.name, "neo4j-fulltext")
-        ft.search("KB금융 대표이사", 3)
+        n_before = len(drv.calls)
+        self.assertEqual(ft.search("KB금융 대표이사", 3), [])                  # 섹션 낱말이 없는 질문은 질의하지 않음 (2026-11-26)
+        self.assertEqual(len(drv.calls), n_before)
+        ft.search("KB금융 배당은?", 3)
         q, p = drv.calls[-1]
         self.assertIn("db.index.fulltext.queryNodes('chunk_text'", q)
-        self.assertEqual(p["q"], '"KB 금융" AND "대표이사"')
+        self.assertEqual(p["q"], '("배당은" OR "배당") OR (("배당은" OR "배당") AND "KB 금융")')   # 섹션 낱말(배당) 필수, 회사명은 선택
+        self.assertEqual(p["section_words"], ["배당은", "배당"])                 # 섹션 경로에 '배당'이 든 조각을 먼저
+        self.assertIn("ORDER BY in_section DESC, recency DESC, score DESC", q)
+        self.assertTrue(p["prefer_latest"])                                     # 연도 없는 질문 → 최신 보고서 먼저 (d007)
+        ft.search("2024년 KB금융 배당은?", 3)
+        self.assertFalse(drv.calls[-1][1]["prefer_latest"])
+        from eval.retrievers.neo4j import has_date
+        self.assertTrue(has_date("2024년 사업보고서 기준 대표이사는?")); self.assertTrue(has_date("2021년 12월 31일 기준"))
+        self.assertFalse(has_date("신한라이프생명보험의 주요 사업 부문은 무엇인가?"))
         self.assertEqual(ft.search("   ", 3), [])                               # 낱말이 없으면 질의하지 않음
         for bad in ("neo4j:vector", "neo4j:nope", "neo4j:vector:nope"):
             with self.assertRaises(SystemExit):
                 make_retriever(bad, self.con, driver=drv, embedder=None if bad.endswith("nope") else FakeEmbedder())
+
+    def test_keep_latest_copy_drops_older_duplicates_only_for_undated_questions(self):
+        from eval.retrievers.neo4j import keep_latest_copy
+        old = {"rcept_no": "20240314000001", "file_name": "f", "section_id": 1, "path": "II. 사업의 내용 > 1. 사업의 개요", "score": 0.9, "text": "생명보험업"}
+        new = {**old, "rcept_no": "20260331000001", "score": 0.89}
+        other = {**old, "text": "배당", "score": 0.5}
+        self.assertEqual(keep_latest_copy([old, new, other]), [new, other])       # 같은 글은 최신 접수번호만, 순서는 그대로
+        drv = FakeDriver({"vector": [old, new, other], "fulltext": []})
+        r = make_retriever("neo4j:hybrid:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv)
+        self.assertEqual([h.rcept_no for h in r.search("주요 사업 부문은?", 3)], ["20260331000001", "20240314000001"])  # 복사본 제거 → 2개
+        self.assertEqual(len(r.search("2024년 주요 사업 부문은?", 3)), 3)         # 날짜 있는 질문은 그대로
 
     def test_rrf_and_hybrid_retriever(self):
         def rec(rcept, sid, text):
@@ -158,11 +181,13 @@ class LoadChunksTest(unittest.TestCase):
         q_vec, p_vec = drv.calls[-2]
         q_ft, p_ft = drv.calls[-1]
         self.assertIn("db.index.vector", q_vec); self.assertIn("db.index.fulltext", q_ft)
-        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["q"]), (20, 20, 20, '"우리은행" AND "배당"'))   # 양쪽 20개씩 가져와 합침
+        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["n"], p_ft["q"]), (20, 20, 20, 20, '"배당" OR ("배당" AND "우리은행")'))   # 양쪽 20개씩 가져와 합침 (필터 없음)
         # 회사 필터 → 후보 20×20, corp 전달
         rc = make_retriever("neo4j:hybrid:kure-v3", self.con, corp_filter=True, embedder=FakeEmbedder(), driver=drv)
         rc.search("신한은행 배당", 2)
-        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 400))
+        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 20))      # 전문검색: 회사를 Lucene 질의 안에서 거르므로 후보 = fetch
+        self.assertEqual(drv.calls[-1][1]["q"], 'corp_code:00149293 AND ("배당" OR ("배당" AND "신한은행"))')
+        self.assertEqual((drv.calls[-2][1]["corp"], drv.calls[-2][1]["n"]), ("00149293", 400))     # 벡터: 20×20 그대로
         # 재순위는 하이브리드에만: '배당'이 든 d가 맨 위로
         from tests.test_embedding import FakeReranker
         rr = make_retriever("neo4j:hybrid:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv, reranker=FakeReranker())

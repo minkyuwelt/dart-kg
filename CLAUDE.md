@@ -19,7 +19,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
-현재 단계: **Phase 3·4 완료** (2026-11-26). Phase 2는 2026-11-23(백필 618개 보고서, 시점 질의 5개 검증). Phase 3·4는 평가까지 끝남 — 검색 hit@5 0.979(48개), LLM 답 맞음 46/부분 6/틀림 1(53개), 라우팅 규칙만 53/53(일반 4개는 T2 허용) → `docs/decisions/0010`·`0011`, `docs/devlog/2026-11-26.md`
+현재 단계: **Phase 3·4 완료** (2026-11-26). Phase 2는 2026-11-23(백필 618개 보고서, 시점 질의 5개 검증). Phase 3·4는 평가까지 끝남 — 검색 hit@5 공시 0.979·섹션 0.708(48개), LLM 답 맞음 46/부분 7/틀림 0(53개), 라우팅 규칙만 53/53(일반 4개는 T2 허용) → `docs/decisions/0010`·`0011`, `docs/devlog/2026-11-26.md`
 다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보"), 매일 운영 확인, 화면(Next.js, 0013). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
 방향: `docs/plans/usecases.md` — 누가 쓰나, 업무 질문 11개, 비슷한 서비스와 차별점 5개. 기능을 넣을지는 이 문서의 질문을 돕는지로 판단한다
 Phase 4 설계 전 조사: `docs/plans/phase4-research.md` — 논문·도구마다 채택/보류/제외와 이유. 0011은 이 문서 5절의 뼈대로 쓴다
@@ -59,7 +59,7 @@ docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
 - 실행 환경: 학원 Windows 노트북 + Docker Desktop(WSL2)
 - Dagster와 DuckDB는 `.venv`에서 바로 실행 (`dagster dev`). DuckDB 파일은 `data/` 아래에 두며 커밋하지 않음
 - Docker는 Neo4j에만 사용 (Phase 3부터, docker-compose)
-  - 노트북을 켜고 작업을 시작할 때 `python -m src.graph.load_chunks stats`로 DuckDB 수와 Neo4j 수가 맞는지 본다. Neo4j가 0이면 Docker Desktop 재시작 때 `data/neo4j/` 폴더가 컨테이너에 안 붙어 빈 DB가 새로 만들어진 것 → `docker compose down && docker compose up -d`로 다시 붙인다 (2026-11-26, 데이터는 그대로 남아 있음. `-v`는 붙이지 않는다)
+  - 노트북을 켜고 작업을 시작할 때 `python -m src.graph.load_chunks stats`로 DuckDB 수와 Neo4j 수가 맞는지 본다. 전문검색 인덱스 속성이 코드와 다르다고 나오면 `python -m src.graph.load_chunks reindex-fulltext`(노드·벡터 그대로, 몇 분). Neo4j가 0이면 Docker Desktop 재시작 때 `data/neo4j/` 폴더가 컨테이너에 안 붙어 빈 DB가 새로 만들어진 것 → `docker compose down && docker compose up -d`로 다시 붙인다 (2026-11-26, 데이터는 그대로 남아 있음. `-v`는 붙이지 않는다)
 - 노트북에서 다른 수업 프로젝트 컨테이너가 5432·8080·7474·7687 포트를 쓰고 있음 → Docker로 띄우는 서비스의 노트북 쪽 포트는 `.env`로 바꿀 수 있게 할 것
 - 프로젝트 폴더는 WSL 파일시스템 안에 둠
 - 줄바꿈은 LF로 통일 (`.gitattributes`)
