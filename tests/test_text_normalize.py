@@ -21,6 +21,14 @@ class TextNormalizeTest(unittest.TestCase):
     def test_fulltext_query_quotes_each_word_after_normalizing_inside(self):
         self.assertEqual(fulltext_query("KB금융"), '"KB 금융"')                    # 따옴표 안에서 전처리 — 밖이면 "KB" AND "금융"이 됨
         self.assertEqual(fulltext_query("대표이사 변경"), '"대표이사" AND "변경"')
+
+    def test_year_word_also_matches_dotted_dates(self):
+        # d033: 연혁 조각은 "2025.02.18"로만 적혀 "2025 년" 구절에 안 걸렸다 → 연도 낱말은 앞부분 일치도 함께 (2026-11-26)
+        self.assertEqual(fulltext_query("2025년 주요 연혁"), '("2025 년" OR 2025*) AND "주요" AND "연혁"')
+        self.assertEqual(fulltext_query("2024년말 기준"), '("2024 년말" OR 2024*) AND "기준"')
+        self.assertEqual(fulltext_query("2025년의 배당"), '("2025 년의" OR 2025*) AND "배당"')
+        self.assertEqual(fulltext_query("1,400만 돌파"), '"1,400 만" AND "돌파"')      # 연도가 아닌 숫자는 그대로
+        self.assertEqual(fulltext_query("2025.02.18 연혁"), '"2025.02.18" AND "연혁"')  # 날짜 그대로 물으면 구절 그대로
         self.assertEqual(fulltext_query("  최대주주   지분율 "), '"최대주주" AND "지분율"')
         self.assertEqual(fulltext_query(""), "")
         self.assertEqual(fulltext_query('그는 "주주"다'), '"그는" AND "\\"주주\\"다"')  # 따옴표는 이스케이프

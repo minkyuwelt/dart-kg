@@ -29,12 +29,36 @@ def _escape_lucene_phrase(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+# "2025년", "2025년말", "2025년도", "2025년중" 같은 연도 낱말 (조사가 붙은 "2025년의"도 같은 꼴)
+_YEAR_WORD_RE = re.compile(r"^((?:19|20)\d{2})년[가-힣]{0,2}$")
+
+
+def _term(raw: str) -> str | None:
+    """낱말 하나 → Lucene 조각. 기본은 전처리한 구절 "…".
+
+    연도 낱말("2025년")은 '("2025 년" OR 2025*)'로 넓힌다 (2026-11-26, 평가 d033).
+    왜: 공시는 연도를 "2025년"이 아니라 날짜 "2025.02.18"로 적는 곳이 많다(연혁·수상·발행 실적). 토큰 "2025.02.18"은
+    구절 "2025 년"과 맞지 않아, 연혁 질문에서 정답 조각(날짜만 있음)이 전문검색에 걸리지 않고 "2025년말"이 적힌 재무 조각이 올라왔다.
+    앞부분 일치 2025*는 "2025.02.18"과 "2025"(← "2025년"의 전처리) 둘 다 잡는다. 다른 낱말은 그대로 AND라 정밀도는 유지된다.
+    색인 쪽을 바꾸지 않으므로 다시 적재할 필요가 없다.
+    """
+    norm = normalize_for_fulltext(raw)
+    if not norm:
+        return None
+    phrase = f'"{_escape_lucene_phrase(norm)}"'
+    m = _YEAR_WORD_RE.match(raw)
+    if m:
+        return f"({phrase} OR {m.group(1)}*)"
+    return phrase
+
+
 def fulltext_query(question: str) -> str:
     """사용자가 띄어 쓴 낱말마다 **따옴표 안에서** 전처리한 구절 검색, 낱말끼리는 AND.
 
     'KB금융' → '"KB 금융"' (KB와 금융이 붙어 있을 때만), '대표이사 변경' → '"대표이사" AND "변경"'.
     전처리를 따옴표 밖에서 하면 'KB금융' → '"KB" AND "금융"'이 되어 두 조각이 문서 아무 데나 따로 있어도 걸린다(PR #13 리뷰).
+    연도 낱말은 _term이 '("2025 년" OR 2025*)'로 넓힌다.
     빈 낱말은 버린다. 낱말이 하나도 없으면 빈 문자열 — 호출하는 쪽에서 전문검색을 건너뛴다.
     """
-    terms = [normalize_for_fulltext(t) for t in question.split()]
-    return " AND ".join(f'"{_escape_lucene_phrase(t)}"' for t in terms if t)
+    terms = [_term(t) for t in question.split()]
+    return " AND ".join(t for t in terms if t)
