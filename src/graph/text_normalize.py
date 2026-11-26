@@ -131,7 +131,13 @@ def fulltext_query(question: str, section_words: set[str] | None = None) -> str:
             (required if is_section_word(w, section_words) else optional).append(t)
     if not required:
         return ""
-    return " ".join([f"+{t}" for t in required] + optional)
+    # 필수는 AND로 묶고, 선택 낱말은 "(필수) OR ((필수) AND 선택)" 꼴로 덧붙인다. 결과는 모두 필수를 품고, 선택을 더 맞춘 조각은 점수가 높다.
+    # 왜 Lucene의 +/빈 낱말(SHOULD) 문법을 안 쓰나: 빈 낱말의 뜻이 파서의 기본 연산자(OR/AND)에 달려 있고, 노트북(Neo4j 2026.06)에서
+    # '+("연혁") "주요" …'가 모든 낱말을 요구하는 것처럼 동작했다(2026-11-26 d033: 연혁 절 조각이 하나도 안 나옴). 명시적 OR/AND는 기본값과 무관하다
+    req = required[0] if len(required) == 1 else "(" + " AND ".join(required) + ")"
+    if not optional:
+        return req
+    return " OR ".join([req] + [f"({req} AND {t})" for t in optional])
 
 
 _PATH_SPLIT_RE = re.compile(r"[^가-힣]+")

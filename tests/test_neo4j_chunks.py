@@ -134,7 +134,7 @@ class LoadChunksTest(unittest.TestCase):
         ft.search("KB금융 배당은?", 3)
         q, p = drv.calls[-1]
         self.assertIn("db.index.fulltext.queryNodes('chunk_text'", q)
-        self.assertEqual(p["q"], '+("배당은" OR "배당") "KB 금융"')              # 섹션 낱말(배당) 필수, 회사명은 선택
+        self.assertEqual(p["q"], '("배당은" OR "배당") OR (("배당은" OR "배당") AND "KB 금융")')   # 섹션 낱말(배당) 필수, 회사명은 선택
         self.assertEqual(p["section_words"], ["배당은", "배당"])                 # 섹션 경로에 '배당'이 든 조각을 먼저
         self.assertIn("ORDER BY in_section DESC, score DESC", q)
         self.assertEqual(ft.search("   ", 3), [])                               # 낱말이 없으면 질의하지 않음
@@ -163,7 +163,7 @@ class LoadChunksTest(unittest.TestCase):
         q_vec, p_vec = drv.calls[-2]
         q_ft, p_ft = drv.calls[-1]
         self.assertIn("db.index.vector", q_vec); self.assertIn("db.index.fulltext", q_ft)
-        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["n"], p_ft["q"]), (20, 20, 20, 20, '+"배당" "우리은행"'))   # 양쪽 20개씩 가져와 합침 (필터 없음)
+        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["n"], p_ft["q"]), (20, 20, 20, 20, '"배당" OR ("배당" AND "우리은행")'))   # 양쪽 20개씩 가져와 합침 (필터 없음)
         # 회사 필터 → 후보 20×20, corp 전달
         rc = make_retriever("neo4j:hybrid:kure-v3", self.con, corp_filter=True, embedder=FakeEmbedder(), driver=drv)
         rc.search("신한은행 배당", 2)

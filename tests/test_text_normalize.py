@@ -43,10 +43,14 @@ class TextNormalizeTest(unittest.TestCase):
         self.assertTrue({"회사의", "회사", "연혁", "주주에", "주주", "배당에", "배당", "임원", "직원"} <= vocab)
         self.assertFalse({"관한", "사항", "개요"} & vocab)                        # 섹션을 가리키지 못하는 낱말은 사전에서 뺀다
         q = fulltext_query("케이비국민카드의 2025년 중 주요 연혁은 무엇인가?", vocab)
-        self.assertEqual(q, '+("연혁은" OR "연혁") ("케이비국민카드의" OR "케이비국민카드") ("2025 년" OR 2025*) "주요"')
+        R = '("연혁은" OR "연혁")'
+        self.assertEqual(q, f'{R} OR ({R} AND ("케이비국민카드의" OR "케이비국민카드")) OR ({R} AND ("2025 년" OR 2025*)) OR ({R} AND "주요")')
+        self.assertNotIn("+", q)   # 빈 낱말·+ 문법은 파서 기본 연산자에 따라 뜻이 달라져 쓰지 않는다
         # 섹션 낱말을 품은 낱말("배당금은" ⊃ "배당")도 필수 — 섹션 이름은 "배당에 관한 사항"이지만 질문은 "배당금"이라고 쓴다
+        B = '("현금배당금은" OR "현금배당금")'
         self.assertEqual(fulltext_query("우리은행의 2025년 주당 현금배당금은?", vocab),
-                         '+("현금배당금은" OR "현금배당금") ("우리은행의" OR "우리은행") ("2025 년" OR 2025*) "주당"')
+                         f'{B} OR ({B} AND ("우리은행의" OR "우리은행")) OR ({B} AND ("2025 년" OR 2025*)) OR ({B} AND "주당")')
+        self.assertEqual(fulltext_query("배당 임원", vocab), '("배당" AND "임원")')   # 필수만 있으면 AND로 묶음
         self.assertEqual(section_terms("케이비국민카드의 2025년 중 주요 연혁은 무엇인가?", vocab), ["연혁은", "연혁"])
         self.assertEqual(section_terms("우리은행의 2025년 주당 현금배당금은?", vocab), ["현금배당금은", "현금배당금"])
         # 섹션 낱말이 없는 질문은 빈 질의 → 전문검색 건너뜀(벡터만)
