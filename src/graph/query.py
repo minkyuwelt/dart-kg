@@ -31,7 +31,7 @@ from src.graph import templates as T
 from src.graph.router import Plan, route
 
 MAX_RELATION_ROWS = 50   # LLM에 넘기는 관계 행 상한 (phase4-research 3절 5번 예산)
-MAX_DERIVED_ROWS = 50    # LLM에 넘기는 파생 값 줄 상한. 계산(derive)은 전체로 하고 표에만 자른다
+MAX_DERIVED_ROWS = 80    # LLM에 넘기는 파생 값 줄 상한. 계산(derive)은 전체로 하고 표에만 자른다 (50 → 80: g05 간접만 45곳 + 직접 15곳이 넘침, 2026-11-26)
 EVIDENCE_LIMIT = 20
 EVIDENCE_PER_DOC = 3   # 보고서 하나에서 가져올 조각 수. 검색 평가가 상위 5개를 보므로 보고서 2곳 이상이 그 안에 들도록
 
@@ -270,20 +270,24 @@ def build_context(question: str, driver, con, today: date | None = None, lineage
 
 
 def to_text(ctx: GraphContext) -> str:
-    """LLM에 넘길 관계 표. 유효 기간과 근거 접수번호를 사실 바로 옆에 둔다 (phase4-research 2.1·2.3)."""
-    lines = [f"[그래프 관계표] 기준일 {ctx.plan.as_of.isoformat()} · 규칙 '{ctx.plan.rule}'",
-             "출발 | 관계 | 도착 | 값 | 유효시작 | 유효끝 | 근거접수번호"]
-    for r in ctx.relations:
-        # 쉼표가 아니라 " | "로 나눈다: 값 칸에 "100.0%, 최대주주"·"1,000원"처럼 쉼표가 들어가 칸이 밀리기 때문
-        lines.append(" | ".join(str(x) if x is not None else "" for x in
-                              (r["src"], r["rel"], r["dst"], r["value"], r["valid_from"], r["valid_to"] or "(유효)", r["source_rcept_no"])))
-    if ctx.truncated:
-        lines.append(f"(관계 {ctx.truncated}개 더 있음 — 잘림)")
+    """LLM에 넘길 관계 표. 유효 기간과 근거 접수번호를 사실 바로 옆에 둔다 (phase4-research 2.1·2.3).
+
+    파생 값을 관계 행보다 **앞에** 둔다. LLM에 넘길 때 글자 상한(ask.GRAPH_MAX_CHARS)으로 뒤가 잘리는데, 계층 질문의 답
+    (단계별 회사 수, 간접만 판정, 간접 지분율)은 파생 값에 있다. 2026-11-26 채점표에서 g05는 관계 50행이 상한을 다 써서
+    파생 값이 통째로 잘렸고 LLM이 "찾지 못함"이라고 답했다.
+    """
+    lines = [f"[그래프 관계표] 기준일 {ctx.plan.as_of.isoformat()} · 규칙 '{ctx.plan.rule}'"]
     if ctx.derived:
         lines.append("[파생 값 — 규칙으로 계산, 공시에 그대로 적힌 값 아님]")
         lines += [f"{d['subject']}: {d['value']}  (규칙: {d['rule']})" for d in ctx.derived[:MAX_DERIVED_ROWS]]
         if len(ctx.derived) > MAX_DERIVED_ROWS:
             lines.append(f"(파생 값 {len(ctx.derived) - MAX_DERIVED_ROWS}개 더 있음 — 잘림. 합계는 위 '단계별 회사 수' 줄)")
+    lines.append(f"[관계 {len(ctx.relations)}행" + (f", {ctx.truncated}개 더 있음 — 잘림" if ctx.truncated else "") + "]")
+    lines.append("출발 | 관계 | 도착 | 값 | 유효시작 | 유효끝 | 근거접수번호")
+    for r in ctx.relations:
+        # 쉼표가 아니라 " | "로 나눈다: 값 칸에 "100.0%, 최대주주"·"1,000원"처럼 쉼표가 들어가 칸이 밀리기 때문
+        lines.append(" | ".join(str(x) if x is not None else "" for x in
+                              (r["src"], r["rel"], r["dst"], r["value"], r["valid_from"], r["valid_to"] or "(유효)", r["source_rcept_no"])))
     if not ctx.relations:
         lines.append("(그래프에서 찾은 관계 없음)")
     return "\n".join(lines)

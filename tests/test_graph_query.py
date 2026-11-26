@@ -269,7 +269,10 @@ class GraphQueryTest(unittest.TestCase):
         self.assertIn("40.00%", derived["신한펀드"])       # 두 경로 중 큰 값 (100%×40%)
         self.assertIn("국내 공시 대상 아님", derived["신한펀드"])
         self.assertIn("1단계 2곳, 2단계 1곳 (합계 3곳, corp_code 없음 1곳)", derived[SHH])
-        self.assertIn("파생 값", Q.to_text(ctx))
+        text = Q.to_text(ctx)
+        self.assertIn("파생 값", text)
+        self.assertLess(text.index("[파생 값"), text.index("출발 | 관계 | 도착"))   # 파생 값이 관계 행보다 앞 (글자 상한에 잘리지 않게)
+        self.assertIn("[관계 ", text)
 
     def test_person_history_merges_consecutive_reports(self):
         p, bank, card = node("p9", "정상혁", "Person", None), node(SHBANK, "신한은행"), node("00000024", "신한카드")

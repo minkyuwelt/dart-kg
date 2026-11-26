@@ -22,7 +22,7 @@ VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
 
 GRAPH_LABEL = "그래프 관계표 (공시의 지분·임원 표를 그래프로 따라간 결과, 파생 값은 규칙 계산)"
-GRAPH_MAX_CHARS = 6000   # 관계 행 50개 + 파생 값이 들어가는 길이 (0011 예산)
+GRAPH_MAX_CHARS = 9000   # 파생 값 80줄 + 관계 행 50개가 들어가는 길이. 6000에서는 g05의 파생 값이 잘렸다(2026-11-26). 0011 예산(총 약 12k 토큰) 안
 
 
 @dataclass
