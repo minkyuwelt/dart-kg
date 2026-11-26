@@ -135,6 +135,19 @@ UNWIND ps AS p
     ("as_of", "outside_only"), ("corps", "must"),
 )
 
+# T4의 짝. T4가 0행일 때 "없음"이라고 말할 근거: 같은 범위(기준일·회사·사외이사 여부)에서 대조한 임원이 몇 명인지.
+# 그래프는 닫힌 세계(기준일의 대상 회사 임원은 전부 적재)라 "대조한 M명 중 겹치는 사람 0명"은 사실이지만,
+# 조각 검색(상위 k개)에서 못 찾은 것은 "없음"이 아니라 "모름"이다 — 이 둘을 가르는 숫자를 LLM이 아니라 코드가 적는다 (2026-11-26, g10)
+T4_SCOPE = Template(
+    "position_scope", "겸직 대조 범위: 그 시점 회사별 임원 수 (T4가 0행일 때 '없음'의 근거)",
+    f"""
+MATCH (pe:Person)-[r:HOLDS_POSITION]->(c:Corp)
+WHERE {at('r')} AND ($corps IS NULL OR c.key IN $corps) AND (NOT $outside_only OR r.outside)
+RETURN c.key AS corp_key, c.name AS corp_name, count(DISTINCT pe) AS persons
+ORDER BY c.name""",
+    ("as_of", "outside_only"), ("corps",),
+)
+
 T5 = Template(
     "person_history", "한 사람의 임원 이력 (시간순)",
     f"""
@@ -193,7 +206,7 @@ LIMIT $limit
     ("rcepts", "limit", "per_doc"), ("sections",),
 )
 
-TEMPLATES: dict[str, Template] = {t.name: t for t in (T1, T2, T3, T4, T5, T6, T7, T8)}
+TEMPLATES: dict[str, Template] = {t.name: t for t in (T1, T2, T3, T4, T4_SCOPE, T5, T6, T7, T8)}   # T4_SCOPE는 답 템플릿이 아니라 T4의 보조 질의
 
 # 관계의 출처 표 → 근거 조각을 찾을 섹션 이름의 일부 (사업보고서 목차 기준)
 EVIDENCE_SECTIONS = {

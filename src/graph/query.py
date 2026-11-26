@@ -42,6 +42,7 @@ class StepResult:
     params: dict
     paths: list[dict]
     note: str | None = None
+    scope: list[dict] | None = None   # shared_positions가 0행일 때: 대조한 회사별 임원 수 (position_scope). "없음"의 근거
 
 
 @dataclass
@@ -96,7 +97,12 @@ def execute(driver, plan: Plan, database: str = "neo4j") -> list[StepResult]:
                 out.append(StepResult(step.template, params, [], note="앞 단계에서 이어 갈 회사를 찾지 못함"))
                 continue
             params.update(fills[0])
-        out.append(StepResult(step.template, params, T.run(driver, step.template, params, database)))
+        result = StepResult(step.template, params, T.run(driver, step.template, params, database))
+        if step.template == "shared_positions" and not result.paths:
+            # 0행이면 "없음"인지 "데이터가 없음"인지 가려야 한다 → 같은 범위의 임원 수를 센다 (대조한 사람이 0명이면 '없음'이라 말하지 않는다)
+            scope_params = {k: params.get(k) for k in ("as_of", "outside_only", "corps")}
+            result.scope = T.run(driver, "position_scope", scope_params, database)
+        out.append(result)
     return out
 
 
@@ -152,6 +158,8 @@ def derive(steps: list[StepResult]) -> list[dict]:
             out += _derive_descendants(s)
         elif s.template == "person_history":
             out += _derive_tenures(s)
+        elif s.template == "shared_positions" and not s.paths:
+            out += _derive_no_shared(s)
         elif s.template == "corp_lineage":
             for p in s.paths:
                 for n in p["nodes"]:
@@ -197,6 +205,20 @@ def _derive_descendants(s: StepResult) -> list[dict]:
                    "value": ", ".join(f"{h}단계 {n}곳" for h, n in sorted(hop_counts.items())) + f" (합계 {len(best)}곳, "
                             f"corp_code 없음 {sum(1 for b in best.values() if not b['has_corp_code'])}곳)"})
     return out
+
+
+def _derive_no_shared(s: StepResult) -> list[dict]:
+    """겸직 템플릿이 0행일 때의 판정. 대조한 임원이 1명 이상이면 '없음'(닫힌 세계: 그 범위의 임원은 전부 적재되어 있다),
+    0명이면 '없음'이라 하지 않고 데이터가 없다고 적는다(이름 연결 실패·미적재일 수 있음). 이 구분을 LLM에 맡기지 않는다 (g10, 2026-11-26)."""
+    scope = s.scope or []
+    total = sum(int(r.get("persons") or 0) for r in scope)
+    who = "사외이사" if s.params.get("outside_only") else "임원"
+    if total == 0:
+        return [{"rule": "겸직 판정 보류: 대조 범위에 임원 데이터 없음", "subject": "겸직",
+                 "value": f"판정 불가 — 기준일 {s.params.get('as_of')}에 대조할 {who} 데이터가 없음(회사 {len(s.params.get('corps') or [])}곳). '없음'이라 답하지 말 것"}]
+    per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in scope)
+    return [{"rule": "겸직 없음 판정: 대조 범위의 임원 전원을 봄(그래프에 전부 적재됨)", "subject": "겸직",
+             "value": f"없음 — 기준일 {s.params.get('as_of')} 회사 {len(scope)}곳의 {who} {total}명 중 두 곳 이상에 있는 사람 0명 (회사별: {per})"}]
 
 
 def _derive_tenures(s: StepResult) -> list[dict]:
@@ -296,7 +318,8 @@ def to_text(ctx: GraphContext) -> str:
         lines.append(" | ".join(str(x) if x is not None else "" for x in
                               (r["src"], r["rel"], r["dst"], r["value"], r["valid_from"], r["valid_to"] or "(유효)", r["source_rcept_no"])))
     if not ctx.relations:
-        lines.append("(그래프에서 찾은 관계 없음)")
+        # 0행의 뜻은 둘: 파생 값에 "없음" 판정이 있으면 정말 없음, 없으면 그래프가 답하지 못한 것(이름 연결 실패 등)
+        lines.append("(관계 0행 — 위 파생 값에 '없음' 판정이 있으면 그것이 답. 없으면 그래프가 답하지 못한 것)")
     return "\n".join(lines)
 
 
