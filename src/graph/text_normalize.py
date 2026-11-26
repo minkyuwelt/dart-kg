@@ -95,6 +95,15 @@ def is_section_word(raw: str, section_words: set[str]) -> bool:
     return any(w in f for f in forms for w in section_words)
 
 
+def section_terms(question: str, section_words: set[str]) -> list[str]:
+    """질문에서 섹션 사전 낱말을 품은 낱말들의 꼴(조사 뗀 꼴 포함, 2글자 이상). 검색기가 '섹션 경로에 이 말이 든 조각을 먼저' 놓는 데 쓴다."""
+    out: list[str] = []
+    for w in question.split():
+        if is_section_word(w, section_words):
+            out += [f for f in _word_forms(w) if len(f) >= 2 and f not in out]
+    return out
+
+
 def fulltext_query(question: str, section_words: set[str] | None = None) -> str:
     """사용자가 띄어 쓴 낱말마다 **따옴표 안에서** 전처리한 구절 검색.
 

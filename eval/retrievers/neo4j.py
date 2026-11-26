@@ -16,11 +16,15 @@ import duckdb
 from eval.metrics import Hit
 from eval.retrievers.filters import guess_corp_code
 from src.graph.load_chunks import FULLTEXT_INDEX, VECTOR_INDEX
-from src.graph.text_normalize import fulltext_query, section_vocabulary
+from src.graph.text_normalize import fulltext_query, section_terms, section_vocabulary
 from src.rag.embedding import Embedder
 from src.rag.rerank import Reranker, rerank
 
 RRF_K = 60
+# 회사 필터가 있을 때 전문검색이 Lucene에서 먼저 받아 오는 후보 수. 필터는 Lucene **뒤**에 걸리는데, 한 회사의 조각은 전체의 2%쯤(26만 중 약 4,500)이고
+# 전문검색 점수는 회사를 가리지 않아(다른 회사의 "연혁" 조각 1,300여 개가 같은 점수) 200개(20×20)로는 그 회사 조각이 거의 남지 않았다
+# (2026-11-26 d033: 필수 "연혁"에 KB국민카드 조각이 5개만 남음). Lucene은 수천 개도 수 ms라 크게 받는다. 벡터 쪽(근사 검색)은 그대로 20×20
+FULLTEXT_CANDIDATES_WITH_CORP = 5000
 
 VECTOR_QUERY = f"""
 CALL db.index.vector.queryNodes('{VECTOR_INDEX}', $n, $vec) YIELD node AS c, score
@@ -29,11 +33,14 @@ RETURN c.rcept_no AS rcept_no, c.file_name AS file_name, c.section_id AS section
 ORDER BY score DESC LIMIT $k
 """
 
+# $section_words: 질문의 섹션 이름 낱말(text_normalize.section_terms). 섹션 경로에 그 말이 든 조각을 먼저 놓고 그 안에서 점수 순.
+# 왜: "연혁"은 연혁 절의 꼬리표에도, 주주 절 본문("최대주주의 주요 연혁")에도 있다. 질문이 섹션 이름을 말했으면 그 섹션의 조각이 답일 가능성이 훨씬 크다
 FULLTEXT_QUERY = f"""
 CALL db.index.fulltext.queryNodes('{FULLTEXT_INDEX}', $q, {{limit: $n}}) YIELD node AS c, score
 WHERE $corp IS NULL OR c.corp_code = $corp
+WITH c, score, CASE WHEN $section_words IS NOT NULL AND any(w IN $section_words WHERE c.path CONTAINS w) THEN 1 ELSE 0 END AS in_section
 RETURN c.rcept_no AS rcept_no, c.file_name AS file_name, c.section_id AS section_id, c.path AS path, score, c.text AS text
-ORDER BY score DESC LIMIT $k
+ORDER BY in_section DESC, score DESC LIMIT $k
 """
 
 
@@ -79,8 +86,9 @@ class Neo4jFulltextRetriever:
         if not q:
             return []
         corp = guess_corp_code(self.con, question) if (self.corp_filter and self.con is not None) else None
-        n = k * self.candidate_factor if corp else k
-        return _hits(self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n, corp=corp, k=k, database_=self.database).records)
+        n = max(k * self.candidate_factor, FULLTEXT_CANDIDATES_WITH_CORP) if corp else k
+        words = section_terms(question, self.section_words) if self.section_words else None
+        return _hits(self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n, corp=corp, k=k, section_words=words or None, database_=self.database).records)
 
 
 def rrf_fuse(ranked_lists: list[list[dict]], key=lambda r: (r["rcept_no"], r["file_name"], r["section_id"], r["path"], r["text"])) -> list[tuple[dict, float]]:
@@ -112,7 +120,10 @@ class Neo4jHybridRetriever:
         lists = [[dict(r) for r in self.driver.execute_query(VECTOR_QUERY, n=n, vec=vec, corp=corp, k=self.fetch, database_=self.database).records]]
         q = fulltext_query(question, self.section_words)
         if q:
-            lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n, corp=corp, k=self.fetch, database_=self.database).records])
+            n_ft = max(n, FULLTEXT_CANDIDATES_WITH_CORP) if corp else n
+            words = section_terms(question, self.section_words) if self.section_words else None
+            lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n_ft, corp=corp, k=self.fetch, section_words=words or None,
+                                                                    database_=self.database).records])
         fused = rrf_fuse(lists)
         if self.reranker:
             top = [rec for rec, _ in fused[: self.rerank_candidates]]

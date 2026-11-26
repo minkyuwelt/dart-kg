@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from src.graph.client import settings, wait_until_ready
-from src.graph.text_normalize import fulltext_query, normalize_for_fulltext, section_vocabulary
+from src.graph.text_normalize import fulltext_query, normalize_for_fulltext, section_terms, section_vocabulary
 
 
 class TextNormalizeTest(unittest.TestCase):
@@ -47,6 +47,8 @@ class TextNormalizeTest(unittest.TestCase):
         # 섹션 낱말을 품은 낱말("배당금은" ⊃ "배당")도 필수 — 섹션 이름은 "배당에 관한 사항"이지만 질문은 "배당금"이라고 쓴다
         self.assertEqual(fulltext_query("우리은행의 2025년 주당 현금배당금은?", vocab),
                          '+("현금배당금은" OR "현금배당금") ("우리은행의" OR "우리은행") ("2025 년" OR 2025*) "주당"')
+        self.assertEqual(section_terms("케이비국민카드의 2025년 중 주요 연혁은 무엇인가?", vocab), ["연혁은", "연혁"])
+        self.assertEqual(section_terms("우리은행의 2025년 주당 현금배당금은?", vocab), ["현금배당금은", "현금배당금"])
         # 섹션 낱말이 없는 질문은 빈 질의 → 전문검색 건너뜀(벡터만)
         self.assertEqual(fulltext_query("동양생명보험은 신용위험을 어떻게 측정하고 관리하는가?", vocab), "")
         # 사전이 없으면(None) 낱말끼리 OR

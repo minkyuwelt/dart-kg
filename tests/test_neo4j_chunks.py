@@ -135,6 +135,8 @@ class LoadChunksTest(unittest.TestCase):
         q, p = drv.calls[-1]
         self.assertIn("db.index.fulltext.queryNodes('chunk_text'", q)
         self.assertEqual(p["q"], '+("배당은" OR "배당") "KB 금융"')              # 섹션 낱말(배당) 필수, 회사명은 선택
+        self.assertEqual(p["section_words"], ["배당은", "배당"])                 # 섹션 경로에 '배당'이 든 조각을 먼저
+        self.assertIn("ORDER BY in_section DESC, score DESC", q)
         self.assertEqual(ft.search("   ", 3), [])                               # 낱말이 없으면 질의하지 않음
         for bad in ("neo4j:vector", "neo4j:nope", "neo4j:vector:nope"):
             with self.assertRaises(SystemExit):
@@ -161,11 +163,12 @@ class LoadChunksTest(unittest.TestCase):
         q_vec, p_vec = drv.calls[-2]
         q_ft, p_ft = drv.calls[-1]
         self.assertIn("db.index.vector", q_vec); self.assertIn("db.index.fulltext", q_ft)
-        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["q"]), (20, 20, 20, '+"배당" "우리은행"'))   # 양쪽 20개씩 가져와 합침
+        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["n"], p_ft["q"]), (20, 20, 20, 20, '+"배당" "우리은행"'))   # 양쪽 20개씩 가져와 합침 (필터 없음)
         # 회사 필터 → 후보 20×20, corp 전달
         rc = make_retriever("neo4j:hybrid:kure-v3", self.con, corp_filter=True, embedder=FakeEmbedder(), driver=drv)
         rc.search("신한은행 배당", 2)
-        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 400))
+        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 5000))    # 전문검색: 필터가 Lucene 뒤라 후보를 크게 (2026-11-26)
+        self.assertEqual((drv.calls[-2][1]["corp"], drv.calls[-2][1]["n"]), ("00149293", 400))     # 벡터: 20×20 그대로
         # 재순위는 하이브리드에만: '배당'이 든 d가 맨 위로
         from tests.test_embedding import FakeReranker
         rr = make_retriever("neo4j:hybrid:kure-v3", self.con, embedder=FakeEmbedder(), driver=drv, reranker=FakeReranker())
