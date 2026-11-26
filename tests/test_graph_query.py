@@ -210,8 +210,16 @@ class GraphQueryTest(unittest.TestCase):
         params = driver.calls[0][1]
         self.assertEqual(params["rcepts"], ["R2026", "R2021", "R2023"])   # 관계에 나온 순서, 중복 없이 (접수번호 순이 아님)
         self.assertEqual(params["per_doc"], Q.EVIDENCE_PER_DOC)
-        self.assertEqual([h.rcept_no for h in hits[:4]], ["R2026"] * 3 + ["R2021"])
+        # 보고서별로 번갈아: 세 보고서의 첫 조각이 1~3위, 그다음 둘째 조각 (2026-11-26, g05·g06에서 지주 보고서가 1~3위를 다 차지하던 문제)
+        self.assertEqual([h.rcept_no for h in hits[:6]], ["R2026", "R2021", "R2023"] * 2)
+        self.assertEqual([h.text for h in hits[:3]], ["R2026-0", "R2021-0", "R2023-0"])
         self.assertIn("collect(ch)[..$per_doc]", T.TEMPLATES["evidence_chunks"].cypher)
+
+    def test_interleave_keeps_first_seen_report_order_and_handles_uneven_counts(self):
+        recs = [{"rcept_no": r, "n": i} for i, r in enumerate(["A", "A", "A", "B", "C", "C"])]
+        got = [(r["rcept_no"], r["n"]) for r in Q.interleave_by_report(recs)]
+        self.assertEqual(got, [("A", 0), ("B", 3), ("C", 4), ("A", 1), ("C", 5), ("A", 2)])
+        self.assertEqual(Q.interleave_by_report([]), [])
 
     def test_holder_chain_then_positions(self):
         card, kbh, nps = node(KBCARD, "KB국민카드"), node(KBH, "KB금융지주"), node(f"name:{KBH}:국민연금공단", "국민연금공단", has=False)
