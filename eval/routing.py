@@ -54,8 +54,11 @@ SOLVER_TEMPLATES: dict[str, list[str]] = {
 EXPECTED_BY_ID: dict[str, list[str]] = {s.id: SOLVER_TEMPLATES[s.solver] for s in SPECS}
 
 
-# 일반 질문 중 facts_at(T7)로 가도 괜찮은 꼴: 한 회사의 한 시점 최대주주·대표이사·사외이사·임원
-_FACTS_AT_OK_RE = re.compile(r"최대주주|대표이사|사외이사|임원")
+# 일반 질문이 그래프로 가도 괜찮은 꼴 → 허용 템플릿. 질문 글의 꼴로 정한다
+_ALLOWED = [
+    (re.compile(r"최대주주|대표이사|사외이사|임원"), ["facts_at"]),          # 한 회사의 한 시점 최대주주·임원 → T7
+    (re.compile(r"출자(한|하고\s*있는)?\s*회사|출자\s*중"), ["descendants"]),  # "출자한 회사 중 장부가액 최대" → T2 깊이 1 (2026-11-26 규칙 추가)
+]
 
 
 @dataclass
@@ -65,14 +68,14 @@ class RoutingRow:
     expected: list[str]
     got: list[str]
     rule: str | None          # Plan.rule (어느 규칙이 골랐나). None이면 그래프 안 씀
-    facts_at_ok: bool = False  # 일반 질문인데 facts_at으로 가면 허용인가
+    allowed: list[list[str]] = field(default_factory=list)  # 일반 질문인데 그래프로 가도 허용인 템플릿 목록들
     used_picker: bool = False
     verdict: str = field(init=False)   # 맞음 / 허용 / 틀림
 
     def __post_init__(self):
         if self.got == self.expected:
             self.verdict = "맞음"
-        elif not self.expected and self.facts_at_ok and self.got == ["facts_at"]:
+        elif not self.expected and self.got in self.allowed:
             self.verdict = "허용"
         else:
             self.verdict = "틀림"
@@ -87,9 +90,11 @@ def expected_templates(q: Question) -> list[str]:
     return list(EXPECTED_BY_ID.get(q.id, []))
 
 
-def facts_at_allowed(q: Question) -> bool:
-    """일반 질문 중 한 시점의 최대주주·임원을 묻는 것. '없음' 유형은 공시에 없는 것을 묻는 질문이라 허용하지 않는다."""
-    return q.id not in EXPECTED_BY_ID and q.type != "없음" and bool(_FACTS_AT_OK_RE.search(q.question))
+def allowed_templates(q: Question) -> list[list[str]]:
+    """일반 질문이 그래프로 가도 허용인 템플릿 목록. '없음' 유형은 공시에 없는 것을 묻는 질문이라 허용하지 않는다."""
+    if q.id in EXPECTED_BY_ID or q.type == "없음":
+        return []
+    return [t for pat, t in _ALLOWED if pat.search(q.question)]
 
 
 def plan_templates(plan: Plan | None) -> list[str]:
@@ -116,7 +121,7 @@ def route_all(questions: list[Question], con: duckdb.DuckDBPyConnection, lineage
         before = counting.calls if counting else 0
         plan = route(q.question, con, today=today, lineage=lineage, picker=counting)
         rows.append(RoutingRow(q.id, q.graph_kind or q.type, expected_templates(q), plan_templates(plan),
-                               plan.rule if plan else None, facts_at_ok=facts_at_allowed(q),
+                               plan.rule if plan else None, allowed=allowed_templates(q),
                                used_picker=bool(counting and counting.calls > before)))
     return rows
 
@@ -127,7 +132,7 @@ def summarize(rows: list[RoutingRow]) -> dict:
     return {
         "graph_total": len(graph), "graph_ok": sum(r.ok for r in graph),
         "general_total": len(general), "general_ok": sum(r.verdict == "맞음" for r in general),
-        "general_allowed": sum(r.verdict == "허용" for r in general),   # 한 시점 최대주주·임원 질문이 facts_at으로 감
+        "general_allowed": sum(r.verdict == "허용" for r in general),   # 허용 꼴(한 시점 최대주주·임원 → T7, 출자한 회사 → T2)
         "general_wrong": sum(r.verdict == "틀림" for r in general),     # 그 밖의 일반 질문이 그래프로 감
         "graph_missed": sum(1 for r in graph if not r.got),        # 그래프 질문인데 그래프를 안 씀
         "graph_wrong": sum(1 for r in graph if r.got and not r.ok),  # 그래프로 갔지만 다른 템플릿
@@ -139,7 +144,7 @@ def markdown(rows: list[RoutingRow], label: str) -> str:
     s = summarize(rows)
     out = [f"# 라우팅 정확도 ({label}, {datetime.now():%Y-%m-%d %H:%M})", "",
            f"- 그래프 질문: {s['graph_ok']}/{s['graph_total']} (그래프 안 씀 {s['graph_missed']}, 다른 템플릿 {s['graph_wrong']})",
-           f"- 일반 질문: 그래프 안 씀 {s['general_ok']}/{s['general_total']}, 허용(한 시점 최대주주·임원 → facts_at) {s['general_allowed']}, 틀림 {s['general_wrong']}",
+           f"- 일반 질문: 그래프 안 씀 {s['general_ok']}/{s['general_total']}, 허용(최대주주·임원 → facts_at, 출자한 회사 → descendants) {s['general_allowed']}, 틀림 {s['general_wrong']}",
            f"- LLM 고르기 호출: {s['picker_calls']}건", "",
            "| id | 구분 | 기대 | 고른 것 | 규칙 | 판정 |", "|---|---|---|---|---|---|"]
     for r in rows:

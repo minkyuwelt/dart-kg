@@ -185,6 +185,13 @@ def _derive_descendants(s: StepResult) -> list[dict]:
     hop_counts: dict[int, int] = {}
     for b in best.values():
         hop_counts[b["min_hops"]] = hop_counts.get(b["min_hops"], 0) + 1
+    # 직접 출자(1단계) 중 장부가액 최대: "출자한 회사 중 장부가액이 가장 큰 곳" 질문의 답. 표에서 LLM이 최대를 고르다 틀리지 않게 규칙으로 계산
+    direct = [(p["rels"][0].get("book_value"), p["nodes"][-1]["name"]) for p in s.paths
+              if len(p["rels"]) == 1 and p["rels"][0].get("book_value") is not None]
+    if direct:
+        bv, name = max(direct)
+        out.insert(0, {"rule": "직접 출자 중 장부가액 최대", "subject": s.params.get("corp"),
+                       "value": f"{name} {bv:,.0f}원 ({bv / 1_000_000:,.0f}백만원, 직접 출자 {len(direct)}곳 중)"})
     # 합계 줄을 맨 앞에: 회사별 줄이 1,000개를 넘으면 LLM 표(to_text)는 앞쪽만 넘기므로 합계가 잘리지 않게
     out.insert(0, {"rule": "출자 경로: 단계별 회사 수", "subject": s.params.get("corp"),
                    "value": ", ".join(f"{h}단계 {n}곳" for h, n in sorted(hop_counts.items())) + f" (합계 {len(best)}곳, "

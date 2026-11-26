@@ -153,13 +153,14 @@ def main(argv=None) -> int:
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--label", default="", help="결과 파일 이름에 붙일 설정 이름")
     ap.add_argument("--include-none", action="store_true", help="LLM 평가에 '없음' 유형도 넣는다 (정답은 '공시에서 찾지 못했습니다')")
+    ap.add_argument("--id", nargs="*", help="질문 id만 (예: --id d055 d068). 고친 뒤 몇 개만 다시 볼 때 — LLM 호출을 그 수만큼으로 줄인다")
     ap.add_argument("--picker", choices=["auto", "on", "off"], default="auto",
                     help="그래프 검색기의 LLM 템플릿 고르기(규칙이 못 고른 질문만, 질문당 OpenAI 1건). auto: LLM 답을 만들 때는 켬(src.rag.ask·API와 같게), --retrieval-only면 끔")
     args = ap.parse_args(argv)
 
     questions = load_questions(args.questions)
     with_none = (not args.retrieval_only) and args.include_none
-    target = [q for q in questions if q.is_ready and (with_none or q.type != "없음")]
+    target = [q for q in questions if q.is_ready and (with_none or q.type != "없음") and (not args.id or q.id in args.id)]
     skipped = len(questions) - len(target)
     print(f"질문 {len(questions)}개 중 평가 대상 {len(target)}개 (draft{'' if with_none else "·'없음'"} {skipped}개 제외)")
     if not target:
