@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from src.graph.client import settings, wait_until_ready
-from src.graph.text_normalize import fulltext_query, normalize_for_fulltext
+from src.graph.text_normalize import fulltext_query, normalize_for_fulltext, section_vocabulary
 
 
 class TextNormalizeTest(unittest.TestCase):
@@ -36,6 +36,21 @@ class TextNormalizeTest(unittest.TestCase):
         self.assertEqual(fulltext_query("배당"), '"배당"')                           # 조사 아님 (뗀 뒤 1글자)
         self.assertEqual(fulltext_query("KB금융의"), '("KB 금융의" OR "KB 금융")')
         self.assertEqual(fulltext_query("누구인가?"), "")                              # 물음말만이면 빈 질의
+
+    def test_section_words_are_required_and_others_optional(self):
+        # 2026-11-26: 전부 OR은 너무 느슨했다(서술 섹션 hit@5 0.857→0.429). 섹션 이름 낱말만 필수(+), 나머지는 점수만
+        vocab = section_vocabulary(["I. 회사의 개요 > 2. 회사의 연혁", "VII. 주주에 관한 사항 > 1. 배당에 관한 사항", "VIII. 임원 및 직원 등에 관한 사항"])
+        self.assertTrue({"회사의", "회사", "연혁", "주주에", "주주", "배당에", "배당", "임원", "직원"} <= vocab)
+        self.assertFalse({"관한", "사항", "개요"} & vocab)                        # 섹션을 가리키지 못하는 낱말은 사전에서 뺀다
+        q = fulltext_query("케이비국민카드의 2025년 중 주요 연혁은 무엇인가?", vocab)
+        self.assertEqual(q, '+("연혁은" OR "연혁") ("케이비국민카드의" OR "케이비국민카드") ("2025 년" OR 2025*) "주요"')
+        # 섹션 낱말을 품은 낱말("배당금은" ⊃ "배당")도 필수 — 섹션 이름은 "배당에 관한 사항"이지만 질문은 "배당금"이라고 쓴다
+        self.assertEqual(fulltext_query("우리은행의 2025년 주당 현금배당금은?", vocab),
+                         '+("현금배당금은" OR "현금배당금") ("우리은행의" OR "우리은행") ("2025 년" OR 2025*) "주당"')
+        # 섹션 낱말이 없는 질문은 빈 질의 → 전문검색 건너뜀(벡터만)
+        self.assertEqual(fulltext_query("동양생명보험은 신용위험을 어떻게 측정하고 관리하는가?", vocab), "")
+        # 사전이 없으면(None) 낱말끼리 OR
+        self.assertEqual(fulltext_query("대표이사 변경", None), '"대표이사" OR "변경"')
 
     def test_year_word_also_matches_dotted_dates(self):
         # d033: 연혁 조각은 "2025.02.18"로만 적혀 "2025 년" 구절에 안 걸렸다 → 연도 낱말은 앞부분 일치도 함께 (2026-11-26)

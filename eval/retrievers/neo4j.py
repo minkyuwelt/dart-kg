@@ -16,7 +16,7 @@ import duckdb
 from eval.metrics import Hit
 from eval.retrievers.filters import guess_corp_code
 from src.graph.load_chunks import FULLTEXT_INDEX, VECTOR_INDEX
-from src.graph.text_normalize import fulltext_query
+from src.graph.text_normalize import fulltext_query, section_vocabulary
 from src.rag.embedding import Embedder
 from src.rag.rerank import Reranker, rerank
 
@@ -35,6 +35,17 @@ WHERE $corp IS NULL OR c.corp_code = $corp
 RETURN c.rcept_no AS rcept_no, c.file_name AS file_name, c.section_id AS section_id, c.path AS path, score, c.text AS text
 ORDER BY score DESC LIMIT $k
 """
+
+
+def load_section_words(con: duckdb.DuckDBPyConnection | None) -> set[str] | None:
+    """조각 섹션 경로의 낱말 사전 (text_normalize.section_vocabulary). con이 없거나 조각이 없으면 None → 전문검색어는 OR로 간다."""
+    if con is None:
+        return None
+    try:
+        paths = [r[0] for r in con.execute("SELECT DISTINCT path FROM chunk WHERE path IS NOT NULL").fetchall()]
+    except duckdb.Error:
+        return None
+    return section_vocabulary(paths) or None
 
 
 def _hits(records) -> list[Hit]:
@@ -61,9 +72,10 @@ class Neo4jFulltextRetriever:
         self.driver, self.con, self.corp_filter = driver, con, corp_filter
         self.candidate_factor, self.database = candidate_factor, database
         self.name = "neo4j-fulltext" + ("-corp" if corp_filter else "")
+        self.section_words = load_section_words(con)
 
     def search(self, question: str, k: int) -> list[Hit]:
-        q = fulltext_query(question)
+        q = fulltext_query(question, self.section_words)
         if not q:
             return []
         corp = guess_corp_code(self.con, question) if (self.corp_filter and self.con is not None) else None
@@ -84,20 +96,21 @@ def rrf_fuse(ranked_lists: list[list[dict]], key=lambda r: (r["rcept_no"], r["fi
 
 
 class Neo4jHybridRetriever:
-    """벡터 n개 + 전문검색 n개 → RRF → (재순위) → k개. n = fetch(기본 20). 전문검색어가 비면 벡터만."""
+    """벡터 n개 + 전문검색 n개 → RRF → (재순위) → k개. n = fetch(기본 20). 전문검색어가 비면(섹션 낱말 없는 질문) 벡터만."""
 
     def __init__(self, driver, embedder: Embedder, con: duckdb.DuckDBPyConnection | None = None, corp_filter: bool = False,
                  fetch: int = 20, candidate_factor: int = 20, reranker: Reranker | None = None, rerank_candidates: int = 30, database: str = "neo4j"):
         self.driver, self.embedder, self.con, self.corp_filter = driver, embedder, con, corp_filter
         self.fetch, self.candidate_factor, self.reranker, self.rerank_candidates, self.database = fetch, candidate_factor, reranker, rerank_candidates, database
         self.name = f"neo4j-hybrid-{embedder.name}" + ("-corp" if corp_filter else "") + (f"-rerank_{reranker.name}" if reranker else "")
+        self.section_words = load_section_words(con)   # 섹션 낱말이 없는 질문은 전문검색을 건너뛰고 벡터만 (0004 결정 2, 2026-11-26)
 
     def search(self, question: str, k: int) -> list[Hit]:
         corp = guess_corp_code(self.con, question) if (self.corp_filter and self.con is not None) else None
         n = self.fetch * self.candidate_factor if corp else self.fetch
         vec = self.embedder.encode([question], is_query=True)[0]
         lists = [[dict(r) for r in self.driver.execute_query(VECTOR_QUERY, n=n, vec=vec, corp=corp, k=self.fetch, database_=self.database).records]]
-        q = fulltext_query(question)
+        q = fulltext_query(question, self.section_words)
         if q:
             lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=q, n=n, corp=corp, k=self.fetch, database_=self.database).records])
         fused = rrf_fuse(lists)
