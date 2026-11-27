@@ -1,0 +1,24 @@
+/* 이력 페이지. 한 줄 = 질문 하나: 시각 | 질문(굵게)+답 첫 줄 | 꼬리표. 줄 전체가 단추 */
+.list { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; align-items: stretch; border-top: 1px solid var(--rule); }
+.open {
+  flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; align-items: start;
+  padding: 10px 8px 10px 16px; border: 0; background: none; text-align: left; cursor: pointer; line-height: 1.45;
+}
+.open:hover { background: #fafbfd; }
+.when { color: var(--ink-3); font-size: 13px; padding-top: 2px; white-space: nowrap; }
+.body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.q { font-weight: 600; color: var(--ink); }
+.open:hover .q { color: var(--blue); }
+.a { color: var(--ink-2); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aNone { color: var(--ink-3); }
+.meta { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; padding-top: 2px; }
+.remove { flex: 0 0 auto; width: 36px; border: 0; background: none; color: var(--ink-3); font-size: 18px; cursor: pointer; }
+.remove:hover { color: var(--danger); }
+.clear { margin-left: auto; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13.5px; cursor: pointer; }
+.clear:hover { color: var(--danger); }
+@media (max-width: 700px) {
+  .open { grid-template-columns: minmax(0, 1fr); }
+  .when { order: 3; }
+  .meta { justify-content: flex-start; }
+}

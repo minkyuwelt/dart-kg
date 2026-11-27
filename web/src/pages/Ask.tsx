@@ -2,8 +2,9 @@
 // 질문 한 페이지 (0013 "첫 화면"). 질문 → 답 + 근거 공시 + (그래프 질문이면) 관계표.
 // 화면은 API 응답을 그대로 보여 준다. 답의 [n]과 오른쪽 근거 n이 같은 번호이고, 인용된 근거만 형광펜을 칠한다.
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, API_URL, ask, corps, splitCitations, type AskResponse, type Corp } from "../api";
+import { addToHistory, loadHistory, saveHistory, type Asked } from "../history";
 import s from "./ask.module.css";
 
 // 평가 세트(eval/questions.jsonl)의 실제 질문. 처음 온 사람이 "무엇을 물을 수 있나"를 보는 자리
@@ -18,33 +19,27 @@ const EXAMPLES = [
 // 그래프 관계 종류(0011 결정 2)의 화면 이름. 모르는 종류는 코드 그대로 보여 준다
 const REL_LABEL: Record<string, string> = { OWNS: "출자", HOLDS_POSITION: "임원", FORMERLY: "옛 이름", FILED: "제출" };
 
-const HISTORY_KEY = "dart-kg.asked";
-const HISTORY_MAX = 10;
-function loadHistory(): AskResponse[] {
-  try {
-    return JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "[]") as AskResponse[];
-  } catch {
-    return [];
-  }
-}
-function saveHistory(h: AskResponse[]) {
-  try {
-    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(h));
-  } catch {
-    /* 저장이 막힌 브라우저면 이력 없이 간다 */
-  }
-}
+// 질문 페이지 아래에는 최근 몇 개만. 전부는 이력 페이지(/history)
+const RECENT = 5;
 
 export default function Ask() {
-  const [question, setQuestion] = useState("");
+  // 이력 페이지에서 "다시 보기"로 왔으면(location.state.restore = 질문) 그 결과를 처음부터 연 채 시작한다. API는 부르지 않는다
+  const location = useLocation();
+  const navigate = useNavigate();
+  const restore = (location.state as { restore?: string } | null)?.restore;
+  const [restored] = useState(() => (restore ? loadHistory().find((a) => a.response.question === restore)?.response ?? null : null));
+  useEffect(() => {
+    if (restore) navigate(location.pathname, { replace: true, state: null });   // 새로 고침해도 다시 열리지 않게 state를 비운다
+  }, [restore, location.pathname, navigate]);
+  const [question, setQuestion] = useState(restored?.question ?? "");
   const [useLlm, setUseLlm] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AskResponse | null>(null);
+  const [result, setResult] = useState<AskResponse | null>(restored);
   const [focused, setFocused] = useState<number | null>(null);
   const abort = useRef<AbortController | null>(null);
-  // 이 세션에서 물은 것 (sessionStorage, 탭을 닫으면 사라짐). 결과도 함께 두어 다시 누르면 API를 다시 부르지 않는다
-  const [history, setHistory] = useState<AskResponse[]>(() => loadHistory());
+  // 물은 질문 이력(브라우저 저장). 결과도 함께 두어 다시 누르면 API를 다시 부르지 않는다
+  const [history, setHistory] = useState<Asked[]>(() => loadHistory());
   useEffect(() => { saveHistory(history); }, [history]);
   // 시작 화면의 지주 지도용 회사 목록
   const [corpList, setCorpList] = useState<Corp[]>([]);
@@ -66,7 +61,7 @@ export default function Ask() {
     try {
       const r = await ask(text, useLlm, c.signal);
       setResult(r);
-      setHistory((h) => [r, ...h.filter((x) => x.question !== r.question)].slice(0, HISTORY_MAX));
+      setHistory((h) => addToHistory(h, r));
     } catch (e) {
       if (c.signal.aborted) return;
       setResult(null);
@@ -137,13 +132,13 @@ export default function Ask() {
             </ul>
           </section>
           {history.length > 0 && (
-            <section className="panel" aria-label="이 세션에서 물은 것">
+            <section className="panel" aria-label="최근에 물은 것">
               <div className="panelHead">
-                <h3>이 세션에서 물은 것</h3>
-                <button type="button" className={s.linkBtn} onClick={() => setHistory([])}>지우기</button>
+                <h3>최근에 물은 것</h3>
+                {history.length > RECENT && <Link to="/history" className={s.linkBtn}>전부 보기 {history.length}</Link>}
               </div>
               <ul className={s.qList}>
-                {history.map((r) => (
+                {history.slice(0, RECENT).map(({ response: r }) => (
                   <li key={r.question}>
                     <button type="button" className={s.qBtn} onClick={() => { setQuestion(r.question); setResult(r); setError(null); }}>{r.question}</button>
                   </li>

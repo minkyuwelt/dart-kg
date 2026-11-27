@@ -32,7 +32,8 @@
   color: var(--blue); font-size: 15px; line-height: 1.5; cursor: pointer;
 }
 .qBtn:hover { background: var(--blue-soft); color: var(--blue-ink); }
-.linkBtn { margin-left: auto; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.linkBtn { margin-left: auto; padding: 0; border: 0; background: none; color: var(--blue); font-size: 13.5px; text-decoration: none; cursor: pointer; }
+.linkBtn:hover { text-decoration: underline; }
 .loading { margin: 20px 0 0; color: var(--ink-2); }
 
 /* 결과: 두 단 */
