@@ -7,20 +7,7 @@
 "없음" 유형은 검색 지표를 매기지 않는다 (답은 LLM 단계에서 "모른다"고 해야 정답).
 """
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Hit:
-    """검색 결과 한 조각. 조각이 어디서 왔는지(접수번호·파일·섹션)와 점수."""
-    rcept_no: str
-    file_name: str
-    section_id: int
-    path: str
-    score: float
-    snippet: str = ""
-    text: str = ""          # 조각 전문 (LLM에 넘길 때 쓴다, 9b). 검색 점수 계산에는 쓰지 않는다
-
+from src.rag.retrievers.hit import Hit  # noqa: F401 — 검색 결과 모양은 서비스 쪽(src/rag)에 있고, 지표는 그것을 받아 잰다
 
 def _matches(hit: Hit, evidence_rcept_no: list[str], evidence_section: str | None) -> bool:
     if hit.rcept_no not in evidence_rcept_no:

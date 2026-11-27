@@ -91,7 +91,7 @@ def build_chunks(con: duckdb.DuckDBPyConnection, rcept_nos: list[str], strategie
 
 
 def eval_rcept_nos(path: Path = DEFAULT_QUESTIONS) -> list[str]:
-    """평가 세트(ready 질문)의 근거 접수번호 모음. 정렬해서 돌려준다."""
+    """평가 세트(ready 질문)의 근거 접수번호 모음. 정렬해서 돌려준다. CLI `build --from-eval`(평가용 조각만 먼저 만들 때)에서만 쓰여 eval을 늦게 가져온다."""
     from eval.questions import load_questions
     out: set[str] = set()
     for q in load_questions(path):

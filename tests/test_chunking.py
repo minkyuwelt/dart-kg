@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from eval.metrics import hit_at_k
-from eval.retrievers import make_retriever
+from src.rag.retrievers import make_retriever
 from src.loaders.chunking import DocMeta, SectionData, chunk_sections, pack, split_long, table_header_names, table_to_lines
 from src.loaders.chunks import build_chunks, chunk_stats, eval_rcept_nos, parsed_rcept_nos
 from src.loaders.duckdb_store import connect, upsert_disclosures

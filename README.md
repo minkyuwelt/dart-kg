@@ -143,7 +143,7 @@ src/collectors/    DART API 호출
 src/loaders/       DuckDB 적재
 src/pipeline/      Dagster 자산·스케줄 정의
 src/graph/         (Phase 3~4) Neo4j 적재
-src/rag/           (Phase 3) 검색·생성
+src/rag/           (Phase 3) 검색(retrievers/)·생성
 src/reports/       (Phase 3) 변화 리포트 (0012)
 src/api/           (Phase 3) FastAPI — 기존 함수를 HTTP로 감싼다 (0013)
 web/               화면 (Vite + React, 0013). 질문 → 답 + 근거 공시 + 관계표

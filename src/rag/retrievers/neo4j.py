@@ -15,8 +15,8 @@ import re
 
 import duckdb
 
-from eval.metrics import Hit
-from eval.retrievers.filters import guess_corp_code
+from src.rag.retrievers.hit import Hit
+from src.rag.retrievers.filters import guess_corp_code
 from src.graph.load_chunks import FULLTEXT_INDEX, VECTOR_INDEX
 from src.graph.text_normalize import fulltext_query, section_terms, section_vocabulary
 from src.rag.embedding import Embedder

@@ -25,8 +25,8 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date
 
-from eval.metrics import Hit
-from eval.retrievers.neo4j import rrf_fuse
+from src.rag.retrievers.hit import Hit
+from src.rag.retrievers.neo4j import rrf_fuse
 from src.graph import templates as T
 from src.graph.router import Plan, route
 

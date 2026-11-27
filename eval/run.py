@@ -19,7 +19,7 @@ from pathlib import Path
 
 from eval.metrics import score_question, summarize
 from eval.questions import DEFAULT_QUESTIONS, load_questions
-from eval.retrievers import make_retriever
+from src.rag.retrievers import make_retriever
 from src.loaders.duckdb_store import REPO_ROOT, connect
 
 RESULTS_DIR = REPO_ROOT / "eval" / "results"

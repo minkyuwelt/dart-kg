@@ -12,8 +12,8 @@ import hashlib
 import math
 import unittest
 
-from eval.retrievers import make_retriever
-from eval.retrievers.filters import guess_corp_code
+from src.rag.retrievers import make_retriever
+from src.rag.retrievers.filters import guess_corp_code
 from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from src.rag.embedding import embed_chunks, embedding_stats, pending_chunks

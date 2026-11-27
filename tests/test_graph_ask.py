@@ -12,7 +12,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from eval.metrics import Hit
+from src.rag.retrievers.hit import Hit
 from src.api.main import create_app
 from src.graph import picker as P
 from src.graph.query import GraphRetriever

@@ -11,7 +11,7 @@
 import unittest
 from datetime import date
 
-from eval.metrics import Hit
+from src.rag.retrievers.hit import Hit
 from src.graph import query as Q
 from src.graph import templates as T
 from src.graph.router import find_corps, parse_as_of, route

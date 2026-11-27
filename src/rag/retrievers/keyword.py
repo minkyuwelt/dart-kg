@@ -11,7 +11,7 @@ import re
 
 import duckdb
 
-from eval.metrics import Hit
+from src.rag.retrievers.hit import Hit
 
 TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
 # 낱말 끝의 조사. 긴 것부터 떼야 "에서"가 "에"+"서"로 남지 않는다. 두 글자 이하 낱말은 떼지 않는다 (예: "은행"의 "은")
