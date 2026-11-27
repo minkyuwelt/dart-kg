@@ -12,6 +12,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
+from src.rag.retrievers.base import BaseRetriever
 from src.rag.retrievers.hit import Hit
 from eval.questions import Question
 from src.rag.ask import VIEWER_URL, ask, format_result
@@ -25,13 +26,13 @@ class FakeLLM:
     def __init__(self, text, citations):
         self.text, self.citations, self.calls = text, citations, []
 
-    def answer(self, question, passages, max_output_tokens=None):
+    def answer(self, question, passages, graph=False):
         self.calls.append((question, passages))
-        self.last_max_output_tokens = max_output_tokens
+        self.last_graph = graph
         return Answer(self.text, self.citations, self.name, 100, 20)
 
 
-class FakeRetriever:
+class FakeRetriever(BaseRetriever):
     name = "fake-retriever"
 
     def __init__(self, hits):
@@ -101,7 +102,7 @@ class RagAskTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(run_mod, "RESULTS_DIR", Path(d)), \
                 mock.patch.object(run_mod, "connect") as con, mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(d) / "x.duckdb")}):
             con.return_value.__enter__.return_value = None
-            args = Namespace(retriever="x", filter="corp", rerank=None, k=5, label="t", questions=Path("q.jsonl"))
+            args = Namespace(retriever="x", filter="corp", rerank=None, k=5, label="t", questions=Path("q.jsonl"), picker="auto", neighbors=4)
             rc = run_mod.run_with_llm(args, qs, llm=FakeLLM("1,190원 [1]", [1]), retriever=FakeRetriever(HITS))
             self.assertEqual(rc, 0)
             files = sorted(p.name for p in Path(d).iterdir())

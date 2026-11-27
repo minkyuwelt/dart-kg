@@ -15,6 +15,7 @@ import re
 
 import duckdb
 
+from src.rag.retrievers.base import BaseRetriever
 from src.rag.retrievers.hit import Hit
 from src.rag.retrievers.filters import guess_corp_code
 from src.graph.load_chunks import FULLTEXT_INDEX, VECTOR_INDEX
@@ -116,7 +117,7 @@ def _hits(records) -> list[Hit]:
     return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(r["score"]), (r["text"] or "")[:120], r["text"] or "") for r in records]
 
 
-class Neo4jVectorRetriever:
+class Neo4jVectorRetriever(BaseRetriever):
     def __init__(self, driver, embedder: Embedder, con: duckdb.DuckDBPyConnection | None = None, corp_filter: bool = False,
                  candidate_factor: int = 20, database: str = "neo4j"):
         self.driver, self.embedder, self.con, self.corp_filter = driver, embedder, con, corp_filter
@@ -130,7 +131,7 @@ class Neo4jVectorRetriever:
         return _hits(self.driver.execute_query(VECTOR_QUERY, n=n, vec=vec, corp=corp, k=k, database_=self.database).records)
 
 
-class Neo4jFulltextRetriever:
+class Neo4jFulltextRetriever(BaseRetriever):
     def __init__(self, driver, con: duckdb.DuckDBPyConnection | None = None, corp_filter: bool = False,
                  candidate_factor: int = 20, database: str = "neo4j"):
         self.driver, self.con, self.corp_filter = driver, con, corp_filter
@@ -158,7 +159,7 @@ def rrf_fuse(ranked_lists: list[list[dict]], key=lambda r: (r["rcept_no"], r["fi
     return sorted(((first[k], sc) for k, sc in scores.items()), key=lambda x: -x[1])
 
 
-class Neo4jHybridRetriever:
+class Neo4jHybridRetriever(BaseRetriever):
     """벡터 n개 + 전문검색 n개 → RRF → (재순위) → k개. n = fetch(기본 20). 전문검색어가 비면(섹션 낱말 없는 질문) 벡터만."""
 
     def __init__(self, driver, embedder: Embedder, con: duckdb.DuckDBPyConnection | None = None, corp_filter: bool = False,

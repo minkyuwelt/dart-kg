@@ -11,6 +11,7 @@ import re
 
 import duckdb
 
+from src.rag.retrievers.base import BaseRetriever
 from src.rag.retrievers.hit import Hit
 
 TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
@@ -45,7 +46,7 @@ def tokenize(question: str) -> list[str]:
     return terms[:MAX_TERMS]
 
 
-class KeywordRetriever:
+class KeywordRetriever(BaseRetriever):
     name = "keyword"
 
     def __init__(self, con: duckdb.DuckDBPyConnection):

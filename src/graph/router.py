@@ -170,6 +170,35 @@ def route(question: str, con: duckdb.DuckDBPyConnection, today: date | None = No
     return _pick(picker, q, as_of, mentions)
 
 
+def plan_for(name: str, question: str, as_of: date, mentions: list[CorpMention], rule: str) -> Plan | None:
+    """템플릿 이름이 정해진 뒤 빈칸(회사·날짜·깊이·직위)을 규칙으로 채운다. 못 채우면 None (추측하지 않음).
+    LLM 고르기(picker)가 번호를 고른 뒤 쓴다 — 빈칸 채우기 규칙(_depth·_title)은 route의 규칙들과 같은 것 (코드 리뷰 A5, picker.default_plan에서 옮김)."""
+    iso = as_of.isoformat()
+    corp = mentions[0].corp_code if mentions else None
+    params: dict | None
+    if name == "shared_positions":
+        params = {"as_of": iso, "outside_only": "사외이사" in question, "corps": [m.corp_code for m in mentions], "must": None} if len(mentions) >= 2 else None
+    elif name == "ownership_path":
+        params = {"corp": corp, "other": mentions[1].corp_code, "as_of": iso} if len(mentions) >= 2 else None
+    elif corp is None:
+        params = None
+    elif name == "holder_chain":
+        params = {"corp": corp, "as_of": iso, "depth": 2}
+    elif name == "descendants":
+        params = {"corp": corp, "as_of": iso, "depth": _depth(question, 1), "min_pct": None}
+    elif name == "person_history":
+        params = {"corp": corp, "as_of": iso, "title": _title(question), "person": None}
+    elif name == "corp_lineage":
+        params = {"corp": corp, "name": mentions[0].text}
+    elif name == "facts_at":
+        params = {"corp": corp, "as_of": iso, "kind": None, "title": _title(question)}
+    else:
+        params = None
+    if params is None:
+        return None
+    return Plan(rule, [Step(name, params)], as_of, mentions)
+
+
 def _pick(picker, question: str, as_of: date, mentions: list[CorpMention]) -> Plan | None:
     """규칙으로 못 고른 질문. picker가 있으면 Plan을 받고(고르기만), 없으면 None."""
     if picker is None:

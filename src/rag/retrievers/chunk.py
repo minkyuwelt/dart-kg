@@ -7,13 +7,14 @@
 
 import duckdb
 
+from src.rag.retrievers.base import BaseRetriever
 from src.rag.retrievers.hit import Hit
 from src.rag.retrievers.filters import guess_corp_code
 from src.rag.retrievers.keyword import tokenize
 from src.rag.rerank import Reranker, rerank
 
 
-class ChunkKeywordRetriever:
+class ChunkKeywordRetriever(BaseRetriever):
     def __init__(self, con: duckdb.DuckDBPyConnection, strategy: str, corp_filter: bool = False,
                  reranker: Reranker | None = None, candidates: int = 30):
         self.con = con

@@ -32,7 +32,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from src.rag.retrievers import make_retriever
+from src.rag.retrievers import make_retriever, parse_retriever_name
 from src.loaders.as_of import corp_page, executives_as_of, shareholders_as_of, target_corps
 from src.loaders.duckdb_store import connect, is_lock_error
 from src.rag.ask import VIEWER_URL, ask
@@ -213,16 +213,15 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
                picker_factory: Callable | None = None) -> FastAPI:
     s = api_settings()
     retriever_name = retriever_name or s["retriever"]
-    needs_neo4j = retriever_name.startswith(("neo4j:", "graph:"))
-    needs_embedder = retriever_name.startswith(("neo4j:vector", "neo4j:hybrid", "dense:", "graph:hybrid"))
+    spec = parse_retriever_name(retriever_name)   # 이름 문법은 검색기 쪽이 해석한다 (코드 리뷰 A3)
+    needs_neo4j, needs_embedder = spec.needs_neo4j, spec.needs_embedder
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # 무거운 것은 여기서 한 번. 테스트가 가짜를 줬으면 그대로 쓴다
         if needs_embedder and app.state.embedder is None:
             from src.rag.embedding import LocalEmbedder
-            model = retriever_name.split(":")[2] if retriever_name.startswith(("neo4j:", "graph:")) else retriever_name.split(":")[1]
-            app.state.embedder = LocalEmbedder(model, device=s["embed_device"], fp16=s["embed_device"] != "cpu")
+            app.state.embedder = LocalEmbedder(spec.model, device=s["embed_device"], fp16=s["embed_device"] != "cpu")
         if needs_neo4j and app.state.driver is None:
             from src.graph.client import connect as graph_connect
             app.state.driver = graph_connect()
@@ -281,9 +280,8 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
         llm = make_llm(api_key) if req.use_llm else None
         with _open_duckdb() as con:
             try:
-                retriever = make_retriever(retriever_name, con, corp_filter=req.corp_filter, embedder=app.state.embedder, driver=app.state.driver)
-                if llm is not None and hasattr(retriever, "picker"):
-                    retriever.picker = make_picker(api_key)
+                retriever = make_retriever(retriever_name, con, corp_filter=req.corp_filter, embedder=app.state.embedder, driver=app.state.driver,
+                                           picker=make_picker(api_key) if (llm is not None and spec.kind == "graph") else None)
                 result = ask(req.question, retriever, llm, req.k, con)
             except SystemExit as e:
                 raise HTTPException(500, str(e)) from e
@@ -314,7 +312,7 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
                                             url=VIEWER_URL.format(rcept_no=r["source_rcept_no"]) if r["source_rcept_no"] else None)
                            for r in g.relations],
                 derived=[GraphDerivedOut(rule=d["rule"], subject=d["subject"], value=d["value"]) for d in g.derived])
-        return AskResponse(question=req.question, retriever=getattr(retriever, "name", retriever_name), answer=answer, hits=hits,
+        return AskResponse(question=req.question, retriever=retriever.name, answer=answer, hits=hits,
                            graph=graph, graph_error=result.graph_error)
 
     @app.get("/changes", response_model=ChangesResponse)
