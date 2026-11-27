@@ -20,7 +20,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
 현재 단계: **Phase 3·4 완료** (2026-11-26, 개선 2026-11-27). Phase 2는 2026-11-23(백필 618개 보고서, 시점 질의 5개 검증). Phase 3·4는 평가까지 끝남 — 검색 hit@5 공시 1.000·섹션 0.729(48개), LLM 답 맞음 49/부분 2/틀림 0(53개), 라우팅 규칙만 53/53(일반 4개는 T2 허용) → `docs/decisions/0010`·`0011`, `docs/devlog/2026-11-27.md`. 검색이 놓친 질문은 `PYTHONPATH=. python notebooks/rank_diag.py <id>`로 정답 조각의 벡터·전문검색·하이브리드 순위를 먼저 본다
-다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보" — 이웃 조각은 11-27 완료), 매일 운영 확인(`src.pipeline.status`), 화면(Vite + React `web/`, 0013 — 질문·변화 리포트·회사 페이지 11-27, 질문 이력까지 네 페이지. 다음은 Vercel 배포). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
+다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보" — 이웃 조각은 11-27 완료), 매일 운영 확인(`src.pipeline.status`), 화면(Vite + React `web/`, 0013 — 질문·변화 리포트·회사 페이지 11-27, 질문 이력까지 네 페이지. 배포는 노트북 uvicorn + Cloudflare 터널 + Vercel, 절차는 README "Vercel에 올리기"). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
 방향: `docs/plans/usecases.md` — 누가 쓰나, 업무 질문 11개, 비슷한 서비스와 차별점 5개. 기능을 넣을지는 이 문서의 질문을 돕는지로 판단한다
 Phase 4 설계 전 조사: `docs/plans/phase4-research.md` — 논문·도구마다 채택/보류/제외와 이유. 0011은 이 문서 5절의 뼈대로 쓴다
 

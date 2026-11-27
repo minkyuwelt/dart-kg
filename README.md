@@ -388,7 +388,7 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions   # 스케줄은 기본 켜짐. 첫 색인은 화면에서 rag_index_job 실행
    ```
 
-18. **(Phase 3) API 서버** — 질문·변화 리포트·시점 질의를 HTTP로 내보냅니다. 기존 Python 함수를 감싸기만 하고 새 로직은 없습니다. 임베딩 모델과 Neo4j 드라이버는 서버가 뜰 때 한 번 열고, DuckDB는 요청마다 읽기 전용으로 짧게 엽니다(Dagster 쓰기를 막지 않기 위해). 화면은 Next.js로 따로 만들어 Vercel에 올립니다([0013](docs/decisions/0013-ui-and-deploy.md)).
+18. **(Phase 3) API 서버** — 질문·변화 리포트·시점 질의를 HTTP로 내보냅니다. 기존 Python 함수를 감싸기만 하고 새 로직은 없습니다. 임베딩 모델과 Neo4j 드라이버는 서버가 뜰 때 한 번 열고, DuckDB는 요청마다 읽기 전용으로 짧게 엽니다(Dagster 쓰기를 막지 않기 위해). 화면은 Vite + React로 따로 만들어 Vercel에 올립니다([0013](docs/decisions/0013-ui-and-deploy.md)).
 
    ```bash
    uvicorn src.api.main:app --port 8000          # 그다음 http://127.0.0.1:8000/docs 에서 직접 호출해 볼 수 있음
@@ -405,10 +405,21 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```
 
    **Vercel에 올리기** (화면만. API 서버는 따로 있어야 하고, 없으면 머리띠에 "서버에 닿지 못함"이 뜹니다. 공개 서버 `.env`에는 `OPENAI_API_KEY`를 두지 않습니다 — 보는 사람이 화면에 자기 키를 넣으면 그 요청에만 쓰입니다, [0013](docs/decisions/0013-ui-and-deploy.md) "키"):
-   1. Vercel에서 이 GitHub 저장소를 가져오고 **Root Directory = `web`** (Framework는 Vite로 자동 인식, `web/vercel.json`이 모든 경로를 `index.html`로 보내 `/corps/…` 같은 주소를 새로 고쳐도 열립니다)
-   2. 환경변수 `VITE_API_URL` = API 서버 주소(예: `https://api.example.com`, 끝에 `/` 없이). 빌드 때 박히므로 바꾸면 다시 배포
-   3. API 서버 쪽 `.env`의 `API_CORS_ORIGINS`에 Vercel 도메인(`https://….vercel.app`)을 적고 uvicorn 재시작 — 안 적으면 브라우저가 응답을 막습니다
-   4. API 서버를 둘 곳은 [0013](docs/decisions/0013-ui-and-deploy.md) "배포할 때 확인할 것"의 측정값을 보고 정합니다(kure-v3 임베딩이 CPU에서 몇 초인지, 메모리 몇 GB인지)
+
+   API 서버는 **노트북에서 돌리고 Cloudflare 터널로 공개**합니다(측정 결과 메모리 2.7GB라 무료 서버에는 안 올라감, [0013](docs/decisions/0013-ui-and-deploy.md) "API 서버를 어디에 두나"). 시연할 때만 켭니다.
+   1. `cloudflared` 설치(WSL, 한 번만):
+      ```bash
+      curl -fsSL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+      sudo dpkg -i /tmp/cloudflared.deb && cloudflared --version
+      ```
+   2. 노트북 `.env`에서 `OPENAI_API_KEY=` 값을 비우고(공개 중에는 학원 키를 쓰지 않음), `API_CORS_ORIGINS`에 Vercel 주소를 적습니다(3단계에서 받은 뒤). Neo4j(`docker compose up -d`)와 `uvicorn src.api.main:app --port 8000`을 켠 상태에서 다른 터미널에:
+      ```bash
+      cloudflared tunnel --url http://localhost:8000
+      ```
+      출력에 나오는 `https://….trycloudflare.com`이 API 주소입니다. `curl https://….trycloudflare.com/health`로 확인. **켤 때마다 주소가 바뀌므로** 시연 기간에는 끄지 않습니다. 바뀌면 3단계의 `VITE_API_URL`을 고쳐 다시 배포합니다
+   3. Vercel에서 이 GitHub 저장소를 가져오고 **Root Directory = `web`** (Framework는 Vite로 자동 인식, `web/vercel.json`이 모든 경로를 `index.html`로 보내 `/corps/…` 같은 주소를 새로 고쳐도 열립니다). 환경변수 `VITE_API_URL` = 2단계의 터널 주소(끝에 `/` 없이). 빌드 때 박히므로 바꾸면 다시 배포(Deployments → Redeploy)
+   4. 배포가 끝나 받은 `https://….vercel.app`을 노트북 `.env`의 `API_CORS_ORIGINS`에 적고 uvicorn 재시작 — 안 적으면 브라우저가 응답을 막습니다. 화면을 열어 머리띠에 "서버에 닿지 못함"이 없고, 질문 상자에 "OpenAI 키" 칸이 보이면 됩니다
+   5. 끝낼 때: `cloudflared`를 Ctrl+C로 끄고 `.env`의 `OPENAI_API_KEY`를 다시 채웁니다. Vercel 화면은 남아 있지만 "서버에 닿지 못함"만 보입니다
 
    | 경로 | 내용 |
    |---|---|
