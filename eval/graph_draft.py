@@ -26,14 +26,14 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-import duckdb
 
 from eval.draft import DEFAULT_OUT
 from eval.questions import DEFAULT_QUESTIONS, Question, load_questions
 from eval.review import line_id, read_lines, write_lines
 from src.graph.load_relations import load_lineage
 from src.graph.names import NAME_CHARS
-from src.graph.router import _bare, find_corps, group_of, holdings, parse_as_of
+from src.graph.names import bare, find_corps
+from src.graph.router import group_of, holdings, parse_as_of
 from src.graph.templates import title_matches
 from src.loaders.as_of import AS_OF_FILTER
 from src.loaders.duckdb_store import connect
@@ -375,7 +375,7 @@ _NO_CODE_RE = re.compile(r"corp_code 없음 (\d+)곳")
 
 def _same(name: str) -> str:
     """이름 대조용: 띄어쓰기·법인 표기·전각을 뗀 꼴 ('우리금융지주 우리사주조합' = '우리금융지주우리사주조합')."""
-    return _bare(unicodedata.normalize("NFKC", name or ""))
+    return bare(unicodedata.normalize("NFKC", name or ""))
 
 
 def graph_view(ctx) -> tuple[set[str], int | None, int | None]:

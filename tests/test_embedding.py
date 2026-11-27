@@ -129,6 +129,10 @@ class EmbeddingTest(TempDuckDBTestCase):
         self.assertEqual(guess_corp_code(self.con, "주식회사 신한은행의 배당"), "00149293")
         self.assertEqual(guess_corp_code(self.con, "신한지주가 출자한 회사"), "00000002")   # 신한은행보다 신한지주가 맞음 (둘 다 "신한"으로 시작)
         self.assertIsNone(guess_corp_code(self.con, "최대주주는 누구인가?"))
+        # 라우터와 같은 사전(find_corps)을 쓴다: 회사가 여럿이면 질문에 가장 길게 적힌 쪽, 같은 이름이 두 회사면 추측하지 않는다
+        self.assertEqual(guess_corp_code(self.con, "신한은행과 우리은행의 배당"), "00149293")   # 둘 다 4글자 → 먼저 나온 쪽
+        self.con.execute("INSERT INTO corp VALUES ('00000091', '중복은행', NULL, NULL, now()), ('00000092', '중복은행', NULL, NULL, now())")
+        self.assertIsNone(guess_corp_code(self.con, "중복은행의 배당"))
 
     def test_make_retriever_errors(self):
         with self.assertRaises(SystemExit):
