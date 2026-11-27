@@ -5,7 +5,8 @@
 
 import unittest
 
-from src.loaders.investments import normalize_name, resolve, strip_bare_preferred, to_hangul_letters, to_number
+from src.loaders.corp_names import normalize_name, resolve, strip_bare_preferred, to_hangul_letters
+from src.loaders.parsing import to_number
 
 
 class NormalizeNameTest(unittest.TestCase):

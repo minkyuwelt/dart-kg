@@ -7,14 +7,11 @@
 이 모듈은 1)과 "원본에서 통째로 다시 만들기(rebuild)"를 맡고, rebuild 끝에 2)를 부른다. investment 테이블과
 같은 방식이라 파서 규칙을 고친 뒤 rebuild만 다시 돌리면 되고, API는 다시 부르지 않는다.
 
-응답 형식에서 확인한 것 (tests/fixtures/*_00688996_2025_11011.json, 2026-11-23)
+응답 형식에서 확인한 것 (tests/fixtures/*_00688996_2025_11011.json, 2026-11-23). 날짜·생년월·수·지분율·자리 표시 행 같은
+값 파싱은 src/loaders/parsing.py, 주주 이름 → corp_code 연결은 src/loaders/corp_names.py에 있다. 이 표에서만 있는 것:
 
 | 항목            | 형식                                              | 처리                                   |
 |-----------------|---------------------------------------------------|----------------------------------------|
-| 날짜            | '2025-12-31', '2019년 12월 31일', '2019.01.11'     | parse_date가 세 형식을 모두 받는다     |
-| 생년월          | '1961년 06월'                                     | parse_year_month → '1961-06'           |
-| 주식 수         | '33,107,971'                                      | 쉼표 제거                              |
-| 지분율          | 현황 '8.68', 변동현황 '9.97%'                     | % 제거                                 |
 | 재직기간        | '2년 \\n1개월', '1년8개월', '9개월', '-'           | parse_period_months → 25, 20, 9, None  |
 | 합계 행         | 최대주주 현황 nm='계' (relate 키 없음)            | 제외                                   |
 | 변동 누적       | 2025 보고서에 2019년 변동까지 28행                | (회사, 변동일, 주주명)으로 중복 제거. 처음 보고한 보고서를 source로 |
@@ -31,72 +28,27 @@ from datetime import date
 from urllib.parse import parse_qs
 
 import duckdb
-import pandas as pd
 
 from src.collectors.report_detail import ENDPOINTS
-from src.loaders.duckdb_store import connect, raw_bodies
-from src.loaders.investments import build_name_index, load_overrides, normalize_name, resolve, to_number
+from src.loaders.concurrent_positions import rebuild_concurrent_positions
+from src.loaders.corp_names import build_name_index, load_overrides, normalize_name, resolve
+from src.loaders.duckdb_store import connect, raw_bodies, replace_rows, transaction
+from src.loaders.parsing import (  # noqa: F401  (parse_date 등은 예전처럼 이 모듈에서도 가져갈 수 있다)
+    clean as _clean,
+    is_placeholder,
+    parse_date,
+    parse_percent,
+    parse_year_month,
+    text_or_none as _text,
+    to_number,
+)
 from src.loaders.temporal import close_relations
 
-DATE_PATTERNS = (
-    re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$"),  # 2025-12-31
-    re.compile(r"^(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일$"),  # 2019년 12월 31일
-    re.compile(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})$"),  # 2019.01.11
-    re.compile(r"^(\d{4})(\d{2})(\d{2})$"),  # 20190111
-)
-YEAR_MONTH_PATTERNS = (
-    re.compile(r"^(\d{4})\s*년\s*(\d{1,2})\s*월$"),  # 1961년 06월
-    re.compile(r"^(\d{4})[.-](\d{1,2})$"),  # 1961.06, 1961-06
-)
 PERIOD_RE = re.compile(r"(?:(\d+)년)?(?:(\d+)개?월)?")  # 공백을 뗀 문자열에 쓴다
 DECIMAL_YEARS_RE = re.compile(r"(\d+\.\d+)년")  # '3.2년'
 PERIOD_WORD_RE = re.compile(r"\d년|\d개?월")
 # 재직기간 안의 날짜: 2022.01.07 / 2022.1.7 / '23.3.22 / 24.05.27. (공백을 뗀 문자열에 쓴다)
 TENURE_DATE_RE = re.compile(r"'?(\d{4}|\d{2})\.(\d{1,2})\.(\d{1,2})\.?")
-# 임원 현황에서 사람이 아닌 자리 표시 행
-PLACEHOLDER_NAMES = {"-", "해당없음", "해당사항없음", "없음", "기재생략"}
-
-
-def _clean(text: str | None) -> str:
-    return (text or "").strip()
-
-
-def _text(text: str | None) -> str | None:
-    """비어 있거나 '-'(DART의 "해당 없음" 표기)이면 None, 아니면 앞뒤 공백을 뗀 문자열."""
-    s = _clean(text)
-    return None if s in ("", "-") else s
-
-
-def parse_date(text: str | None) -> date | None:
-    """DART 주요정보 API의 날짜 세 형식을 date로 바꾼다. 비어 있거나 '-'이면 None."""
-    s = _clean(text)
-    if s in ("", "-"):
-        return None
-    for pattern in DATE_PATTERNS:
-        m = pattern.match(s)
-        if m:
-            try:
-                return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            except ValueError:
-                return None
-    return None
-
-
-def parse_year_month(text: str | None) -> str | None:
-    """'1961년 06월' → '1961-06'. 비어 있으면 None."""
-    s = _clean(text)
-    for pattern in YEAR_MONTH_PATTERNS:
-        m = pattern.match(s)
-        if m:
-            return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}"
-    return None
-
-
-def parse_percent(text: str | None) -> float | None:
-    """'9.97%' → 9.97, '8.68' → 8.68, '-' → None."""
-    return to_number(_clean(text).rstrip("%"))
-
-
 def parse_period_months(text: str | None) -> int | None:
     """재직기간 '2년 \n1개월' → 25, '3.2년' → 38. 년·월 중 하나도 없으면 None.
 
@@ -182,7 +134,7 @@ def parse_major_shareholders(request_key: str, body: dict, index: dict, override
     rows = []
     for row_seq, item in enumerate(body.get("list", []), start=1):
         nm = _clean(item.get("nm"))
-        if nm in ("", "계", "합계") or re.sub(r"\s+", "", nm) in PLACEHOLDER_NAMES:
+        if nm in ("", "계", "합계") or is_placeholder(nm):
             continue
         name, _ = normalize_name(nm)
         holder_corp_code, method = resolve(name, index, overrides)
@@ -258,7 +210,7 @@ def parse_executives(request_key: str, body: dict) -> list[dict]:
     rows = []
     for row_seq, item in enumerate(body.get("list", []), start=1):
         nm = _clean(item.get("nm"))
-        if not nm or re.sub(r"\s+", "", nm) in PLACEHOLDER_NAMES:
+        if not nm or is_placeholder(nm):
             continue
         stlm_dt = parse_date(item.get("stlm_dt"))
         tenure = parse_tenure(item.get("hffc_pd"), stlm_dt)
@@ -311,21 +263,6 @@ def dedupe_changes(rows: list[dict]) -> list[dict]:
     return list(best.values())
 
 
-def _replace_table(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict], columns: list[str]) -> int:
-    """테이블을 비우고 rows로 다시 채운다. 트랜잭션은 호출하는 쪽이 연다."""
-    con.execute(f"DELETE FROM {table}")
-    if not rows:
-        return 0
-    df = pd.DataFrame(rows, columns=columns)
-    view = f"incoming_{table}"
-    con.register(view, df)
-    try:
-        con.execute(f"INSERT INTO {table} ({', '.join(columns)}, loaded_at) SELECT {', '.join(columns)}, now() FROM {view}")
-    finally:
-        con.unregister(view)
-    return len(df)
-
-
 MAJOR_SHAREHOLDER_COLUMNS = [
     "source_rcept_no", "row_seq", "corp_code", "bsns_year", "reprt_code", "nm", "relate", "stock_knd",
     "holder_corp_code", "resolve_method", "bsis_posesn_stock_co", "bsis_posesn_stock_qota_rt",
@@ -361,23 +298,15 @@ def rebuild_relations(con: duckdb.DuckDBPyConnection) -> dict:
     for request_key, body in raw_bodies(con, ENDPOINTS["executive"]):
         executives.extend(parse_executives(request_key, body))
 
-    con.begin()
-    try:
+    with transaction(con):
         counts = {
-            "major_shareholder": _replace_table(con, "major_shareholder", shareholders, MAJOR_SHAREHOLDER_COLUMNS),
-            "major_shareholder_change": _replace_table(
-                con, "major_shareholder_change", changes, MAJOR_SHAREHOLDER_CHANGE_COLUMNS
-            ),
-            "executive": _replace_table(con, "executive", executives, EXECUTIVE_COLUMNS),
+            "major_shareholder": replace_rows(con, "major_shareholder", shareholders, MAJOR_SHAREHOLDER_COLUMNS),
+            "major_shareholder_change": replace_rows(con, "major_shareholder_change", changes, MAJOR_SHAREHOLDER_CHANGE_COLUMNS),
+            "executive": replace_rows(con, "executive", executives, EXECUTIVE_COLUMNS),
         }
-        # 지주 사업보고서의 "계열회사간 임원 겸직 현황" 표 (0014). 임원 표가 없는 자회사의 겸직 자리. 사람을 임원 표로 잇기 때문에 executive 다음
-        from src.loaders.concurrent_positions import rebuild_concurrent_positions
+        # 지주 사업보고서의 "계열회사간 임원 겸직 현황" 표 (0014). 사람을 임원 표로 잇기 때문에 executive 다음
         counts.update(rebuild_concurrent_positions(con))
         counts.update(close_relations(con))
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
     counts["holder_by_method"] = dict(
         con.execute("SELECT resolve_method, count(*) FROM major_shareholder GROUP BY 1 ORDER BY 2 DESC").fetchall()
     )

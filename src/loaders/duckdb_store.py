@@ -17,6 +17,8 @@ DuckDB 파일 위치는 .env의 DUCKDB_PATH (없으면 저장소 루트의 data/
 
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
@@ -53,6 +55,45 @@ def connect(read_only: bool = False) -> duckdb.DuckDBPyConnection:
     if not read_only:
         con.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
     return con
+
+
+@contextmanager
+def transaction(con: duckdb.DuckDBPyConnection) -> Iterator[duckdb.DuckDBPyConnection]:
+    """블록이 끝나면 commit, 예외가 나면 rollback 후 다시 던진다. rebuild처럼 "비우고 다시 채우기"를 한 덩어리로 묶을 때 쓴다.
+
+        with transaction(con):
+            con.execute("DELETE FROM ...")
+            ...
+    """
+    con.begin()
+    try:
+        yield con
+    except BaseException:
+        con.rollback()
+        raise
+    con.commit()
+
+
+def replace_rows(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict], columns: list[str],
+                 expressions: dict[str, str] | None = None) -> int:
+    """테이블을 비우고 rows로 다시 채운다 (loaded_at = now()). 넣은 행 수를 돌려준다. 트랜잭션은 호출하는 쪽이 연다.
+
+    rows의 값은 columns 순서로 DataFrame에 담아 통째로 넘긴다 (한 행씩 INSERT하지 않음). expressions에 적은 열은 그 SQL 식으로
+    바꿔 넣는다 — 문자열 날짜를 TRY_STRPTIME으로 바꾸는 식. 식 안에서는 columns의 이름을 그대로 쓸 수 있다.
+    """
+    con.execute(f"DELETE FROM {table}")
+    if not rows:
+        return 0
+    df = pd.DataFrame(rows, columns=columns)
+    exprs = expressions or {}
+    select = ", ".join(exprs.get(c, c) for c in columns)
+    view = f"incoming_{table}"
+    con.register(view, df)
+    try:
+        con.execute(f"INSERT INTO {table} ({', '.join(columns)}, loaded_at) SELECT {select}, now() FROM {view}")
+    finally:
+        con.unregister(view)
+    return len(df)
 
 
 def save_raw(con: duckdb.DuckDBPyConnection, endpoint: str, request_key: str, body: dict) -> None:

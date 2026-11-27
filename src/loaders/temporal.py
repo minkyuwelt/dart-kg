@@ -30,6 +30,14 @@ import duckdb
 
 MERGES_PATH = Path(__file__).resolve().parents[2] / "config" / "person_merges.csv"
 
+# 스냅샷 테이블(보고서 단위 행)마다 (접수번호 열, 회사 열). 닫기 규칙 1)·2)는 이 두 열만 알면 된다
+SNAPSHOT_TABLES = {
+    "investment": ("rcept_no", "investor_corp_code"),
+    "major_shareholder": ("source_rcept_no", "corp_code"),
+    "executive": ("source_rcept_no", "corp_code"),
+    "concurrent_position": ("source_rcept_no", "holding_corp_code"),
+}
+
 
 def mark_superseded(con: duckdb.DuckDBPyConnection, table: str, rcept_col: str, corp_col: str) -> int:
     """같은 보고서의 옛 버전 행에 최신 버전 접수번호를 적는다. 적은 행 수를 돌려준다."""
@@ -58,6 +66,14 @@ def chain_snapshots(con: duckdb.DuckDBPyConnection, table: str, corp_col: str) -
         WHERE {table}.{corp_col} = nxt.corp AND {table}.stlm_dt = nxt.stlm_dt AND {table}.superseded_by IS NULL
         """
     )
+
+
+def close_snapshot(con: duckdb.DuckDBPyConnection, table: str) -> int:
+    """스냅샷 테이블 하나를 닫는다: 규칙 1) superseded_by, 2) valid_to. 정정된(superseded) 행 수를 돌려준다."""
+    rcept_col, corp_col = SNAPSHOT_TABLES[table]
+    superseded = mark_superseded(con, table, rcept_col, corp_col)
+    chain_snapshots(con, table, corp_col)
+    return superseded
 
 
 def close_executive_tenures(con: duckdb.DuckDBPyConnection) -> int:
@@ -156,16 +172,12 @@ def rebuild_person(con: duckdb.DuckDBPyConnection) -> int:
 
 
 def close_investments(con: duckdb.DuckDBPyConnection) -> dict:
-    superseded = mark_superseded(con, "investment", "rcept_no", "investor_corp_code")
-    chain_snapshots(con, "investment", "investor_corp_code")
-    return {"investment_superseded": superseded}
+    return {"investment_superseded": close_snapshot(con, "investment")}
 
 
 def close_relations(con: duckdb.DuckDBPyConnection) -> dict:
-    stats = {}
-    for table in ("major_shareholder", "executive"):
-        stats[f"{table}_superseded"] = mark_superseded(con, table, "source_rcept_no", "corp_code")
-        chain_snapshots(con, table, "corp_code")
+    """관계 테이블을 닫고 사람을 만든다. concurrent_position은 rebuild_concurrent_positions가 스스로 닫는다."""
+    stats = {f"{table}_superseded": close_snapshot(con, table) for table in ("major_shareholder", "executive")}
     stats["executive_closed_by_tenure_end"] = close_executive_tenures(con)
     chain_changes(con)
     stats["person_merged_rows"] = apply_person_merges(con)
