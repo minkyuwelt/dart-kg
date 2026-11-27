@@ -69,28 +69,25 @@ export default function Changes() {
   const without = data?.reports.filter((r) => r.changes.length === 0) ?? [];
 
   return (
-    <main className={s.page}>
-      <h2 className={s.h2}>변화 리포트</h2>
-      <p className={s.lead}>기간 안에 접수된 사업·분기보고서가 직전 보고서와 견주어 최대주주·임원·출자에 무엇을 바꿨는지 봅니다. 사람의 생년월은 적지 않습니다.</p>
-
-      <form className={s.controls} onSubmit={(e) => e.preventDefault()}>
-        <div className={s.field}>
+    <main>
+      <div className={s.toolbar}>
+        <div className="field">
           <label htmlFor="since">접수일</label>
           <div className={s.dates}>
             <input id="since" type="date" value={since} max={until} onChange={(e) => set({ since: e.target.value })} />
             <span aria-hidden="true">~</span>
             <input id="until" aria-label="접수일 끝" type="date" value={until} min={since} max={today()} onChange={(e) => set({ until: e.target.value })} />
           </div>
-          <div className={s.ranges} role="group" aria-label="빠른 기간">
-            {RANGES.map((r) => (
-              <button key={r.label} type="button" className={since === r.since() && until === today() ? s.rangeOn : s.range}
-                      onClick={() => set({ since: r.since(), until: today() })}>
-                {r.label}
-              </button>
-            ))}
-          </div>
         </div>
-        <div className={s.field}>
+        <div className={s.ranges} role="group" aria-label="빠른 기간">
+          {RANGES.map((r) => (
+            <button key={r.label} type="button" className={`btnQuiet ${since === r.since() && until === today() ? "btnQuietOn" : ""}`}
+                    onClick={() => set({ since: r.since(), until: today() })}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <div className="field">
           <label htmlFor="corp">회사</label>
           <select id="corp" value={corp} onChange={(e) => set({ corp: e.target.value })}>
             <option value="">모든 회사</option>
@@ -102,48 +99,44 @@ export default function Changes() {
             ))}
           </select>
         </div>
-      </form>
+        <p className={s.toolbarHint}>기간 안에 접수된 사업·분기보고서가 직전 보고서와 견주어 최대주주·임원·출자에 무엇을 바꿨는지 봅니다.</p>
+      </div>
 
-      {error && <p role="alert" className={s.error}>{error}</p>}
-      {loading && !data && <p className={s.muted} aria-live="polite">보고서를 견주고 있습니다.</p>}
+      {error && <p role="alert" className="alert">{error}</p>}
+      {loading && !data && <p className="muted" aria-live="polite">보고서를 견주고 있습니다.</p>}
 
       {data && (
         <div className={loading ? s.stale : undefined} aria-busy={loading}>
-          <p className={s.summary}>
-            {data.summary.reports === 0 ? (
-              <>이 기간에 접수된 관계 보고서가 없습니다. 기간을 넓히거나 다른 회사를 고르세요. 정기보고서는 보통 3·5·8·11월에 접수됩니다.</>
-            ) : (
-              <>
-                보고서 {data.summary.reports}개 중 변화가 있는 것 {data.summary.reports_with_changes}개, 변화 {data.summary.changes}건.
-                {Object.keys(data.summary.by_kind).length > 0 && (
-                  <span className={s.kinds}>
-                    {Object.entries(data.summary.by_kind).map(([k, n]) => (
-                      <span key={k} className={s.kind}>{kindLabel(data, k)} {n}</span>
+          {data.summary.reports === 0 ? (
+            <section className="panel"><p className="panelEmpty" style={{ paddingTop: 18 }}>이 기간에 접수된 관계 보고서가 없습니다. 기간을 넓히거나 다른 회사를 고르세요. 정기보고서는 보통 3·5·8·11월에 접수됩니다.</p></section>
+          ) : (
+            <section className="panel">
+              <div className="panelHead">
+                <h3>변화 <span className="panelCount">{data.summary.changes}</span></h3>
+                <p className="panelNote">
+                  보고서 {data.summary.reports}개 중 변화가 있는 것 {data.summary.reports_with_changes}개
+                  {Object.entries(data.summary.by_kind).map(([k, n]) => <span key={k} className={s.kind}><span className="chip chipQuiet">{kindLabel(data, k)}</span> {n}</span>)}
+                </p>
+              </div>
+              <div className={s.reports}>
+                {withChanges.map((r, i) => <Report key={r.rcept_no} r={r} open={i === 0 && withChanges.length <= 3} />)}
+              </div>
+              {without.length > 0 && (
+                <details className={s.quiet}>
+                  <summary>변화가 없는 보고서 {without.length}개</summary>
+                  <ul>
+                    {without.map((r) => (
+                      <li key={r.rcept_no}>
+                        <a href={r.url} target="_blank" rel="noreferrer">{r.corp_name} {r.report_nm}</a>
+                        <span className="muted"> 접수 {r.rcept_dt}{r.prev_stlm_dt ? "" : " · 첫 보고서라 견줄 것이 없음"}</span>
+                      </li>
                     ))}
-                  </span>
-                )}
-              </>
-            )}
-          </p>
-
-          <div className={s.reports}>
-            {withChanges.map((r, i) => <Report key={r.rcept_no} r={r} open={i === 0 && withChanges.length <= 3} />)}
-          </div>
-
-          {without.length > 0 && (
-            <details className={s.quiet}>
-              <summary>변화가 없는 보고서 {without.length}개</summary>
-              <ul>
-                {without.map((r) => (
-                  <li key={r.rcept_no}>
-                    <a href={r.url} target="_blank" rel="noreferrer">{r.corp_name} {r.report_nm}</a>
-                    <span className={s.muted}> 접수 {r.rcept_dt}{r.prev_stlm_dt ? "" : " · 첫 보고서라 견줄 것이 없음"}</span>
-                  </li>
-                ))}
-              </ul>
-            </details>
+                  </ul>
+                </details>
+              )}
+              <p className={s.foot}>지분율 변화는 {data.pct_threshold}%p 이상만 적습니다.</p>
+            </section>
           )}
-          <p className={s.foot}>지분율 변화는 {data.pct_threshold}%p 이상만 적습니다. 수치는 공시 그대로이며 투자 판단용이 아닙니다.</p>
         </div>
       )}
     </main>
@@ -166,28 +159,28 @@ function Report({ r, open }: { r: ReportChanges; open: boolean }) {
           <span className={s.reportCorp}>{r.corp_name}</span> <span className={s.reportNm}>{r.report_nm}</span>
         </span>
         <span className={s.reportCounts}>
-          {[...counts].map(([label, n]) => <span key={label} className={s.count}>{label} {n}</span>)}
+          {[...counts].map(([label, n]) => <span key={label} className={s.count}>{label} <b>{n}</b></span>)}
         </span>
         <span className={s.reportDate}>{r.rcept_dt}</span>
       </summary>
       <div className={s.reportBody}>
         <p className={s.reportMeta}>
-          기준일 {r.stlm_dt ?? "?"}{r.prev_stlm_dt ? ` (직전 ${r.prev_stlm_dt}과 견줌)` : ""} ·{" "}
+          기준일 {r.stlm_dt ?? "?"}{r.prev_stlm_dt ? ` — 직전 ${r.prev_stlm_dt}과 견줌` : ""} ·{" "}
           <a href={r.url} target="_blank" rel="noreferrer">DART에서 보기</a>
         </p>
-        <div className={s.tableWrap}>
-          <table className={s.table}>
+        <div className="tblWrap">
+          <table className={`tbl ${s.table}`}>
             <thead>
               <tr><th className={s.thKind}>변화</th><th>대상</th><th className={s.thVal}>이전</th><th className={s.thVal}>이후</th><th className={s.thNote}>비고</th></tr>
             </thead>
             <tbody>
               {r.changes.map((c, i) => (
                 <tr key={i} className={c.kind.endsWith("_gone") ? s.gone : c.kind.endsWith("_new") ? s.added : undefined}>
-                  <td className={s.tdKind}>{c.kind_label}</td>
-                  <td>{c.subject}</td>
+                  <td className="dim">{c.kind_label}</td>
+                  <td className="strong">{c.subject}</td>
                   <td className={s.before}>{c.before || "—"}</td>
                   <td className={s.after}>{c.after || "—"}</td>
-                  <td className={s.note}>{c.note}</td>
+                  <td className="dim">{c.note}</td>
                 </tr>
               ))}
             </tbody>

@@ -79,21 +79,21 @@ export default function Ask() {
   const graph = result?.graph ?? null;
 
   return (
-    <main className={s.page}>
+    <main>
       <form
-        className={s.ask}
+        className={`panel ${s.ask}`}
         onSubmit={(e) => {
           e.preventDefault();
           submit(question);
         }}
       >
-        <label htmlFor="q" className={s.visuallyHidden}>질문</label>
+        <label htmlFor="q" className="visuallyHidden">질문</label>
         <textarea
           id="q"
           className={s.input}
           rows={2}
           maxLength={500}
-          placeholder="예: 2023년 3월 시점 신한은행의 대표이사와 최대주주는?"
+          placeholder="2023년 3월 시점 신한은행의 대표이사와 최대주주는?"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => {
@@ -106,9 +106,9 @@ export default function Ask() {
         <div className={s.askRow}>
           <label className={s.toggle}>
             <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
-            답 만들기 (끄면 근거 공시만 찾습니다)
+            답 만들기 <span className="muted">(끄면 근거 공시만 찾습니다)</span>
           </label>
-          <button type="submit" className={s.button} disabled={loading || question.trim().length < 2}>
+          <button type="submit" className="btn" disabled={loading || question.trim().length < 2}>
             {loading ? "찾는 중" : "묻기"}
           </button>
         </div>
@@ -116,30 +116,26 @@ export default function Ask() {
 
       {!result && !loading && !error && (
         <div className={s.lists}>
-          <section className={s.examples} aria-label="예시 질문">
-            <p className={s.examplesLead}>이런 것을 물을 수 있습니다</p>
-            <ul>
+          <section className="panel" aria-label="예시 질문">
+            <div className="panelHead"><h3>이런 것을 물을 수 있습니다</h3></div>
+            <ul className={s.qList}>
               {EXAMPLES.map((q) => (
                 <li key={q}>
-                  <button type="button" className={s.exampleBtn} onClick={() => { setQuestion(q); submit(q); }}>
-                    {q}
-                  </button>
+                  <button type="button" className={s.qBtn} onClick={() => { setQuestion(q); submit(q); }}>{q}</button>
                 </li>
               ))}
             </ul>
           </section>
           {history.length > 0 && (
-            <section className={s.examples} aria-label="이 세션에서 물은 것">
-              <p className={s.examplesLead}>
-                이 세션에서 물은 것
+            <section className="panel" aria-label="이 세션에서 물은 것">
+              <div className="panelHead">
+                <h3>이 세션에서 물은 것</h3>
                 <button type="button" className={s.linkBtn} onClick={() => setHistory([])}>지우기</button>
-              </p>
-              <ul>
+              </div>
+              <ul className={s.qList}>
                 {history.map((r) => (
                   <li key={r.question}>
-                    <button type="button" className={s.exampleBtn} onClick={() => { setQuestion(r.question); setResult(r); setError(null); }}>
-                      {r.question}
-                    </button>
+                    <button type="button" className={s.qBtn} onClick={() => { setQuestion(r.question); setResult(r); setError(null); }}>{r.question}</button>
                   </li>
                 ))}
               </ul>
@@ -148,61 +144,64 @@ export default function Ask() {
         </div>
       )}
 
-      {error && (
-        <p role="alert" className={s.error}>{error}</p>
-      )}
+      {error && <p role="alert" className="alert">{error}</p>}
 
       {loading && <p className={s.loading} aria-live="polite">공시를 찾고 있습니다. 답까지 만들면 10초쯤 걸립니다.</p>}
 
       {result && (
         <div className={s.result}>
           <section className={s.answerCol} aria-label="답">
-            <h2 className={s.q}>{result.question}</h2>
-            {answer ? (
-              <div className={answer.not_found ? s.answerNotFound : s.answer}>
-                {splitCitations(answer.text).map((part, i) =>
-                  "cite" in part ? (
-                    <button key={i} type="button" className={s.cite} onClick={() => jumpTo(part.cite)} title={`근거 ${part.cite} 보기`}>
-                      {part.cite}
-                    </button>
-                  ) : (
-                    <span key={i}>{part.text}</span>
-                  ),
-                )}
-              </div>
-            ) : (
-              <p className={s.noAnswer}>답은 만들지 않았습니다. 오른쪽 근거 공시를 직접 읽어 보세요.</p>
-            )}
-            <p className={s.caveat}>
-              답은 공시 원문 조각에서만 만들고, 수치는 공시 그대로입니다. 투자 판단용이 아닙니다.
-              {answer && <> · {answer.model} · 토큰 {answer.input_tokens.toLocaleString()} / {answer.output_tokens.toLocaleString()}</>}
-            </p>
+            <div className={`panel ${s.answerPanel}`}>
+              <h2 className={s.q}>{result.question}</h2>
+              {answer ? (
+                <div className={answer.not_found ? s.answerNotFound : s.answer}>
+                  {splitCitations(answer.text).map((part, i) =>
+                    "cite" in part ? (
+                      <button key={i} type="button" className={s.cite} onClick={() => jumpTo(part.cite)} title={`근거 ${part.cite} 보기`}>
+                        {part.cite}
+                      </button>
+                    ) : (
+                      <span key={i}>{part.text}</span>
+                    ),
+                  )}
+                </div>
+              ) : (
+                <p className={s.noAnswer}>답은 만들지 않았습니다. 오른쪽 근거 공시를 직접 읽어 보세요.</p>
+              )}
+              <p className={s.caveat}>
+                답은 공시 원문 조각에서만 만들고, 수치는 공시 그대로입니다.
+                {answer && <> {answer.model} · 토큰 {answer.input_tokens.toLocaleString()} / {answer.output_tokens.toLocaleString()}</>}
+              </p>
+            </div>
 
             {graph && (
-              <section id="graph" className={[s.graph, focused === graph.n ? s.hitFocused : ""].join(" ")} aria-label="관계표">
-                <h3 className={s.h3}>
-                  <span className={[s.hitN, graph.cited ? s.hitNCited : ""].join(" ")} aria-hidden="true">{graph.n}</span>
-                  관계표 <span className={s.h3Sub}>그래프에서 찾은 {graph.relations.length}건{graph.cited ? " · 답이 인용함" : " · 답이 인용하지 않음"}</span>
-                </h3>
+              <section id="graph" className={["panel", s.graph, focused === graph.n ? s.focusedPanel : ""].join(" ")} aria-label="관계표">
+                <div className="panelHead">
+                  <h3>
+                    <span className={[s.hitN, graph.cited ? s.hitNCited : ""].join(" ")} aria-hidden="true">{graph.n}</span>
+                    관계표 <span className="panelCount">{graph.relations.length}</span>
+                  </h3>
+                  <p className="panelNote">그래프에서 찾은 관계{graph.cited ? ". 답이 인용했습니다" : ". 답은 인용하지 않았습니다"}</p>
+                </div>
                 {graph.derived.length > 0 && (
                   <ul className={s.derived}>
                     {graph.derived.map((d, i) => (
-                      <li key={i}><span className={s.derivedRule}>{d.rule}</span> {d.subject ? `${d.subject}: ` : ""}{d.value}</li>
+                      <li key={i}><span className="chip chipQuiet">{d.rule}</span> {d.subject ? `${d.subject}: ` : ""}{d.value}</li>
                     ))}
                   </ul>
                 )}
                 {graph.relations.length > 0 && (
-                  <div className={s.tableWrap}>
-                    <table className={s.table}>
+                  <div className="tblWrap">
+                    <table className={`tbl ${s.graphTable}`}>
                       <thead>
                         <tr><th>주체</th><th>관계</th><th>대상</th><th>값</th><th>유효 기간</th><th>근거</th></tr>
                       </thead>
                       <tbody>
                         {graph.relations.map((r, i) => (
                           <tr key={i}>
-                            <td>{r.src}</td><td className={s.nowrap}>{REL_LABEL[r.rel] ?? r.rel}</td><td>{r.dst}</td><td>{r.value}</td>
-                            <td className={s.nowrap}>{r.valid_from ?? ""}{r.valid_to ? ` ~ ${r.valid_to}` : r.valid_from ? " ~" : ""}</td>
-                            <td>{r.url ? <a href={r.url} target="_blank" rel="noreferrer">{r.source_rcept_no}</a> : ""}</td>
+                            <td className="strong nowrap">{r.src}</td><td className="dim nowrap">{REL_LABEL[r.rel] ?? r.rel}</td><td className="nowrap">{r.dst}</td><td className="nowrap">{r.value}</td>
+                            <td className="dim nowrap">{r.valid_from ?? ""}{r.valid_to ? ` ~ ${r.valid_to}` : r.valid_from ? " ~" : ""}</td>
+                            <td>{r.url && r.source_rcept_no ? <a className="chip chipQuiet" href={r.url} target="_blank" rel="noreferrer" title={`접수번호 ${r.source_rcept_no}`}>{fmtDate(r.source_rcept_no)}</a> : ""}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -218,10 +217,11 @@ export default function Ask() {
             {result.graph_error && <p className={s.graphError}>그래프 질의는 쓰지 못했습니다: {result.graph_error}</p>}
           </section>
 
-          <aside className={s.hitsCol} aria-label="근거 공시">
-            <h3 className={s.h3}>
-              근거 공시 <span className={s.h3Sub}>{result.hits.length}개 중 인용 {result.hits.filter((h) => h.cited).length}개</span>
-            </h3>
+          <aside className={`panel ${s.hitsCol}`} aria-label="근거 공시">
+            <div className="panelHead">
+              <h3>근거 공시 <span className="panelCount">{result.hits.length}</span></h3>
+              <p className="panelNote">답이 인용한 {result.hits.filter((h) => h.cited).length}개는 노랗게</p>
+            </div>
             <ol className={s.hits}>
               {result.hits.map((h) => (
                 <li
@@ -244,4 +244,10 @@ export default function Ask() {
       )}
     </main>
   );
+}
+
+// 접수번호 앞 8자리 = 접수일
+function fmtDate(rcept: string): string {
+  const d = rcept.slice(0, 8);
+  return `${d.slice(0, 4)}.${d.slice(4, 6)}.${d.slice(6, 8)}`;
 }

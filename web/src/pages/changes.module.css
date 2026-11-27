@@ -1,76 +1,42 @@
-/* 변화 리포트. 바뀐 것만 또렷하고 나머지는 흐리게: 변화 없는 보고서는 접어 두고, 빠진 항목은 이전 값만 남기고 흐리게. */
+/* 변화 리포트. 위에 고르는 줄, 아래 한 판 안에 보고서 목록. 바뀐 것만 또렷하고 나머지는 흐리게:
+   변화 없는 보고서는 접어 두고, 빠진 항목은 이전 값만 남기고 흐리게. */
 
-.page { padding-top: 28px; }
-.h2 { font-size: 20px; }
-.lead { margin: 6px 0 0; max-width: var(--measure); color: var(--ink-2); }
-
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 28px 40px;
-  margin-top: 24px;
-  padding: 18px 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-}
-.field { display: flex; flex-direction: column; gap: 8px; }
-.field label { font-size: 13px; color: var(--ink-2); }
-.field input, .field select {
-  padding: 7px 10px;
-  border: 1px solid var(--rule-strong);
-  border-radius: 4px;
-  background: var(--paper);
-  font-size: 15px;
-}
-.field select { min-width: 220px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; margin-bottom: 20px; }
+.toolbar select { min-width: 220px; }
+.toolbarHint { margin: 0 0 8px; flex: 1 1 24rem; color: var(--ink-2); font-size: 13.5px; }
 .dates { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
-.ranges { display: flex; gap: 6px; }
-.range, .rangeOn {
-  padding: 3px 10px;
-  border: 1px solid var(--rule-strong);
-  border-radius: 4px;
-  background: var(--paper);
-  font-size: 13px;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-.range:hover { color: var(--ink); border-color: var(--ink); }
-.rangeOn { color: var(--ink); border-color: var(--ink); font-weight: 600; }
-
-.error { margin: 20px 0 0; padding: 12px 14px; border-left: 3px solid var(--danger); background: var(--danger-bg); color: var(--danger); }
-.muted { color: var(--ink-2); }
+.ranges { display: flex; gap: 6px; padding-bottom: 2px; }
 .stale { opacity: 0.55; }
 
-.summary { margin: 22px 0 0; max-width: 60rem; }
-.kinds { display: block; margin-top: 6px; color: var(--ink-2); font-size: 14px; }
-.kind { display: inline-block; margin-right: 14px; }
+.kind { display: inline-block; margin-left: 12px; white-space: nowrap; }
 
 /* 보고서 목록: 한 줄에 회사·보고서, 변화 종류별 건수, 접수일. 괘선으로 나누고, 펼치면 표가 아래에 */
-.reports { margin-top: 20px; border-top: 1px solid var(--rule-strong); }
+.reports { border-top: 1px solid var(--rule); }
 .report { border-bottom: 1px solid var(--rule); }
+.report:last-child { border-bottom: 0; }
 .reportRow {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr) auto;
   gap: 16px;
   align-items: baseline;
-  padding: 12px 0;
+  padding: 13px 20px;
   cursor: pointer;
   list-style: none;
 }
 .reportRow::-webkit-details-marker { display: none; }
-/* 펼침 표시: 제목 앞 작은 삼각형. 열리면 아래를 향한다 (상태를 알려 주는 장치라 둔다) */
-.reportTitle::before { content: "▸"; display: inline-block; width: 1em; color: var(--ink-2); font-size: 12px; }
+.reportRow:hover { background: #fafbfd; }
+/* 펼침 표시: 제목 앞 작은 삼각형. 열리면 아래를 향한다 */
+.reportTitle::before { content: "▸"; display: inline-block; width: 1.1em; color: var(--ink-3); font-size: 12px; }
 .report[open] .reportTitle::before { content: "▾"; }
-.reportRow:hover .reportCorp { color: var(--blue-ink); }
-.report[open] .reportRow { padding-bottom: 6px; }
 .reportTitle { min-width: 0; }
-.reportCorp { font-weight: 600; }
+.reportCorp { font-weight: 700; }
 .reportNm { color: var(--ink-2); margin-left: 4px; font-size: 14px; }
-.reportCounts { font-size: 13px; color: var(--ink-2); }
-.count { display: inline-block; margin-right: 12px; white-space: nowrap; }
-.reportDate { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
-.reportBody { padding: 0 0 18px; }
-.reportMeta { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+.reportCounts { font-size: 13.5px; color: var(--ink-2); }
+.count { display: inline-block; margin-right: 14px; white-space: nowrap; }
+.count b { font-weight: 700; color: var(--ink); }
+.reportDate { font-size: 13.5px; color: var(--ink-3); white-space: nowrap; }
+.reportBody { padding: 0 0 8px; }
+.reportMeta { margin: 0 20px 8px; font-size: 13.5px; color: var(--ink-2); }
 @media (max-width: 700px) {
   .reportRow { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
   .reportDate { grid-row: 1; grid-column: 2; }
@@ -78,23 +44,18 @@
 }
 
 /* 보고서마다 표가 따로라 열 너비를 고정해 두어야 위아래 표의 열이 맞는다. 좁은 화면은 가로 스크롤 */
-.tableWrap { overflow-x: auto; }
-.table { width: max(100%, 800px); font-size: 14px; table-layout: fixed; }   /* 고정 열(11.5+9+9+12em ≈ 580px)을 빼고 "대상"에 220px은 남게. min-width는 fixed 표에서 무시된다 */
-.thVal { width: 9em; }
-.thNote { width: 12em; }
-.table th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 6px 12px 6px 0; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; }
-.table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
-.thKind, .tdKind { width: 11.5em; }   /* 가장 긴 "최대주주 지분율 변화"가 한 줄에 */
-.tdKind { color: var(--ink-2); }
+.table { width: max(100%, 800px); table-layout: fixed; }
+.thKind { width: 11.5em; }   /* 가장 긴 "최대주주 지분율 변화"가 한 줄에 */
+.thVal { width: 10em; }
+.thNote { width: 13em; }
 .before { color: var(--ink-2); }
 .after { font-weight: 500; }
-.note { color: var(--ink-2); }
 .gone td { color: var(--ink-2); }
 .gone .before { text-decoration: line-through; text-decoration-color: var(--rule-strong); }
-.added .after { font-weight: 600; }
+.added .after { font-weight: 700; }
 
-.quiet { margin-top: 32px; color: var(--ink-2); font-size: 14px; }
+.quiet { padding: 14px 20px 4px; border-top: 1px solid var(--rule); color: var(--ink-2); font-size: 14px; }
 .quiet summary { cursor: pointer; }
 .quiet ul { margin: 8px 0 0; padding-left: 18px; }
 .quiet li { padding: 2px 0; }
-.foot { margin-top: 28px; font-size: 13px; color: var(--ink-2); }
+.foot { margin: 0; padding: 12px 20px 14px; font-size: 13px; color: var(--ink-3); }
