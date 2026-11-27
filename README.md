@@ -407,7 +407,7 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    | 경로 | 내용 |
    |---|---|
    | `GET /health` | DuckDB·Neo4j 연결, 임베딩 모델, LLM 키 유무 |
-   | `POST /ask` | `{question, k, use_llm, corp_filter}` → 답·인용 번호·근거 조각(DART 링크) |
+   | `POST /ask` | `{question, k, use_llm, corp_filter}` → 답·인용 번호·근거 조각(DART 링크, 공시를 낸 회사의 corp_code)·관계표(회사 페이지가 있는 회사는 corp_code) |
    | `GET /changes` | `since`·`until`(또는 `days`)·`corp` → 변화 리포트 JSON |
    | `GET /corps` | 수집 대상 회사 목록 |
    | `GET /corps/{corp_code}` | `as_of` → 회사 페이지 묶음: 개요·최신 정기보고서, 그 날짜의 임원·최대주주·출자, 지주 겸직 표의 자리(0014), 지분 추이(지주 출자 표가 적은 이 회사 지분율·장부가액의 기준일별 변화) |

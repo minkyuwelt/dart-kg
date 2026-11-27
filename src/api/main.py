@@ -69,6 +69,8 @@ class AskRequest(BaseModel):
 class HitOut(BaseModel):
     n: int
     rcept_no: str
+    corp_code: str | None = None   # 공시를 낸 회사. 화면이 회사 페이지로 이어 준다
+    corp_name: str | None = None
     path: str
     label: str
     score: float
@@ -88,8 +90,10 @@ class AnswerOut(BaseModel):
 
 class GraphRelationOut(BaseModel):
     src: str
+    src_corp_code: str | None = None   # 수집 대상 회사일 때만(회사 페이지가 있는 회사). 사람·해외 법인·펀드는 None
     rel: str
     dst: str
+    dst_corp_code: str | None = None
     value: str
     valid_from: str | None
     valid_to: str | None
@@ -241,9 +245,15 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
                 result = ask(req.question, retriever, llm, req.k, con)
             except SystemExit as e:
                 raise HTTPException(500, str(e)) from e
+            # 회사 페이지로 잇는 데 필요한 것: 조각의 공시를 낸 회사, 관계표의 회사가 수집 대상인지
+            corp_of = dict(con.execute("SELECT rcept_no, corp_code FROM disclosure WHERE rcept_no IN (SELECT UNNEST(?))",
+                                       [[h.rcept_no for h in result.hits]]).fetchall()) if result.hits else {}
+            targets = dict(con.execute("SELECT corp_code, corp_name FROM target_corp").fetchall())
         cited = {n for n, _ in result.cited_hits}
-        hits = [HitOut(n=i + 1, rcept_no=h.rcept_no, path=h.path, label=result.labels[i], score=round(h.score, 4), snippet=h.snippet,
+        hits = [HitOut(n=i + 1, rcept_no=h.rcept_no, corp_code=corp_of.get(h.rcept_no), corp_name=targets.get(corp_of.get(h.rcept_no)),
+                       path=h.path, label=result.labels[i], score=round(h.score, 4), snippet=h.snippet,
                        url=VIEWER_URL.format(rcept_no=h.rcept_no), cited=(i + 1) in cited) for i, h in enumerate(result.hits)]
+        page_of = lambda code: code if code in targets else None   # noqa: E731 — 회사 페이지가 있는 회사만
         a = result.answer
         answer = AnswerOut(text=a.text, citations=a.citations, model=a.model, not_found=a.not_found,
                            input_tokens=a.input_tokens, output_tokens=a.output_tokens) if a else None
@@ -252,7 +262,8 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
             g = result.graph
             graph = GraphOut(
                 n=result.graph_number, cited=result.graph_cited, trace=g.trace(),
-                relations=[GraphRelationOut(src=r["src"], rel=r["rel"], dst=r["dst"], value=r["value"], valid_from=r["valid_from"],
+                relations=[GraphRelationOut(src=r["src"], src_corp_code=page_of(r.get("src_corp_code")), rel=r["rel"],
+                                            dst=r["dst"], dst_corp_code=page_of(r.get("dst_corp_code")), value=r["value"], valid_from=r["valid_from"],
                                             valid_to=r["valid_to"], source_rcept_no=r["source_rcept_no"],
                                             url=VIEWER_URL.format(rcept_no=r["source_rcept_no"]) if r["source_rcept_no"] else None)
                            for r in g.relations],
