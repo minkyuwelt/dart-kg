@@ -7,8 +7,7 @@ corpCode.xml과 같은 "ZIP 응답" API라서 dart_client.get_raw를 쓴다. 다
 접수번호가 틀리거나 한도를 넘으면 ZIP 대신 JSON(또는 XML) 오류 본문이 오므로, ZIP인지 먼저 확인하고
 아니면 status 코드를 읽어 DartApiError/DartRateLimitError로 바꾼다.
 
-이 모듈은 받은 바이트를 해석하지 않는다. 저장은 src/loaders/documents.py, 파싱은 Phase 3 다음 PR이 맡는다.
-ZIP 안 파일 이름·인코딩·크기는 노트북에서 실제 1건을 받아 확인한다 (docs/plans/phase3.md "확인이 필요한 것").
+이 모듈은 받은 바이트를 해석하지 않는다. 저장은 src/loaders/documents.py, 파싱은 src/loaders/document_parser.py가 맡는다 (0007).
 """
 
 import io

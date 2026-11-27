@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import sys
 from pathlib import Path
 
@@ -148,7 +147,7 @@ def print_stats(con: duckdb.DuckDBPyConnection) -> None:
     for r in rows:
         print(f"{r['strategy']:<14}{r['chunks']:>8,}{r['documents']:>6}{r['tables']:>8,}{r['notes']:>9,}{r['avg_chars']:>7}"
               f"{r['median_chars']:>7}{r['max_chars']:>7}{r['total_chars']:>12,}")
-    # 길이 분포: 100자 단위 막대 (전략별)
+    # 길이 분포: 200자 단위 막대 (전략별)
     for r in rows:
         hist = con.execute(
             """SELECT CAST(floor(char_count / 200) * 200 AS INTEGER) AS b, count(*) FROM chunk WHERE strategy = ? GROUP BY b ORDER BY b""",

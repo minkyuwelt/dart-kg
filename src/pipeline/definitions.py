@@ -93,7 +93,7 @@ disclosure_partitions = dg.MultiPartitionsDefinition({"month": month_partitions,
 # Phase 2: 정기보고서 파티션. 2021 사업연도부터 올해까지 연 4개(1분기·반기·3분기·사업). 키는 '2025-11011'.
 # 회사 × 보고서 조합 중 실제로 보고서가 있는 것만 API를 부르므로, 없는 조합을 백필해도 호출이 늘지 않는다.
 FIRST_REPORT_YEAR = 2021
-report_partitions = dg.StaticPartitionsDefinition(report_partition_keys(FIRST_REPORT_YEAR, datetime.now(ZoneInfo("Asia/Seoul")).year))
+report_partitions = dg.StaticPartitionsDefinition(report_partition_keys(FIRST_REPORT_YEAR, datetime.now(KST).year))
 report_detail_partitions = dg.MultiPartitionsDefinition({"corp": corp_partitions, "report": report_partitions})
 
 
@@ -440,12 +440,10 @@ def relations_current_unique() -> dg.AssetCheckResult:
 RELATION_CHECKS = (relations_source_known, relations_valid_from_sane, relations_intervals_sane, relations_current_unique)
 
 
-# 스케줄은 코드에서 기본 켜짐 (2026-11-27, `python -m src.pipeline.status`로 확인: README대로 "화면에서 켠다"고 적어 두었지만 4일 동안 아무도 켜지 않아
-# 11-23 백필 뒤 새 공시가 한 건도 들어오지 않았다). dagster dev를 켜는 순간 함께 켜지고, 새 환경에서도 같다. 화면에서 끄면 꺼진 상태가 유지된다.
-# 시각은 노트북을 켜는 시각(보통 09:30) 뒤인 10:00~12:00. 그보다 이르면 늘 "따라잡기"(놓친 평가 중 가장 최근 하나)로만 돌고, 그때는 6개가 같은 시각에
-# 평가되어 report_details가 그날 disclosures 결과(아직 대기 중)를 못 보고 다음 날 따라잡는다 — 하루 지연. 순서: 10:00 대상 → 10:05 공시 목록(59 run, 10분쯤)
-# → 10:45 주요정보 → 11:00 원문 → 11:30 관계 테이블 → 11:45 그래프 → 12:00 색인
-# Dagster는 스케줄이 켜진 시각보다 앞선 평가를 만들지 않는다 — 처음 켠 날(11-27 10:18)은 10:45부터만 돌았다. 따라잡기는 켜진 뒤 데몬이 꺼져 있던 동안에만
+# 스케줄 7개는 코드에서 기본 켜짐: dagster dev를 켜는 순간 함께 켜지고 새 환경에서도 같다. 화면에서 끄면 꺼진 상태가 유지된다.
+# 시각은 노트북을 켜는 시각(보통 09:30) 뒤인 10:00~12:00에 순서대로: 10:00 대상 → 10:05 공시 목록(59 run, 10분쯤) → 10:45 주요정보 → 11:00 원문
+# → 11:30 관계 테이블 → 11:45 그래프 → 12:00 색인. 노트북을 그보다 늦게 켜면 "따라잡기"(놓친 평가 중 가장 최근 하나)로 7개가 같은 시각에 평가되어
+# 뒤 단계가 앞 단계의 그날 결과를 못 보고 다음 날 따라잡는다(하루 지연). 왜 기본 켜짐인지와 첫 가동 경과는 docs/devlog/2026-11-27.md "매일 운영 첫 가동".
 SCHEDULE_DEFAULT = dg.DefaultScheduleStatus.RUNNING
 
 targets_job = dg.define_asset_job(
@@ -550,8 +548,7 @@ def _runs_for_new_periodic_reports(context: dg.ScheduleEvaluationContext, asset_
     report_details(주요정보)와 documents(원문)가 같은 파티션을 쓰므로 둘이 공유한다. run_key 앞에 run_prefix를 붙여 두 스케줄의 run이 구분된다.
     "이미 처리했다"의 판단: 그 파티션의 마지막 자산 실행 기록 메타데이터 `listed_rcept_no`가 목록의 최신 접수번호와 같으면 건너뛴다.
     기록이 없으면(새 보고서, 또는 어제 run이 실패) 돌리고, 접수번호가 다르면(정정본) 다시 돌린다. DuckDB는 열지 않는다.
-    (2026-11-27 전에는 최근 2일 목록의 보고서를 매일 전부 돌려 11월 내내 29개 × 4 = 116 호출이 매일 나갔다.)
-    옛 메타데이터(접수번호 없는 키 목록)는 접수번호를 모르니 돌린다.
+    옛 메타데이터(접수번호 없는 키 목록)는 접수번호를 모르니 돌린다. 접수번호로 거르는 이유는 devlog 2026-11-27(매일 116 호출이 헛돌던 문제).
     """
     now = context.scheduled_execution_time
     today = now.astimezone(KST).date()
@@ -857,8 +854,7 @@ def daily_rag_index(context: dg.ScheduleEvaluationContext):
 def daily_graph(context: dg.ScheduleEvaluationContext):
     """매일 11:45(KST), 최근에 relations(관계 테이블)가 다시 만들어졌으면 Neo4j 관계 그래프를 다시 올린다 (API 0건, 조각 층은 그대로).
 
-    2026-11-27까지 스케줄이 없어서 11:30 관계 테이블이 바뀌어도 그래프는 옛것으로 남았다(그래프 질문이 오래된 답을 함). daily_relations와 같은 꼴.
-    DuckDB는 열지 않는다.
+    11:30 관계 테이블이 바뀌면 그래프도 같은 날 따라가야 그래프 질문이 옛 답을 하지 않는다. daily_relations와 같은 꼴. DuckDB는 열지 않는다.
     """
     now = context.scheduled_execution_time
     today = now.astimezone(KST).date()
