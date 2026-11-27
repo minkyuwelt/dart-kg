@@ -144,14 +144,18 @@ UNWIND ps AS p
 # 그래프는 닫힌 세계(기준일의 대상 회사 임원은 전부 적재)라 "대조한 M명 중 겹치는 사람 0명"은 사실이지만,
 # 조각 검색(상위 k개)에서 못 찾은 것은 "없음"이 아니라 "모름"이다 — 이 둘을 가르는 숫자를 LLM이 아니라 코드가 적는다 (2026-11-26, g10)
 T4_SCOPE = Template(
-    "position_scope", "겸직 대조 범위: 그 시점 회사별 임원 수 (T4가 0행일 때 '없음'의 근거)",
+    "position_scope", "겸직 대조 범위: 그 시점 회사별 임원 수 — 대조한 회사 전부(임원 표가 없어 0명인 회사도 한 줄)",
     f"""
-MATCH (pe:Person)-[r:HOLDS_POSITION]->(c:Corp)
-WHERE {at('r')} AND ($corps IS NULL OR c.key IN $corps) AND (NOT $outside_only OR r.outside)
+MATCH (c:Corp)
+WHERE ($corps IS NULL AND EXISTS {{ (:Person)-[:HOLDS_POSITION]->(c) }}) OR c.key IN coalesce($corps, [])
+OPTIONAL MATCH (pe:Person)-[r:HOLDS_POSITION]->(c)
+WHERE {at('r')} AND (NOT $outside_only OR r.outside)
 RETURN c.key AS corp_key, c.name AS corp_name, count(DISTINCT pe) AS persons
 ORDER BY c.name""",
     ("as_of", "outside_only"), ("corps",),
 )
+# 왜 0명인 회사도 돌려주나 (2026-11-27, g11): KB자산운용처럼 사업보고서를 내지 않는(감사보고서만) 자회사는 임원 표가 없어 그래프에 임원이 한 명도 없다.
+# 그러면 "닫힌 세계"(대조 범위의 임원은 전부 적재돼 있다) 전제가 그 회사에서는 깨진다. 몇 곳이 빠졌는지 파생 값에 적어야 LLM이 "11명"을 "전부"라고 말하지 않는다.
 
 T5 = Template(
     "person_history", "한 사람의 임원 이력 (시간순)",

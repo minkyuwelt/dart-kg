@@ -301,7 +301,7 @@ class GraphQueryTest(unittest.TestCase):
         driver = TemplateDriver({"shared_positions": [], "position_scope": scope})
         q = "2025년 12월 31일 기준 4대 금융지주 중 두 곳 이상에서 동시에 사외이사인 사람이 있는가?"
         ctx = Q.build_context(q, driver, self.con, today=TODAY)
-        self.assertEqual([c[0] for c in driver.calls], ["shared_positions", "position_scope"])   # 0행일 때만 범위를 센다, 근거 조각 없음
+        self.assertEqual([c[0] for c in driver.calls], ["shared_positions", "position_scope"])   # 범위를 함께 센다, 근거 조각 없음
         self.assertEqual(driver.calls[1][1]["as_of"], driver.calls[0][1]["as_of"])
         self.assertTrue(driver.calls[1][1]["outside_only"])
         self.assertEqual(len(ctx.derived), 1)
@@ -315,13 +315,23 @@ class GraphQueryTest(unittest.TestCase):
         ctx2 = Q.build_context(q, driver2, self.con, today=TODAY)
         self.assertTrue(ctx2.derived[0]["value"].startswith("판정 불가"))
         self.assertNotIn("없음 — ", Q.to_text(ctx2))
-        # 겸직이 있으면 판정 줄을 만들지 않고 범위도 세지 않는다
+        # 겸직이 있으면 '없음' 판정은 없고, 대조 범위 한 줄만 — 임원 표가 없어 0명인 회사(사업보고서를 안 내는 자회사)는 따로 적는다 (g11 KB자산운용, 2026-11-27)
         p1, kbh, shh = node("p1", "홍길동", "Person", None), node(KBH, "KB금융지주"), node(SHH, "신한지주")
+        scope3 = scope + [{"corp_key": "00104500", "corp_name": "KB자산운용", "persons": 0}]
         driver3 = TemplateDriver({"shared_positions": [{"nodes": [p1, kbh], "rels": [pos("p1", "사외이사", "R1", "e1", "2025-12-31")]},
-                                                       {"nodes": [p1, shh], "rels": [pos("p1", "사외이사", "R2", "e2", "2025-12-31")]}]})
+                                                       {"nodes": [p1, shh], "rels": [pos("p1", "사외이사", "R2", "e2", "2025-12-31")]}],
+                                  "position_scope": scope3})
         ctx3 = Q.build_context(q, driver3, self.con, today=TODAY)
-        self.assertNotIn("position_scope", [c[0] for c in driver3.calls])
-        self.assertEqual(ctx3.derived, [])
+        self.assertEqual([c[0] for c in driver3.calls][:2], ["shared_positions", "position_scope"])
+        self.assertEqual(len(ctx3.derived), 1)
+        self.assertNotIn("없음 — ", ctx3.derived[0]["value"])
+        self.assertIn("회사 3곳 중 임원 표가 있는 2곳의 사외이사 16명을 대조", ctx3.derived[0]["value"])
+        self.assertIn("임원 표가 없는 1곳(KB자산운용)은 셈에서 빠짐", ctx3.derived[0]["value"])
+        # 0행 + 임원 표 없는 회사가 섞여도 '없음' 판정은 임원이 있는 회사 수로 말하고 빠진 회사를 덧붙인다
+        driver4 = TemplateDriver({"shared_positions": [], "position_scope": scope3})
+        ctx4 = Q.build_context(q, driver4, self.con, today=TODAY)
+        self.assertTrue(ctx4.derived[0]["value"].startswith("없음 — 기준일 2025-12-31 회사 2곳의 사외이사 16명"))
+        self.assertIn("KB자산운용", ctx4.derived[0]["value"])
 
     def test_person_history_merges_consecutive_reports(self):
         p, bank, card = node("p9", "정상혁", "Person", None), node(SHBANK, "신한은행"), node("00000024", "신한카드")
