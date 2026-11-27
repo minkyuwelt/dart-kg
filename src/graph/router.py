@@ -19,20 +19,10 @@ from datetime import date
 
 import duckdb
 
-from src.graph.names import linked_names
+from src.graph.names import CorpMention, bare, find_corps  # 질문 속 회사 찾기는 names.py 한 벌 (A2)
 from src.graph.templates import MAX_DEPTH
 
-_STRIP_RE = re.compile(r"주식회사|\(주\)|㈜|\s+")
-# corp 테이블(전체 회사)에서 이름을 찾아볼 후보. 수집 대상이 아닌 회사(합병으로 없어진 회사 등)를 위해서만 쓴다
-_NAME_CANDIDATE_RE = re.compile(r"[가-힣A-Za-z0-9]+(?:은행|증권|보험|생명보험|손해보험|생명|카드|캐피탈|금융지주|금융투자|종합금융|자산운용|저축은행|신탁|투자증권)")
 TITLES = ("대표이사", "사외이사", "회장", "사장", "감사위원", "이사회 의장")
-
-
-@dataclass(frozen=True)
-class CorpMention:
-    corp_code: str
-    text: str      # 질문에 적힌 그대로
-    current: str   # 지금 이름 (corp/target_corp). 질문의 이름과 다르면 옛 이름으로 물은 것
 
 
 @dataclass
@@ -74,55 +64,6 @@ def parse_as_of(question: str, today: date | None = None) -> tuple[date, str]:
 
 
 # ---------------------------------------------------------------- 회사 이름
-
-def _bare(name: str) -> str:
-    return _STRIP_RE.sub("", name or "")
-
-
-def name_dictionary(con: duckdb.DuckDBPyConnection, lineage: list[dict] | None = None) -> dict[str, str]:
-    """이름(공백·법인 표기 뗀 꼴) → corp_code. 같은 이름이 두 corp_code를 가리키면 그 이름은 뺀다 (추측하지 않음).
-    출처: target_corp, src/graph/names.py의 이름 목록(공시 목록·출자 표·최대주주 표에서 corp_code로 연결된 이름),
-    corp_lineage.csv의 옛 이름."""
-    pairs = con.execute("SELECT corp_code, corp_name FROM target_corp").fetchall() + linked_names(con)
-    pairs += [(r["former_corp_code"], r["former_name"]) for r in (lineage or []) if r.get("former_name")]
-    seen: dict[str, set[str]] = {}
-    for code, name in pairs:
-        bare = _bare(name)
-        if len(bare) >= 2:
-            seen.setdefault(bare, set()).add(code)
-    return {name: next(iter(codes)) for name, codes in seen.items() if len(codes) == 1}
-
-
-def find_corps(con: duckdb.DuckDBPyConnection, question: str, lineage: list[dict] | None = None) -> list[CorpMention]:
-    """질문에 나온 회사들 (나온 순서). 긴 이름부터 찾고 겹치는 자리는 다시 쓰지 않는다 ('KB국민은행' 안의 '국민은행')."""
-    bare_q = _bare(question)
-    names = name_dictionary(con, lineage)
-    taken = [False] * len(bare_q)
-    found: list[tuple[int, str, str]] = []
-    for name in sorted(names, key=len, reverse=True):
-        start = bare_q.find(name)
-        while start >= 0:
-            if not any(taken[start:start + len(name)]):
-                for i in range(start, start + len(name)):
-                    taken[i] = True
-                found.append((start, name, names[name]))
-            start = bare_q.find(name, start + 1)
-    # 사전에 없는 이름은 corp 테이블에서 정확히 같은 이름이 하나일 때만 (합병으로 없어진 회사 등)
-    for m in _NAME_CANDIDATE_RE.finditer(bare_q):
-        if any(taken[m.start():m.end()]):
-            continue
-        rows = con.execute("SELECT corp_code FROM corp WHERE replace(corp_name, ' ', '') = ?", [m.group(0)]).fetchall()
-        if len(rows) == 1:
-            found.append((m.start(), m.group(0), rows[0][0]))
-    current = dict(con.execute("SELECT corp_code, corp_name FROM corp").fetchall())
-    current.update(dict(con.execute("SELECT corp_code, corp_name FROM target_corp").fetchall()))
-    out, codes = [], set()
-    for _, text, code in sorted(found):
-        if code not in codes:
-            codes.add(code)
-            out.append(CorpMention(code, text, current.get(code, text)))
-    return out
-
 
 def holdings(con: duckdb.DuckDBPyConnection) -> list[str]:
     return [r[0] for r in con.execute("SELECT corp_code FROM target_corp WHERE role = 'holding' ORDER BY corp_code").fetchall()]
@@ -196,7 +137,7 @@ def route(question: str, con: duckdb.DuckDBPyConnection, today: date | None = No
                     Step("facts_at", {"as_of": iso, "kind": "positions", "title": title}, from_prev="top_corp_holders"))
 
     # 의미: 이름이 바뀐 회사 (질문의 이름 ≠ 지금 이름, 또는 그런 뜻의 말)
-    said, now = _bare(mentions[0].text), _bare(mentions[0].current)
+    said, now = bare(mentions[0].text), bare(mentions[0].current)
     renamed = said not in now and now not in said   # 'KB금융' ↔ 'KB금융지주'는 줄임말이지 옛 이름이 아니다
     if re.search(r"지금\s*어떤\s*회사|이어지|이어\s*보|옛\s*이름|이름이\s*바뀐|사명", q) or renamed:
         steps = [Step("corp_lineage", {"corp": corp, "name": mentions[0].text})]
