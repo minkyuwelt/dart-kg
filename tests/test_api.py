@@ -2,6 +2,7 @@
 
 확인하는 것
 1) /health, /corps, /corps/{code}/executives·shareholders (시점 필터, 생년월 없음, 모르는 회사 404)
+1b) /corps/{code}: 회사 페이지 묶음 — 개요·최신 정기보고서·임원·최대주주·출자·겸직 표 자리·지분 추이, 모든 행에 url, 생년월 없음
 2) /ask: use_llm=false면 검색만, true면 가짜 LLM 답과 인용 표시, 입력 검증(빈 질문 422)
 3) /changes: 변화 리포트 JSON과 요약, since > until 422
 """
@@ -18,7 +19,7 @@ from fastapi.testclient import TestClient
 from src.api.main import create_app
 from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
-from tests.test_change_report import D2024, D2025, KB, R2024, R2025, add_exec, add_holder
+from tests.test_change_report import D2024, D2025, KB, R2024, R2025, add_exec, add_holder, add_inv
 from tests.test_rag_ask import FakeLLM
 from tests.test_report_details import disclosure_row
 
@@ -74,6 +75,47 @@ class ApiTest(unittest.TestCase):
         r = self.client.get(f"/corps/{KB}/executives", params={"as_of": "2026-03-31", "outside_only": "true"}).json()
         self.assertEqual([e["nm"] for e in r["executives"]], ["박민수"])
         self.assertEqual(self.client.get("/corps/00000000/executives").status_code, 404)
+
+    def test_corp_page(self):
+        # 자회사 하나(국민은행)를 더 두고: KB가 출자(2024 100% → 2025 100%, 장부가액 다름), KB 겸직 표에 국민은행 자리 1행(임원) + 1행(비임원)
+        BANK = "00386937"
+        with connect() as con:
+            con.execute("INSERT INTO target_corp VALUES (?, '국민은행', 'subsidiary', ?, 100.0, ?, '2025', now())", [BANK, KB, R2025])
+            add_inv(con, R2024, "국민은행", 100.0, D2024, valid_to=D2025, seq=1)
+            add_inv(con, R2025, "국민은행", 100.0, D2025, seq=1)
+            con.execute("UPDATE investment SET investee_corp_code = ?, trmend_blce_acntbk_amount = CASE WHEN rcept_no = ? THEN 100 ELSE 120 END", [BANK, R2024])
+            for seq, (nm, ofcps, officer) in enumerate([("양종희", "기타비상무이사", True), ("홍길동", "ESG본부장", False)]):
+                con.execute(
+                    """INSERT INTO concurrent_position (source_rcept_no, row_seq, holding_corp_code, bsns_year, reprt_code, nm, person_id, person_method,
+                       target_name, target_corp_code, resolve_method, ofcps, appointed_raw, appointed_on, appointed_method, fte_at, is_officer,
+                       stlm_dt, valid_from, valid_to, superseded_by, loaded_at)
+                       VALUES (?, ?, ?, '2025', '11011', ?, ?, 'holding_executive', '국민은행', ?, 'override', ?, '2025. 1월', DATE '2025-01-01', 'month', '비상근', ?,
+                               ?, ?, NULL, NULL, now())""",
+                    [R2025, seq, KB, nm, f"{nm}|1961-06|남", BANK, ofcps, officer, D2025, D2025],
+                )
+        page = self.client.get(f"/corps/{KB}", params={"as_of": "2026-03-31"}).json()
+        self.assertEqual((page["corp"]["corp_name"], page["corp"]["role"], page["corp"]["parent_corp_name"]), ("KB금융", "holding", None))
+        self.assertEqual(page["corp"]["latest_report"]["report_nm"], "사업보고서 (2025.12)")
+        self.assertIn("rcpNo=" + R2025, page["corp"]["latest_report"]["url"])
+        self.assertEqual([e["nm"] for e in page["executives"]], ["양종희", "박민수"])
+        self.assertEqual([(s["nm"], s["pct"]) for s in page["shareholders"]], [("국민연금공단", 7.9)])
+        self.assertEqual([(i["investee_name"], i["investee_corp_code"], i["book_value"]) for i in page["investments"]], [("국민은행", BANK, 120)])
+        self.assertEqual(page["concurrent_positions"], [])   # KB 자신의 자리로 적힌 겸직은 없음
+        self.assertEqual(page["stake_history"], [])          # KB에 출자한 수집 대상 회사는 없음
+        for key in ("executives", "shareholders", "investments"):
+            for row in page[key]:
+                self.assertIn("rcpNo=", row["url"])
+                self.assertNotIn("birth_ym", row)
+                self.assertNotIn("person_id", row)
+        # 자회사 쪽: 지주 겸직 표의 임원 자리만(비임원 제외), 지분 추이는 기준일순 두 행, 임원 표는 없음
+        bank = self.client.get(f"/corps/{BANK}", params={"as_of": "2026-03-31"}).json()
+        self.assertEqual((bank["corp"]["parent_corp_name"], bank["corp"]["stake_pct"], bank["corp"]["latest_report"]), ("KB금융", 100.0, None))
+        self.assertEqual([(c["nm"], c["ofcps"], c["holding_corp_name"]) for c in bank["concurrent_positions"]], [("양종희", "기타비상무이사", "KB금융")])
+        self.assertNotIn("person_id", bank["concurrent_positions"][0])
+        self.assertEqual([(h["stlm_dt"], h["pct"], h["book_value"], h["investor_corp_name"]) for h in bank["stake_history"]],
+                         [("2024-12-31", 100.0, 100, "KB금융"), ("2025-12-31", 100.0, 120, "KB금융")])
+        self.assertEqual(bank["executives"], [])
+        self.assertEqual(self.client.get("/corps/00000000").status_code, 404)
 
     def test_shareholders_as_of(self):
         r = self.client.get(f"/corps/{KB}/shareholders", params={"as_of": "2026-01-15"}).json()

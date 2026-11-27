@@ -1,0 +1,59 @@
+/* 회사 페이지. 표 다섯 개가 세로로 이어지므로 표마다 제목·건수·설명 한 줄, 그 아래 괘선 표. 사외이사 행만 살짝 구분. */
+
+.page { padding-top: 28px; }
+.h2 { font-size: 20px; }
+.lead { margin: 6px 0 0; max-width: var(--measure); color: var(--ink-2); }
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px 40px;
+  margin-top: 24px;
+  padding: 18px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.field { display: flex; flex-direction: column; gap: 8px; }
+.field label { font-size: 13px; color: var(--ink-2); }
+.field input, .field select {
+  padding: 7px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  background: var(--paper);
+  font-size: 15px;
+}
+.field select { min-width: 220px; }
+
+/* 회사를 안 골랐을 때: 지주 네 곳과 그 자회사 이름을 다 펼쳐 보인다 (59개, 고르는 상자보다 한눈에 들어온다) */
+.pick { margin-top: 24px; display: grid; gap: 18px; }
+.pickGroup { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.pickHolding { font-weight: 600; text-decoration: none; }
+.pickSubs { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; }
+.pickSubs a { text-decoration: none; color: var(--ink-2); }
+.pickSubs a:hover { color: var(--blue-ink); text-decoration: underline; }
+@media (max-width: 600px) { .pickGroup { grid-template-columns: 1fr; gap: 4px; } }
+
+.error { margin: 20px 0 0; padding: 12px 14px; border-left: 3px solid var(--danger); background: var(--danger-bg); color: var(--danger); }
+.muted { color: var(--ink-2); }
+
+.corpHead { margin-top: 28px; }
+.corpName { font-size: 24px; }
+.corpMeta { margin: 6px 0 0; color: var(--ink-2); font-size: 14px; }
+.asOf { margin: 10px 0 0; font-size: 14px; }
+
+.section { margin-top: 32px; }
+.h4 { font-size: 16px; font-weight: 600; }
+.count { margin-left: 6px; font-weight: 400; color: var(--ink-2); font-size: 14px; }
+.note { margin: 4px 0 0; font-size: 13px; color: var(--ink-2); max-width: 60rem; }
+.empty { margin: 8px 0 0; font-size: 14px; color: var(--ink-2); }
+
+.tableWrap { overflow-x: auto; margin-top: 10px; }
+.table { width: 100%; min-width: 720px; font-size: 14px; }
+.table th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 6px 12px 6px 0; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; }
+.table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.num { text-align: right; white-space: nowrap; }
+.dim { color: var(--ink-2); }
+.outside td:first-child::after { content: " 사외"; font-size: 12px; color: var(--ink-2); }
+.src { font-size: 13px; white-space: nowrap; }
+
+.foot { margin-top: 28px; font-size: 13px; color: var(--ink-2); }

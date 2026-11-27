@@ -1,9 +1,10 @@
-// 공통 틀: 머리(이름·한 줄 설명·서버 상태)와 두 페이지 사이의 이동. 페이지는 pages/ 아래.
+// 공통 틀: 머리(이름·한 줄 설명·서버 상태)와 세 페이지 사이의 이동. 페이지는 pages/ 아래.
 import { useEffect, useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import { API_URL, health, type Health } from "./api";
 import Ask from "./pages/Ask";
 import Changes from "./pages/Changes";
+import CorpPageView from "./pages/Corp";
 import s from "./shell.module.css";
 
 export default function App() {
@@ -18,12 +19,15 @@ export default function App() {
           <nav className={s.nav} aria-label="페이지">
             <NavLink to="/" end className={({ isActive }) => (isActive ? s.navOn : s.navLink)}>질문</NavLink>
             <NavLink to="/changes" className={({ isActive }) => (isActive ? s.navOn : s.navLink)}>변화 리포트</NavLink>
+            <NavLink to="/corps" className={({ isActive }) => (isActive ? s.navOn : s.navLink)}>회사</NavLink>
           </nav>
           <ServerStatus />
         </header>
         <Routes>
           <Route path="/" element={<Ask />} />
           <Route path="/changes" element={<Changes />} />
+          <Route path="/corps" element={<CorpPageView />} />
+          <Route path="/corps/:corpCode" element={<CorpPageView />} />
         </Routes>
       </div>
     </BrowserRouter>

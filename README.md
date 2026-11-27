@@ -397,7 +397,7 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    curl -s 'localhost:8000/corps/00382199/executives?as_of=2024-06-30&outside_only=true'
    ```
 
-19. **화면 (Vite + React, 0013)** — 질문 한 페이지. 답의 인용 번호와 오른쪽 근거 공시가 같은 번호이고, 인용된 근거만 형광펜을 칠합니다. 그래프 질문이면 관계표가 답 아래에 붙습니다. 화면에 새 로직은 없고 API 응답을 그대로 보여 줍니다. API 서버(18번)가 떠 있어야 합니다.
+19. **화면 (Vite + React, 0013)** — 질문·변화 리포트·회사 세 페이지. 질문: 답의 인용 번호와 오른쪽 근거 공시가 같은 번호이고, 인용된 근거만 형광펜을 칠하며, 그래프 질문이면 관계표가 답 아래에 붙습니다. 회사: 회사 하나를 골라 기준일의 임원·최대주주·출자·겸직 표 자리와 지분 추이를 한 장으로(`/corps/{corp_code}`). 화면에 새 로직은 없고 API 응답을 그대로 보여 줍니다. API 서버(18번)가 떠 있어야 합니다.
 
    ```bash
    cd web && npm install && npm run dev      # WSL 안의 Linux Node(nvm, 22)로. http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
@@ -410,6 +410,7 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    | `POST /ask` | `{question, k, use_llm, corp_filter}` → 답·인용 번호·근거 조각(DART 링크) |
    | `GET /changes` | `since`·`until`(또는 `days`)·`corp` → 변화 리포트 JSON |
    | `GET /corps` | 수집 대상 회사 목록 |
+   | `GET /corps/{corp_code}` | `as_of` → 회사 페이지 묶음: 개요·최신 정기보고서, 그 날짜의 임원·최대주주·출자, 지주 겸직 표의 자리(0014), 지분 추이(지주 출자 표가 적은 이 회사 지분율·장부가액의 기준일별 변화) |
    | `GET /corps/{corp_code}/executives` | `as_of`·`outside_only` → 그 날짜의 임원 (생년월은 내보내지 않음) |
    | `GET /corps/{corp_code}/shareholders` | `as_of` → 그 날짜의 최대주주·지분율 |
 

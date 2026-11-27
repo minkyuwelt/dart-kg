@@ -146,3 +146,86 @@ export async function changes(since: string, until: string, corps: string[], sig
 export async function corps(signal?: AbortSignal): Promise<Corp[]> {
   return parse<Corp[]>(await fetch(`${API_URL}/corps`, { signal }));
 }
+
+// ----- 회사 페이지 (/corps/{corp_code}, src/loaders/as_of.py corp_page · 0013) -----
+// 모든 표 행에 근거 공시 링크(url)가 있고, 생년월·person_id는 서버가 내보내지 않는다 (0006)
+
+export type Ref = { source_rcept_no: string; url: string; valid_from: string | null; valid_to: string | null };
+
+export type CorpOverview = {
+  corp_code: string;
+  corp_name: string;
+  role: "holding" | "subsidiary" | string;
+  parent_corp_code: string | null;
+  parent_corp_name: string | null;
+  stake_pct: number | null;
+  stock_code: string | null;
+  latest_report: { source_rcept_no: string; report_nm: string; rcept_dt: string; url: string } | null;   // 감사보고서만 내는 회사는 null
+};
+
+export type Executive = Ref & {
+  nm: string;
+  ofcps: string | null;
+  rgist_exctv_at: string | null;   // 등기구분: 사내이사·사외이사·기타비상무이사·미등기
+  fte_at: string | null;           // 상근·비상근
+  chrg_job: string | null;
+  tenure_start_on: string | null;
+  tenure_start_method: string | null;
+  tenure_end_on: string | null;
+};
+
+export type Shareholder = Ref & {
+  nm: string;
+  relate: string | null;
+  stock_knd: string | null;
+  holder_corp_code: string | null;
+  shares: number | null;
+  pct: number | null;
+};
+
+export type Investment = Ref & {
+  investee_name: string;
+  investee_corp_code: string | null;   // 있으면 그 회사 페이지로 이어 준다
+  invstmnt_purps: string | null;
+  frst_acqs_de: string | null;
+  shares: number | null;
+  pct: number | null;
+  book_value: number | null;           // 기말 장부가액(원)
+};
+
+export type ConcurrentPosition = Ref & {
+  nm: string;
+  ofcps: string | null;
+  fte_at: string | null;
+  appointed_on: string | null;
+  appointed_raw: string | null;
+  person_method: string;       // holding_executive(지주 임원 표의 사람과 이음) / not_found / ambiguous
+  holding_corp_name: string;
+};
+
+export type StakePoint = {
+  stlm_dt: string;
+  investor_corp_code: string;
+  investor_corp_name: string;
+  share_class: string | null;
+  shares: number | null;
+  pct: number | null;
+  book_value: number | null;
+  source_rcept_no: string;
+  url: string;
+};
+
+export type CorpPage = {
+  corp: CorpOverview;
+  as_of: string;
+  executives: Executive[];
+  shareholders: Shareholder[];
+  investments: Investment[];
+  concurrent_positions: ConcurrentPosition[];
+  stake_history: StakePoint[];
+};
+
+export async function corpPage(corpCode: string, asOf: string, signal?: AbortSignal): Promise<CorpPage> {
+  const q = new URLSearchParams({ as_of: asOf });
+  return parse<CorpPage>(await fetch(`${API_URL}/corps/${encodeURIComponent(corpCode)}?${q}`, { signal }));
+}
