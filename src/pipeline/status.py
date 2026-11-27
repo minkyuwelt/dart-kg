@@ -132,7 +132,11 @@ def render(schedules: list[dict], jobs: list[dict], assets: list[dict], now: flo
 def render_sync(chunk_stats: dict | None, relation_stats: dict | None, error: str | None) -> str:
     out = ["", "## DuckDB ↔ Neo4j"]
     if error:
-        out.append(f"  Neo4j 연결 안 됨 — {error}  (docker compose up -d 뒤 다시)")
+        # DuckDB 잠금은 Neo4j 문제가 아니다: 쓰는 run(relations·rag_index 등)이 돌고 있으면 읽기 전용 연결도 막힌다 (CLAUDE.md). 끝나면 다시
+        if "Could not set lock" in error or "Conflicting lock" in error:
+            out.append("  DuckDB가 쓰는 중(위 작업 중 STARTED인 것) — 끝난 뒤 다시 보면 된다")
+        else:
+            out.append(f"  Neo4j 연결 안 됨 — {error}  (docker compose up -d 뒤 다시)")
         return "\n".join(out)
     d, n = chunk_stats["duckdb"], chunk_stats["neo4j"]
     ok = d["documents"] == n["documents"] and d["chunks_with_embedding"] == n["chunks"] == n["rels"]

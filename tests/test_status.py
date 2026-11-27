@@ -99,6 +99,10 @@ class RunsAndAssetsTest(unittest.TestCase):
         self.assertIn("조각", text); self.assertIn("→ 일치", text)
         self.assertIn("관계", text); self.assertIn("불일치 → graph_job 실행", text)
         self.assertIn("Neo4j 연결 안 됨 — ServiceUnavailable", render_sync(None, None, "ServiceUnavailable: x"))
+        # DuckDB 잠금(쓰는 run이 도는 중)은 Neo4j 안내가 아니라 "쓰는 중"으로 (2026-11-27 12:02 색인 run 중에 봄)
+        lock = render_sync(None, None, 'IOException: IO Error: Could not set lock on file "data/dartkg.duckdb": Conflicting lock')
+        self.assertIn("DuckDB가 쓰는 중", lock)
+        self.assertNotIn("docker compose", lock)
 
     def test_definitions_names_exist(self):
         # status는 definitions의 스케줄·작업·자산 이름을 그대로 쓴다 — 이름이 바뀌어도 코드가 깨지지 않는지 (인스턴스 없이 목록만)
