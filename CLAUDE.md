@@ -20,7 +20,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
 현재 단계: **Phase 3·4 완료** (2026-11-26, 개선 2026-11-27). Phase 2는 2026-11-23(백필 618개 보고서, 시점 질의 5개 검증). Phase 3·4는 평가까지 끝남 — 검색 hit@5 공시 1.000·섹션 0.729(48개), LLM 답 맞음 47/부분 6/틀림 0(53개), 라우팅 규칙만 53/53(일반 4개는 T2 허용) → `docs/decisions/0010`·`0011`, `docs/devlog/2026-11-27.md`. 검색이 놓친 질문은 `PYTHONPATH=. python notebooks/rank_diag.py <id>`로 정답 조각의 벡터·전문검색·하이브리드 순위를 먼저 본다
-다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보"), 매일 운영 확인, 화면(Next.js, 0013). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
+다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보"), 매일 운영 확인(`src.pipeline.status`), 화면(Vite + React `web/`, 0013 — 질문 페이지 11-27, 다음은 질문 이력·변화 리포트·회사 페이지). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
 방향: `docs/plans/usecases.md` — 누가 쓰나, 업무 질문 11개, 비슷한 서비스와 차별점 5개. 기능을 넣을지는 이 문서의 질문을 돕는지로 판단한다
 Phase 4 설계 전 조사: `docs/plans/phase4-research.md` — 논문·도구마다 채택/보류/제외와 이유. 0011은 이 문서 5절의 뼈대로 쓴다
 
@@ -43,7 +43,8 @@ config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_ov
 src/graph/         Neo4j 적재(조각·관계)와 그래프 질의(라우터·템플릿·picker, 0011)
 src/rag/           검색·임베딩·LLM 답변 (0009·0010). 진입점 `python -m src.rag.ask "질문"`
 src/reports/       변화 리포트 (0012)
-src/api/           FastAPI — 기존 함수를 HTTP로 감싼다 (0013). 화면은 Next.js로 따로
+src/api/           FastAPI — 기존 함수를 HTTP로 감싼다 (0013)
+web/               화면 — Vite + React SPA (0013). API 응답을 그대로 보여 주고 새 로직을 두지 않는다. `cd web && npm run dev`, CI가 lint·build
 sql/schema.sql     DuckDB 테이블 정의
 tests/             오프라인 테스트 (DART API를 호출하지 않음, `python -m unittest discover -s tests -t .`)
 eval/              평가 세트: questions.jsonl(ready 53개), run.py(검색 hit@5·LLM 채점표), routing.py(라우팅 정확도), 검색 함수(retrievers/), 질문 초안 도구. 정답은 사람이 뷰어에서 확인한 것만
