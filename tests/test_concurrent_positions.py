@@ -30,6 +30,8 @@ def table(header: list[str], rows: list[list[str]]) -> dict:
 
 KB_TABLE = table(["성 명", "대상 계열사", "직책", "선임시기", "비 고"],
                  [["이환주", "국민은행", "은행장", "2025. 1월", "상근"],
+                  ["김경남", "국민은행", "ESG본부장", "2025. 7월", "상근"],                 # 임원 아닌 직책 → 표에만, 그래프엔 안 올림
+                  ["김병집", "국민은행", "금융AI1센터장 상무", "2025. 1월", "상근"],       # 센터장이지만 상무 → 임원
                   ["박효익", "KB자산운용", "기타비상무이사", "2025. 3월", "비상근"],
                   ["김동명", "KB자산운용", "기타비상무이사", "2025. 3월", "비상근"],      # 지주 임원 표에 동명이인 2명 → 안 이음
                   ["홍길동", "KB자산운용", "기타비상무이사", "2025. 3월", "비상근"],      # 지주 임원 표에 없음 → 안 이음
@@ -62,6 +64,10 @@ class ConcurrentPositionsTest(unittest.TestCase):
         add_exec(con, R2025, "박효익", "전무", "미등기", "박효익|1968-05|남", D2025, seq=2)
         add_exec(con, R2025, "김동명", "전무", "미등기", "김동명|1970-01|남", D2025, seq=3)
         add_exec(con, R2025, "김동명", "상무", "미등기", "김동명|1975-02|남", D2025, seq=4)
+        add_exec(con, R2025, "김경남", "상무", "미등기", "김경남|1972-03|남", D2025, seq=5)
+        add_exec(con, R2025, "김병집", "상무", "미등기", "김병집|1973-04|남", D2025, seq=6)
+        add_exec(con, R2025_FIX, "김경남", "상무", "미등기", "김경남|1972-03|남", D2025, seq=5)
+        add_exec(con, R2025_FIX, "김병집", "상무", "미등기", "김병집|1973-04|남", D2025, seq=6)
         add_exec(con, R2025_FIX, "이환주", "부회장", "미등기", "이환주|1964-01|남", D2025, seq=1)
         add_exec(con, R2025_FIX, "박효익", "전무", "미등기", "박효익|1968-05|남", D2025, seq=2)
         add_exec(con, R2024, "박효익", "전무", "미등기", "박효익|1968-05|남", D2024, valid_to=D2025, seq=2)
@@ -98,7 +104,10 @@ class ConcurrentPositionsTest(unittest.TestCase):
         stats = CP.rebuild_concurrent_positions(self.con)
         self.con.commit()
         self.assertEqual(stats["concurrent_reports"], 3)
-        self.assertEqual(stats["concurrent_person_by_method"], {"holding_executive": 5, "ambiguous": 2, "not_found": 2})   # '-' 행은 빠짐
+        self.assertEqual(stats["concurrent_person_by_method"], {"holding_executive": 9, "ambiguous": 2, "not_found": 2})   # '-' 행은 빠짐
+        self.assertEqual(stats["concurrent_non_officer"], 2)                                                                 # ESG본부장 ×2 (원본·정정본)
+        self.assertEqual(self.con.execute("SELECT nm, is_officer FROM concurrent_position WHERE nm IN ('김경남','김병집') AND source_rcept_no = ?", [R2025_FIX]).fetchall(),
+                         [("김경남", False), ("김병집", True)])
         rows = self.con.execute("""SELECT source_rcept_no, nm, person_id, person_method, target_corp_code, resolve_method, appointed_on, appointed_method,
                                           valid_from, valid_to, superseded_by FROM concurrent_position ORDER BY source_rcept_no, row_seq""").fetchall()
         by = {(r[0], r[1]): r for r in rows}
@@ -114,8 +123,11 @@ class ConcurrentPositionsTest(unittest.TestCase):
         # 그래프 행: 박효익→KB자산운용은 올라가고, 이환주→국민은행은 국민은행 임원 표에 이미 있어 안 올라간다. 수는 duckdb_counts와 같다
         positions, persons, _ = position_rows(self.con)
         cp = [p for p in positions if p["source_table"] == "concurrent_position"]
-        self.assertEqual(sorted((p["corp"], p["valid_from"]) for p in cp), [(KBAM, "2024-12-31"), (KBAM, "2025-12-31"), (KBAM, "2025-12-31")])
-        self.assertTrue(all(p["row_key"].startswith("cp:") and p["title"] == "기타비상무이사" and p["registered"] is None for p in cp))
+        # 김병집(상무, 국민은행 임원 표에 없음)은 올라가고 김경남(ESG본부장)은 임원이 아니라 안 올라간다
+        self.assertEqual(sorted((p["corp"], p["valid_from"], p["title"]) for p in cp),
+                         [(KBAM, "2024-12-31", "기타비상무이사"), (KBAM, "2025-12-31", "기타비상무이사"), (KBAM, "2025-12-31", "기타비상무이사"),
+                          (KBBANK, "2025-12-31", "금융AI1센터장 상무"), (KBBANK, "2025-12-31", "금융AI1센터장 상무")])
+        self.assertTrue(all(p["row_key"].startswith("cp:") and p["registered"] is None for p in cp))
         self.assertEqual(duckdb_counts(self.con)["positions"], len(positions))
         self.assertIn("박효익", [p["name"] for p in persons])
 

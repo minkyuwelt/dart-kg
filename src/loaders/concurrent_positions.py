@@ -40,9 +40,19 @@ SECTION_PREFIX = "IX."
 _STLM_RE = re.compile(r"\((\d{4})\.(\d{2})\)\s*$")
 _DATE_RE = re.compile(r"(\d{4})\s*[.\-/년]\s*(\d{1,2})\s*(?:[.\-/월]\s*(\d{1,2})\s*)?")
 
+# 임원인 직책의 낱말. 겸직 표에는 본부장·센터장·부장(임원이 아닌 직책)도 섞여 있다 — 국민은행 임원 표에 없는 사람 5명이 그랬다(2026-11-27 g11).
+# "금융AI1센터장 상무"처럼 임원 낱말이 함께 있으면 임원. 표에는 모두 남기고(is_officer) 그래프에는 임원만 올린다 (0014 결정 4)
+OFFICER_WORDS = ("이사", "회장", "사장", "전무", "상무", "행장", "감사", "대표", "임원", "CEO", "CFO", "CIO", "CRO")
+
+
+def is_officer_title(ofcps: str | None) -> bool:
+    text = (ofcps or "").replace(" ", "")
+    return any(w in text for w in OFFICER_WORDS)
+
+
 COLUMN_LIST = ["source_rcept_no", "row_seq", "holding_corp_code", "bsns_year", "reprt_code", "nm", "person_id", "person_method",
                "target_name", "target_corp_code", "resolve_method", "ofcps", "appointed_raw", "appointed_on", "appointed_method",
-               "fte_at", "stlm_dt", "valid_from"]
+               "fte_at", "is_officer", "stlm_dt", "valid_from"]
 
 
 def _squash(text: str | None) -> str:
@@ -100,7 +110,7 @@ def parse_rows(table: dict, cols: dict[str, int]) -> list[dict]:
             continue
         appointed_on, method = parse_appointed(cell("appointed"))
         out.append({"nm": nm, "target_name": target, "ofcps": cell("ofcps"), "appointed_raw": cell("appointed"),
-                    "appointed_on": appointed_on, "appointed_method": method, "fte_at": cell("fte")})
+                    "appointed_on": appointed_on, "appointed_method": method, "fte_at": cell("fte"), "is_officer": is_officer_title(cell("ofcps"))})
     return out
 
 
@@ -177,6 +187,7 @@ def rebuild_concurrent_positions(con: duckdb.DuckDBPyConnection) -> dict:
     chain_snapshots(con, "concurrent_position", "holding_corp_code")
     by_method = dict(con.execute("SELECT person_method, count(*) FROM concurrent_position GROUP BY 1").fetchall())
     return {"concurrent_position": len(rows), "concurrent_superseded": superseded, "concurrent_person_by_method": by_method,
+            "concurrent_non_officer": sum(1 for r in rows if not r["is_officer"]),
             "concurrent_reports": len({r["source_rcept_no"] for r in rows})}
 
 

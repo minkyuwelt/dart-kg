@@ -206,12 +206,13 @@ def _one_line(text: str | None) -> str | None:
 
 
 # 지주 겸직 표(concurrent_position, 0014) 중 그래프에 올리는 행: 사람이 이어졌고, 같은 사람·회사·기간이 임원 표(executive)에 이미 없는 것.
-# 겸직 회사가 자기 임원 표를 내면(국민은행 등) 임원 표 행이 있으므로 올리지 않는다 → 늘어나는 것은 임원 표가 없는 회사의 자리만. duckdb_counts와 같이 쓴다
+# 겸직 회사가 자기 임원 표를 내면(국민은행 등) 임원 표 행이 있으므로 올리지 않는다 → 늘어나는 것은 임원 표가 없는 회사의 자리만. duckdb_counts와 같이 쓴다.
+# 직책이 임원이 아닌 행(본부장·센터장·부장, is_officer false)도 올리지 않는다 — 질문은 "임원 겸직"이고 임원 표의 기준과 맞춘다
 CONCURRENT_GRAPH_SQL = """
     SELECT c.source_rcept_no, c.row_seq, c.holding_corp_code, c.person_id, c.target_name, c.target_corp_code, c.ofcps, c.fte_at,
            c.valid_from, c.valid_to, c.superseded_by
     FROM concurrent_position c
-    WHERE c.person_id IS NOT NULL
+    WHERE c.person_id IS NOT NULL AND c.is_officer
       AND NOT EXISTS (
         SELECT 1 FROM executive e
         WHERE e.person_id = c.person_id AND e.corp_code = c.target_corp_code AND e.superseded_by IS NULL

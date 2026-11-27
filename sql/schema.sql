@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS concurrent_position (
     appointed_on       DATE,                  -- 날짜로 읽은 값. 월까지만 있으면 1일
     appointed_method   VARCHAR,               -- date / month / NULL
     fte_at             VARCHAR,               -- 상근 / 비상근 (비고·상근여부)
+    is_officer         BOOLEAN  NOT NULL DEFAULT true,  -- 직책에 임원 낱말(이사·회장·사장·전무·상무·행장·감사·대표…)이 있나. 본부장·센터장·부장 행은 표에 남기되 그래프에 올리지 않는다 (0014 결정 4)
     stlm_dt            DATE     NOT NULL,     -- 보고서 결산월 말일 (표 머리의 기준일과 같다)
     valid_from         DATE     NOT NULL,     -- = stlm_dt
     valid_to           DATE,                  -- 같은 지주의 다음 스냅샷 기준일
@@ -206,6 +207,7 @@ CREATE TABLE IF NOT EXISTS concurrent_position (
     loaded_at          TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (source_rcept_no, row_seq)
 );
+ALTER TABLE concurrent_position ADD COLUMN IF NOT EXISTS is_officer BOOLEAN DEFAULT true;   -- 2026-11-27 첫 적재 뒤 추가 (DuckDB는 ALTER에 NOT NULL을 못 붙인다. 적재는 늘 값을 넣는다)
 
 CREATE TABLE IF NOT EXISTS person (
     person_id    VARCHAR     PRIMARY KEY,  -- '양종희|1961-06|남'
