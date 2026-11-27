@@ -1,0 +1,39 @@
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 28px var(--gutter) 64px;
+}
+
+/* 머리: 왼쪽 이름·설명, 가운데 페이지 이동, 오른쪽 서버 상태 한 줄. 괘선 하나로 본문과 나눈다 */
+.top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "titles status" "nav nav";
+  column-gap: 16px;
+  row-gap: 14px;
+  align-items: end;
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--rule-strong);
+}
+.titles { grid-area: titles; }
+.brand { font-size: 22px; letter-spacing: -0.01em; }
+.tagline { margin: 2px 0 0; color: var(--ink-2); font-size: 15px; }
+.status { grid-area: status; margin: 0; font-size: 13px; color: var(--ink-2); text-align: right; }
+.statusBad { color: var(--danger); }
+
+.nav { grid-area: nav; display: flex; gap: 22px; }
+.navLink, .navOn {
+  display: inline-block;
+  padding: 6px 0 10px;
+  margin-bottom: -1px;             /* 아래 괘선 위에 겹쳐 현재 페이지 밑줄이 괘선을 대신한다 */
+  color: var(--ink-2);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.navLink:hover { color: var(--ink); }
+.navOn { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }
+
+@media (max-width: 600px) {
+  .top { grid-template-columns: 1fr; grid-template-areas: "titles" "status" "nav"; }
+  .status { text-align: left; }
+}
