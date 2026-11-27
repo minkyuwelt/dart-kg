@@ -1,12 +1,12 @@
 /* 회사 페이지. 위에 고르는 줄, 그 아래 회사 머리 판(이름·꼬리표·사실 네 칸), 그 아래 표 판 다섯이 세로로. */
 
-.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; margin-bottom: 20px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 20px; margin-bottom: 12px; }
 .toolbar select { min-width: 240px; }
-.toolbarHint { margin: 0 0 8px; flex: 1 1 20rem; color: var(--ink-2); font-size: 13.5px; }
+.toolbarHint { margin: 0 0 6px; flex: 1 1 20rem; color: var(--ink-2); font-size: 13px; }
 
 /* 회사를 안 골랐을 때: 지주 네 곳과 그 자회사 이름을 다 펼쳐 보인다 (59개, 고르는 상자보다 한눈에 들어온다) */
-.pick { padding: 4px 20px 20px; display: grid; gap: 14px; }
-.pickGroup { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 12px; align-items: baseline; padding-top: 14px; border-top: 1px solid var(--rule); }
+.pick { padding: 0 16px 14px; display: grid; gap: 8px; }
+.pickGroup { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 12px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--rule); }
 .pickHolding { font-weight: 700; font-size: 17px; text-decoration: none; }
 .pickSubs { display: flex; flex-wrap: wrap; gap: 6px 8px; }
 .pickSubs a { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--desk); color: var(--ink); font-size: 14px; text-decoration: none; }
@@ -14,22 +14,23 @@
 @media (max-width: 600px) { .pickGroup { grid-template-columns: 1fr; gap: 6px; } }
 
 /* 회사 머리 판: 이름이 이 페이지의 주인공 */
-.head { padding: 22px 24px 20px; margin-bottom: 16px; }
+.head { padding: 16px 20px 14px; margin-bottom: 10px; }
 .headTitle { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.corpName { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin-right: 4px; }
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 28px; margin: 16px 0 0; }
+.corpName { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-right: 4px; }
+.facts { display: grid; grid-template-columns: 1fr 1.7fr 0.8fr 0.8fr; gap: 8px 24px; margin: 10px 0 0; }   /* 보고서 이름 칸이 가장 길다 */
+@media (max-width: 760px) { .facts { grid-template-columns: 1fr 1fr; } }
 .facts div { min-width: 0; }
 .facts dt { font-size: 13px; color: var(--ink-3); }
-.facts dd { margin: 0; font-size: 15.5px; font-weight: 500; }
+.facts dd { margin: 0; font-size: 15px; font-weight: 500; }
 .factSub { color: var(--ink-2); font-weight: 400; white-space: nowrap; }
 .factMono { font-feature-settings: "tnum"; color: var(--ink-2); font-weight: 400; }
-.headNote { margin: 14px 0 0; padding: 10px 14px; border-radius: 6px; background: var(--marker-soft); color: var(--marker-ink); font-size: 14px; }
+.headNote { margin: 10px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--marker-soft); color: var(--marker-ink); font-size: 14px; }
 
 .tools { flex: 0 0 auto; margin-left: auto; }
 
 /* 머리 판의 절 바로가기: 표 이름과 건수. 0건인 표는 흐리게 */
-.jump { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
-.jumpOn, .jumpOff { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 13.5px; text-decoration: none; }
+.jump { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.jumpOn, .jumpOff { display: inline-block; padding: 2px 11px; border-radius: 999px; font-size: 13.5px; text-decoration: none; }
 .jumpOn { background: var(--blue-soft); color: var(--blue); }
 .jumpOn b { font-weight: 700; }
 .jumpOn:hover { background: #dbe4f6; }
@@ -37,5 +38,5 @@
 .jumpOff b { font-weight: 500; }
 
 /* 긴 표 접기 */
-.more { display: block; width: 100%; padding: 10px 20px; border: 0; border-top: 1px solid var(--rule); background: #f7f8fa; color: var(--blue); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; border-radius: 0 0 var(--radius) var(--radius); }
+.more { display: block; width: 100%; padding: 8px 16px; border: 0; border-top: 1px solid var(--rule); background: #f7f8fa; color: var(--blue); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; border-radius: 0 0 var(--radius) var(--radius); }
 .more:hover { background: var(--blue-soft); }

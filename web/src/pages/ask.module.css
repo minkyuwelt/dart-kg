@@ -2,12 +2,12 @@
    근거는 번호 달린 목록이고, 인용된 것만 형광펜(--marker)을 가진다. */
 
 /* 질문 판 */
-.ask { padding: 16px 16px 14px; }
+.ask { padding: 12px 12px 10px; }
 .input {
   width: 100%;
   resize: vertical;
-  min-height: 76px;
-  padding: 12px 14px;
+  min-height: 64px;
+  padding: 10px 12px;
   border: 1px solid var(--rule-strong);
   border-radius: 6px;
   background: var(--paper);
@@ -17,18 +17,18 @@
 .input:hover { border-color: var(--ink-3); }
 .input:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px var(--blue-soft); }
 .input::placeholder { color: var(--ink-3); }
-.askRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+.askRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
 .toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
 .toggle input { width: 16px; height: 16px; accent-color: var(--blue); }
 
 /* 처음 화면: 예시 질문·이력 두 판 */
-.lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; align-items: start; }   /* 이력이 없으면 예시 판 하나가 너비를 다 쓴다 */
+.lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; margin-top: 10px; align-items: start; }   /* 이력이 없으면 예시 판 하나가 너비를 다 쓴다 */
 .lists > * + * { margin-top: 0; }
 @media (max-width: 860px) { .lists { grid-template-columns: 1fr; } }
 .qList { list-style: none; margin: 0; padding: 0 0 8px; }
 .qBtn {
   display: block; width: 100%; text-align: left;
-  padding: 10px 20px; background: none; border: 0; border-top: 1px solid var(--rule);
+  padding: 8px 16px; background: none; border: 0; border-top: 1px solid var(--rule);
   color: var(--blue); font-size: 15px; line-height: 1.5; cursor: pointer;
 }
 .qBtn:hover { background: var(--blue-soft); color: var(--blue-ink); }
@@ -39,19 +39,19 @@
 .result {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-  gap: 16px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 10px;
   align-items: start;
 }
 @media (max-width: 860px) { .result { grid-template-columns: 1fr; } }
 
 .answerCol { min-width: 0; }
-.answerPanel { padding: 22px 24px 18px; }
-.q { font-size: 20px; margin-bottom: 14px; color: var(--ink-2); font-weight: 600; }
-.answer, .answerNotFound { max-width: var(--measure); font-size: 17px; line-height: 1.8; white-space: pre-line; }
+.answerPanel { padding: 16px 20px 14px; }
+.q { font-size: 19px; margin-bottom: 10px; color: var(--ink-2); font-weight: 600; }
+.answer, .answerNotFound { max-width: var(--measure); font-size: 16.5px; line-height: 1.7; white-space: pre-line; }
 .answerNotFound { color: var(--ink-2); }
 .noAnswer { color: var(--ink-2); margin: 0; }
-.caveat { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-3); }
+.caveat { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-3); }
 
 /* 답 안의 인용 번호 — 오른쪽 근거와 같은 번호, 같은 형광펜 */
 .cite {
@@ -72,12 +72,13 @@
 .cite:hover { background: #ffd84d; }
 
 /* 관계표 판. 칸이 꺾이지 않게 표를 내용 너비로 두고, 넘치면 판 안에서 가로 스크롤 */
-.graph { margin-top: 16px; }
-.graphTable { width: auto; min-width: 100%; }
+.graph { margin-top: 10px; }
+.graphTable { width: 100%; min-width: 0; }   /* 두 단 안이라 640px 최소 너비를 풀고, 이름·회사·기간만 안 꺾이게 */
+.graphTable td { padding-left: 10px; padding-right: 10px; }
 .focusedPanel { box-shadow: 0 0 0 3px var(--marker-soft); border-color: var(--marker); }
-.derived { margin: 0; padding: 0 20px 14px; list-style: none; font-size: 15px; }
+.derived { margin: 0; padding: 0 16px 10px; list-style: none; font-size: 14.5px; }
 .derived li { padding: 3px 0; }
-.trace { padding: 10px 20px 14px; font-size: 13px; color: var(--ink-2); }
+.trace { padding: 8px 16px 10px; font-size: 13px; color: var(--ink-2); }
 .trace summary { cursor: pointer; }
 .trace pre { margin: 8px 0 0; padding: 10px; background: var(--desk); border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
 .graphError { margin-top: 12px; font-size: 14px; color: var(--ink-2); }
@@ -89,8 +90,8 @@
 .hit {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px 20px 12px 16px;
+  gap: 10px;
+  padding: 9px 16px 9px 12px;
   border-top: 1px solid var(--rule);
   border-left: 4px solid transparent;
   color: var(--ink-2);
@@ -117,4 +118,4 @@ h3 .hitN { margin-right: 8px; vertical-align: -0.4em; }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.retriever { margin: 0; padding: 10px 20px 12px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); }
+.retriever { margin: 0; padding: 8px 16px 9px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); }

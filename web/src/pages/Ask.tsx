@@ -200,7 +200,7 @@ export default function Ask() {
                         {graph.relations.map((r, i) => (
                           <tr key={i}>
                             <td className="strong nowrap">{r.src}</td><td className="dim nowrap">{REL_LABEL[r.rel] ?? r.rel}</td><td className="nowrap">{r.dst}</td><td className="nowrap">{r.value}</td>
-                            <td className="dim nowrap">{r.valid_from ?? ""}{r.valid_to ? ` ~ ${r.valid_to}` : r.valid_from ? " ~" : ""}</td>
+                            <td className="dim"><span className="nowrap">{r.valid_from ?? ""}{r.valid_from ? " ~" : ""}</span>{r.valid_to ? <> <span className="nowrap">{r.valid_to}</span></> : null}</td>
                             <td>{r.url && r.source_rcept_no ? <a className="chip chipQuiet" href={r.url} target="_blank" rel="noreferrer" title={`접수번호 ${r.source_rcept_no}`}>{fmtDate(r.source_rcept_no)}</a> : ""}</td>
                           </tr>
                         ))}

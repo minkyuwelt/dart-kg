@@ -1,9 +1,9 @@
 /* 변화 리포트. 위에 고르는 줄, 아래 한 판 안에 보고서 목록. 바뀐 것만 또렷하고 나머지는 흐리게:
    변화 없는 보고서는 접어 두고, 빠진 항목은 이전 값만 남기고 흐리게. */
 
-.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; margin-bottom: 20px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 20px; margin-bottom: 12px; }
 .toolbar select { min-width: 220px; }
-.toolbarHint { margin: 0 0 8px; flex: 1 1 24rem; color: var(--ink-2); font-size: 13.5px; }
+.toolbarHint { margin: 0 0 6px; flex: 1 1 24rem; color: var(--ink-2); font-size: 13px; }
 .dates { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
 .ranges { display: flex; gap: 6px; padding-bottom: 2px; }
 .stale { opacity: 0.55; }
@@ -19,7 +19,7 @@
   grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr) auto;
   gap: 16px;
   align-items: baseline;
-  padding: 13px 20px;
+  padding: 9px 16px;
   cursor: pointer;
   list-style: none;
 }
@@ -36,7 +36,7 @@
 .count b { font-weight: 700; color: var(--ink); }
 .reportDate { font-size: 13.5px; color: var(--ink-3); white-space: nowrap; }
 .reportBody { padding: 0 0 8px; }
-.reportMeta { margin: 0 20px 8px; font-size: 13.5px; color: var(--ink-2); }
+.reportMeta { margin: 0 16px 6px; font-size: 13.5px; color: var(--ink-2); }
 @media (max-width: 700px) {
   .reportRow { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
   .reportDate { grid-row: 1; grid-column: 2; }
@@ -54,8 +54,8 @@
 .gone .before { text-decoration: line-through; text-decoration-color: var(--rule-strong); }
 .added .after { font-weight: 700; }
 
-.quiet { padding: 14px 20px 4px; border-top: 1px solid var(--rule); color: var(--ink-2); font-size: 14px; }
+.quiet { padding: 10px 16px 2px; border-top: 1px solid var(--rule); color: var(--ink-2); font-size: 14px; }
 .quiet summary { cursor: pointer; }
 .quiet ul { margin: 8px 0 0; padding-left: 18px; }
 .quiet li { padding: 2px 0; }
-.foot { margin: 0; padding: 12px 20px 14px; font-size: 13px; color: var(--ink-3); }
+.foot { margin: 0; padding: 8px 16px 10px; font-size: 13px; color: var(--ink-3); }

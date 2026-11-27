@@ -31,7 +31,7 @@ body {
   color: var(--ink);
   font-family: var(--font);
   font-size: 16px;
-  line-height: 1.7;
+  line-height: 1.6;
   font-feature-settings: "tnum";   /* 표의 숫자가 자리를 맞춘다 */
   word-break: keep-all;            /* 한국어: 어절 단위로 줄바꿈 */
   overflow-wrap: anywhere;
@@ -58,38 +58,38 @@ table { border-collapse: collapse; }
   border: 1px solid var(--rule);
   border-radius: var(--radius);
 }
-.panel + .panel { margin-top: 16px; }
+.panel + .panel { margin-top: 10px; }
 .panelHead {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 16px;
-  padding: 16px 20px 12px;
+  gap: 2px 14px;
+  padding: 11px 16px 9px;
 }
-.panelHead h3, .panelHead h4 { font-size: 17px; }
+.panelHead h3, .panelHead h4 { font-size: 16px; }
 .panelCount { color: var(--ink-3); font-weight: 500; font-size: 15px; margin-left: 2px; }
-.panelNote { margin: 0; flex: 1 1 24rem; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
-.panelBody { padding: 0 20px 20px; }
-.panelEmpty { margin: 0; padding: 4px 20px 18px; color: var(--ink-2); font-size: 15px; }
+.panelNote { margin: 0; flex: 1 1 24rem; color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.panelBody { padding: 0 16px 14px; }
+.panelEmpty { margin: 0; padding: 2px 16px 12px; color: var(--ink-2); font-size: 14px; }
 
 .tblWrap { overflow-x: auto; }
-.tbl { width: 100%; min-width: 640px; font-size: 15px; }   /* 좁은 화면은 .tblWrap이 가로로 스크롤. 칸이 글자 단위로 꺾이지 않게 */
+.tbl { width: 100%; min-width: 640px; font-size: 14.5px; }   /* 좁은 화면은 .tblWrap이 가로로 스크롤. 칸이 글자 단위로 꺾이지 않게 */
 .tbl th {
   text-align: left; font-weight: 600; font-size: 13.5px; color: var(--ink-2);
-  padding: 10px 14px; background: #f7f8fa; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); white-space: nowrap;
+  padding: 7px 12px; background: #f7f8fa; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); white-space: nowrap;
 }
-.tbl td { padding: 11px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.5; }
+.tbl td { padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.45; }
 .tbl tbody tr:last-child td { border-bottom: 0; }
 .tbl tbody tr:hover td { background: #fafbfd; }
-.tbl th:first-child, .tbl td:first-child { padding-left: 20px; }
-.tbl th:last-child, .tbl td:last-child { padding-right: 20px; }
+.tbl th:first-child, .tbl td:first-child { padding-left: 16px; }
+.tbl th:last-child, .tbl td:last-child { padding-right: 16px; }
 .tbl .num { text-align: right; white-space: nowrap; }
 .tbl .dim { color: var(--ink-2); }
 .tbl .strong { font-weight: 600; }
 .tbl .nowrap { white-space: nowrap; }
 
 .chip {
-  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  display: inline-block; padding: 0 7px; border-radius: 999px;
   background: var(--blue-soft); color: var(--blue); font-size: 12.5px; font-weight: 600; line-height: 1.6; white-space: nowrap; vertical-align: 0.1em;
 }
 .chipQuiet { background: #eef0f3; color: var(--ink-2); font-weight: 500; }
@@ -110,7 +110,7 @@ a.chip:hover { background: #dbe4f6; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > label { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
 .field input, .field select {
-  padding: 8px 12px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font-size: 15px;
+  padding: 6px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font-size: 14.5px;
 }
 .field input:hover, .field select:hover { border-color: var(--ink-3); }
 
