@@ -48,7 +48,7 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 
 단계를 자르는 기준은 **"다시 만들 수 있는가"**입니다. 원본(1)은 API 한도 때문에 한 번 받으면 지키고, 그 아래(2)(3)는 코드만으로 다시 만들 수 있어야 합니다. 그래서 노트북을 반납해 DuckDB 파일을 잃어도 하루(약 6,600건)면 복구됩니다.
 
-매일 운영은 Dagster 스케줄이 맡습니다. 06:30 대상 목록 확인 → 07:00 이번 달 공시 목록 → 07:30 그날 접수된 정기보고서 → 08:00 그 보고서의 원문 → 08:30 관계 테이블 재생성 → 09:00 원문 색인(파싱·청킹·임베딩·Neo4j). 노트북이 꺼져 있던 날은 다음에 켜진 날 따라잡습니다.
+매일 운영은 Dagster 스케줄 7개가 맡습니다(코드에서 기본 켜짐). 10:00 대상 목록 확인 → 10:05 이번 달 공시 목록 → 10:45 그날 접수된 정기보고서 → 11:00 그 보고서의 원문 → 11:30 관계 테이블 재생성 → 11:45 관계 그래프(Neo4j) → 12:00 원문 색인(파싱·청킹·임베딩·Neo4j). 조건은 그 시각에 `dagster dev`가 떠 있는 것입니다(노트북은 보통 09:30에 켜므로 그 뒤로 두었습니다). 꺼져 있던 날은 다음에 켜진 날 놓친 평가 중 가장 최근 하나를 따라잡는데, 그때는 7개가 한꺼번에 평가되어 정기보고서 주요정보·원문은 하루 늦게 들어옵니다. 아침 루틴: `docker compose up -d` → `dagster dev` → `python -m src.pipeline.status`(스케줄·작업·자산 마지막 실행과 DuckDB ↔ Neo4j 수 한 장).
 
 ## 내 역할
 
@@ -234,7 +234,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 
    2026-11-23 실제 실행: 4,189개 파티션, API 호출 4,661건(페이지 넘김 포함), 공시 86,893건, 약 29.0분. 완료한 파티션은 Dagster에 기록되므로 중간에 멈춰도 다시 실행하면 이어서 합니다. `--from`, `--to`, `--corp`로 범위를 좁힐 수 있고, `--max-calls`(기본 8,000) 또는 DART 한도 초과 응답에서 멈춥니다.
 
-4. **매일 수집** — 화면의 Automation에서 `targets_freshness`와 `daily_disclosures` 스케줄을 켭니다. `daily_disclosures`는 매일 07:00에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `targets_freshness`는 매일 06:30에 수집 대상이 최신 사업보고서 기준인지 확인하고, 기준 연도가 바뀌었을 때만(보통 4월 1일, API 5건) `targets_job`을 실행합니다. 노트북이 꺼져 있던 날이 있어도 다음에 켜진 날 따라잡습니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
+4. **매일 수집** — 스케줄은 코드에서 기본 켜짐이라(`SCHEDULE_DEFAULT`) `dagster dev`를 켜면 함께 켜집니다(화면 Automation에서 끌 수 있음). 매일 아침 `DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.status`로 스케줄 7개가 켜져 있고 어제 평가됐는지, 작업·자산의 마지막 실행, DuckDB ↔ Neo4j 수를 한 장으로 봅니다(읽기만, API 0건). `daily_disclosures`는 매일 10:05에 이번 달 파티션을 다시 수집합니다(하루 59건, 매달 1~7일은 지난달까지 118건). `targets_freshness`는 매일 06:30에 수집 대상이 최신 사업보고서 기준인지 확인하고, 기준 연도가 바뀌었을 때만(보통 4월 1일, API 5건) `targets_job`을 실행합니다. 노트북이 꺼져 있던 날이 있어도 다음에 켜진 날 따라잡습니다. 스케줄은 `dagster dev`가 떠 있을 때만 동작합니다.
 
 5. **(Phase 2) 관계 데이터 백필** — 공시 목록 백필이 끝난 뒤 실행합니다. 공시 목록에 있는 정기보고서만 부르므로(사업보고서 제출 30곳 기준 2021년~올해 약 600개 보고서 × 4건 = 약 2,400건) 하루 안에 끝납니다. 끝나면 관계 테이블을 다시 만들고 품질 검사까지 기록합니다. `dagster dev`는 꺼 둔 상태로 실행합니다.
 
@@ -244,7 +244,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports --rebuild-only   # 수집 없이 재생성·검사만
    ```
 
-   이후에는 Automation에서 `daily_report_details`(07:30, 그날 새로 접수된 정기보고서만 수집)와 `daily_relations`(08:30, 관계 테이블 재생성)를 켭니다.
+   이후에는 `daily_report_details`(10:45, 그날 새로 접수된 정기보고서만 수집)·`daily_relations`(11:30, 관계 테이블 재생성)·`daily_graph`(11:45, Neo4j 관계 그래프)가 매일 이어서 합니다(기본 켜짐).
 
 6. **(Phase 2) 관계 데이터 조회** — 관계 테이블(`investment`, `major_shareholder`, `major_shareholder_change`, `executive`)의 행은 "보고서 기준일(`valid_from`)부터 다음 보고서 기준일(`valid_to`)까지 참"입니다. 정정된 행은 `superseded_by`에 정정본 접수번호가 있습니다([0005](docs/decisions/0005-temporal-model.md)). 사람은 `person_id`(이름|생년월|성별, [0006](docs/decisions/0006-person-identity.md))로 묶입니다.
 
@@ -374,17 +374,17 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
 
    LLM 답의 채점은 사람이 합니다(맞음/부분/틀림/근거 없는 주장). `eval/results/*_llm_*.md`의 채점 칸을 채운 뒤 결과를 0010에 적습니다.
 
-16. **(Phase 3) 변화 리포트** — "지난주 들어온 공시 때문에 무엇이 바뀌었나"를 사람이 읽을 표로 뽑습니다. 관계 테이블의 이 보고서 스냅샷과 같은 회사의 직전 스냅샷을 키(사람·주주·출자 대상)로 맞춰 비교하므로 LLM도 API도 쓰지 않습니다. 임원 신규·퇴임·직위 변경, 최대주주 명단·지분율(0.1%p 이상), 출자 대상·지분율, 최대주주 변동 보고, 정정 공시가 대체한 행 수를 회사별로 적고 DART 뷰어 링크를 붙입니다. 매일 08:30 `relations_job`이 관계 테이블을 다시 만든 뒤 자동으로 파일을 남기고, 명령으로도 뽑을 수 있습니다. 메일·메신저 발송은 아직 없습니다([0012](docs/decisions/0012-change-report.md)).
+16. **(Phase 3) 변화 리포트** — "지난주 들어온 공시 때문에 무엇이 바뀌었나"를 사람이 읽을 표로 뽑습니다. 관계 테이블의 이 보고서 스냅샷과 같은 회사의 직전 스냅샷을 키(사람·주주·출자 대상)로 맞춰 비교하므로 LLM도 API도 쓰지 않습니다. 임원 신규·퇴임·직위 변경, 최대주주 명단·지분율(0.1%p 이상), 출자 대상·지분율, 최대주주 변동 보고, 정정 공시가 대체한 행 수를 회사별로 적고 DART 뷰어 링크를 붙입니다. 매일 11:30 `relations_job`이 관계 테이블을 다시 만든 뒤 자동으로 파일을 남기고, 명령으로도 뽑을 수 있습니다. 메일·메신저 발송은 아직 없습니다([0012](docs/decisions/0012-change-report.md)).
 
    ```bash
    python -m src.reports.changes --days 7                                   # → data/reports/changes_YYYY-MM-DD.md
    python -m src.reports.changes --since 2026-03-01 --until 2026-03-31 --corp 00688996 --stdout
    ```
 
-17. **(Phase 3) 색인 자동화** — 8~14번을 매일 Dagster가 이어서 합니다. Automation에서 `daily_documents`(08:00, 그날 새로 접수된 정기보고서의 원문)와 `daily_rag_index`(09:00, 파싱 → 청킹 → 임베딩 → Neo4j)를 켭니다. 세 단계 모두 "아직 안 된 것만" 처리하므로 평소에는 몇 초에 끝나고, 보고서가 접수된 날만 보고서당 몇 분(임베딩)이 걸립니다. 색인 스케줄은 새 원문이 저장됐거나 지난 색인이 Neo4j 단계에서 멈췄을 때만 run을 만듭니다. 처음 한 번은 화면에서 `rag_index_job`을 직접 실행해 기존 명령어(11·12·14번)로 만든 상태와 같은지(`neo4j_chunks_match` 검사) 확인합니다. 스크립트로 백필한 원문·조각·벡터는 자산이 다시 만들지 않습니다.
+17. **(Phase 3) 색인 자동화** — 8~14번을 매일 Dagster가 이어서 합니다. `daily_documents`(11:00, 그날 새로 접수된 정기보고서의 원문)와 `daily_rag_index`(12:00, 파싱 → 청킹 → 임베딩 → Neo4j)가 매일 이어서 합니다(기본 켜짐). 세 단계 모두 "아직 안 된 것만" 처리하므로 평소에는 몇 초에 끝나고, 보고서가 접수된 날만 보고서당 몇 분(임베딩)이 걸립니다. 색인 스케줄은 새 원문이 저장됐거나 지난 색인이 Neo4j 단계에서 멈췄을 때만 run을 만듭니다. 처음 한 번은 화면에서 `rag_index_job`을 직접 실행해 기존 명령어(11·12·14번)로 만든 상태와 같은지(`neo4j_chunks_match` 검사) 확인합니다. 스크립트로 백필한 원문·조각·벡터는 자산이 다시 만들지 않습니다.
 
    ```bash
-   DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions   # 화면에서 rag_index_job 실행 → 스케줄 2개 켜기
+   DAGSTER_HOME=$PWD/dagster_home dagster dev -m src.pipeline.definitions   # 스케줄은 기본 켜짐. 첫 색인은 화면에서 rag_index_job 실행
    ```
 
 18. **(Phase 3) API 서버** — 질문·변화 리포트·시점 질의를 HTTP로 내보냅니다. 기존 Python 함수를 감싸기만 하고 새 로직은 없습니다. 임베딩 모델과 Neo4j 드라이버는 서버가 뜰 때 한 번 열고, DuckDB는 요청마다 읽기 전용으로 짧게 엽니다(Dagster 쓰기를 막지 않기 위해). 화면은 Next.js로 따로 만들어 Vercel에 올립니다([0013](docs/decisions/0013-ui-and-deploy.md)).

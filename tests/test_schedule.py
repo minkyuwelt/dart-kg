@@ -142,7 +142,7 @@ class TargetCorpsMetadataTest(unittest.TestCase):
 
 
 class TargetsFreshnessScheduleTest(unittest.TestCase):
-    """매일 06:30 스케줄이 기준 사업연도가 바뀌었을 때만 targets_job을 요청하는지."""
+    """매일 10:00 스케줄이 기준 사업연도가 바뀌었을 때만 targets_job을 요청하는지."""
 
     def setUp(self):
         self.instance = self.enterContext(dg.instance_for_test())
