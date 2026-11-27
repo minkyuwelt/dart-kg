@@ -8,9 +8,12 @@
 
 기본 검색기는 graph:hybrid:kure-v3 + 회사 필터: 그래프 질문이면 관계표와 근거 조각을 RRF로 합치고(0011), 아니면 neo4j:hybrid:kure-v3(0009·0010)와 같다. 조각은 Neo4j에 들어가 있어야 한다(load_chunks).
 근거 출력: 인용된 조각을 먼저, 나머지 검색 결과는 "참고"로. 모든 근거에 DART 뷰어 링크를 붙인다.
-이웃 조각(0011 "같은 절의 앞뒤 조각", 2026-11-27): 검색 상위 조각과 같은 보고서·같은 섹션 경로에서 바로 앞·뒤 조각을 최대 NEIGHBOR_MAX개 LLM에 함께 넘긴다.
+이웃 조각(0011 "같은 절의 앞뒤 조각", 2026-11-27): 질문이 절 이름을 말하면(예: "연혁" — 전문검색과 같은 섹션 사전 text_normalize.section_terms),
+그 절에 있는 검색 상위 조각의 바로 앞·뒤 조각(같은 보고서·같은 섹션 경로)을 최대 NEIGHBOR_MAX개 LLM에 함께 넘긴다.
 연혁처럼 한 절이 여러 조각으로 잘린 답(d033)은 상위 5개 안에 절의 일부만 들어오는데, k를 늘리면 다른 보고서·다른 절 조각(소음)이 들어오고
-이웃 조각은 "이미 맞다고 본 절의 이어지는 글"만 더한다. 검색 평가(hit@k)는 retriever.search 결과만 보므로 바뀌지 않는다.
+이웃 조각은 "질문이 말한 절의 이어지는 글"만 더한다. 처음(0010 8차 1회)에는 순위대로 모든 조각의 이웃을 붙였는데 상한 4개가 1·2위(다른 절)의
+이웃에 먼저 쓰여 연혁 절 이웃은 못 들어오고 상품 이야기가 답에 섞였다 → 절 이름이 든 조각만. 질문에 절 이름이 없으면 붙이지 않는다.
+검색 평가(hit@k)는 retriever.search 결과만 보므로 바뀌지 않는다.
 """
 
 from __future__ import annotations
@@ -64,20 +67,31 @@ def passage_label(hit: Hit, con=None) -> str:
     return f"접수번호 {hit.rcept_no} | {hit.path}"
 
 
-def expand_neighbors(hits: list[Hit], con, limit: int = NEIGHBOR_MAX) -> list[tuple[Hit, int, bool]]:
-    """검색 상위 조각과 같은 보고서·파일·섹션 경로(path)에서 seq가 바로 앞·뒤인 조각을 DuckDB chunk 표에서 찾는다.
+def expand_neighbors(question: str, hits: list[Hit], con, limit: int = NEIGHBOR_MAX, section_words: set[str] | None = None) -> list[tuple[Hit, int, bool]]:
+    """질문이 말한 절(섹션 경로에 질문의 섹션 사전 낱말이 든 조각)의 검색 상위 조각에 대해, 같은 보고서·파일·섹션 경로에서 seq가 바로 앞·뒤인 조각을 DuckDB chunk 표에서 찾는다.
 
-    순위대로 돌며(1위의 앞·뒤, 2위의 앞·뒤, …) limit개가 차면 멈춘다. 이미 검색된 조각과 중복은 건너뛴다.
+    순위대로 돌며(그 절의 1위의 앞·뒤, 다음 순위의 앞·뒤, …) limit개가 차면 멈춘다. 이미 검색된 조각과 중복은 건너뛴다.
+    질문에 섹션 사전 낱말이 없으면 빈 목록(어느 절이 답인지 모르면 이웃을 붙이지 않는다 — 다른 절의 이웃은 소음이었다, 0010 8차).
+    section_words를 안 주면 chunk 표의 섹션 경로에서 사전을 만든다(전문검색기와 같은 load_section_words).
     Hit에는 seq가 없어 (접수번호, 파일, 글)로 chunk 행을 찾는다 — Neo4j 노드의 text는 chunk.text 그대로다.
     돌려주는 것: (이웃 Hit, 어느 검색 조각의 번호(1부터)인지, 뒤 조각인가(True) 앞 조각인가(False)). 점수는 0(검색된 것이 아님).
     """
     out: list[tuple[Hit, int, bool]] = []
-    if con is None or limit <= 0:
+    if con is None or limit <= 0 or not hits:
+        return out
+    from eval.retrievers.neo4j import load_section_words
+    from src.graph.text_normalize import section_terms
+
+    words = section_words or load_section_words(con)
+    terms = section_terms(question, words) if words else []
+    if not terms:
         return out
     seen = {(h.rcept_no, h.file_name, h.text) for h in hits}
     for i, h in enumerate(hits):
         if len(out) >= limit:
             break
+        if not any(t in h.path for t in terms):
+            continue
         row = con.execute("SELECT seq FROM chunk WHERE strategy = ? AND rcept_no = ? AND file_name = ? AND text = ? LIMIT 1",
                           [CHUNK_STRATEGY, h.rcept_no, h.file_name, h.text]).fetchone()
         if row is None:
@@ -101,7 +115,7 @@ def expand_neighbors(hits: list[Hit], con, limit: int = NEIGHBOR_MAX) -> list[tu
 def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None, neighbors: int = NEIGHBOR_MAX) -> AskResult:
     """검색 → 이웃 조각 → (그래프 관계표) → LLM. 그래프 검색기(src/graph/query.GraphRetriever)면 retriever.last에 관계표가 남아 있다.
 
-    이웃 조각은 LLM에 넘길 때만 붙인다(--no-llm·use_llm=False의 검색 결과는 검색기가 돌려준 그대로). 번호는 검색 조각 뒤에 이어 붙이고
+    이웃 조각은 질문에 절 이름이 있을 때, LLM에 넘길 때만 붙인다(--no-llm·use_llm=False의 검색 결과는 검색기가 돌려준 그대로). 번호는 검색 조각 뒤에 이어 붙이고
     꼬리표에 "(이웃: [n]의 다음 조각)"을 적어 답의 인용·화면에서 검색된 조각과 구별된다. 그래프 관계표는 여전히 마지막 번호.
     """
     hits = retriever.search(question, k)
@@ -114,7 +128,8 @@ def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None, neighbo
     if not hits and not has_graph:
         result.answer = Answer(NOT_FOUND, [], getattr(llm, "name", ""))
         return result
-    for nh, n, after in expand_neighbors(hits, con, neighbors):
+    base = getattr(retriever, "base", retriever)   # GraphRetriever는 안에 전문검색기(base)를 품는다. 그쪽 섹션 사전을 다시 만들지 않고 쓴다
+    for nh, n, after in expand_neighbors(question, hits, con, neighbors, getattr(base, "section_words", None)):
         hits.append(nh)
         labels.append(f"{passage_label(nh, con)} (이웃: [{n}]의 {'다음' if after else '앞'} 조각)")
     passages = [Passage(i + 1, labels[i], h.text or h.snippet) for i, h in enumerate(hits)]

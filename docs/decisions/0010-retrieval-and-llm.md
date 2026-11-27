@@ -82,7 +82,7 @@ python -m eval.run --retrieval-only --retriever neo4j:hybrid:kure-v3 --filter co
 
 ### 프롬프트 규칙 (`SYSTEM_PROMPT`)
 1. 번호 붙은 조각에 적힌 내용만으로 답한다 2. 문장마다 [번호] 인용 3. 없으면 정확히 "공시에서 찾지 못했습니다", 인용 비움 4. 숫자·이름·날짜는 적힌 그대로 5. citations에는 실제 인용만.
-조각은 k=5개, 각 1,000자까지, "[n] 회사 | 보고서 | 섹션 경로" 꼬리표와 함께. 2026-11-27부터 그 뒤에 **이웃 조각** 최대 4개(상위 조각과 같은 보고서·같은 섹션 경로의 바로 앞·뒤 조각, 꼬리표 끝에 "(이웃: [n]의 다음 조각)", `src/rag/ask.expand_neighbors`, 0011 "같은 절의 앞뒤 조각"). 검색 지표에는 들어가지 않고 LLM 입력에만 더한다. 출력은 JSON 스키마(`answer`, `citations`) 구조화 출력(Responses API `text.format` json_schema strict).
+조각은 k=5개, 각 1,000자까지, "[n] 회사 | 보고서 | 섹션 경로" 꼬리표와 함께. 2026-11-27부터 그 뒤에 **이웃 조각** 최대 4개(질문이 절 이름을 말할 때, 그 절에 있는 상위 조각과 같은 보고서·같은 섹션 경로의 바로 앞·뒤 조각, 꼬리표 끝에 "(이웃: [n]의 다음 조각)", `src/rag/ask.expand_neighbors`, 0011 "같은 절의 앞뒤 조각"). 검색 지표에는 들어가지 않고 LLM 입력에만 더한다. 출력은 JSON 스키마(`answer`, `citations`) 구조화 출력(Responses API `text.format` json_schema strict).
 프로그램이 인용 번호 → 접수번호·섹션·DART 뷰어 링크(`dsaf001/main.do?rcpNo=`)로 바꾼다(usecases D3). 범위 밖 번호는 버린다.
 
 ### 비용 보호
@@ -90,7 +90,7 @@ python -m eval.run --retrieval-only --retriever neo4j:hybrid:kure-v3 --filter co
 **실측해 아래에 적는다.** OpenAI 콘솔의 월 한도도 걸어 둔다.
 
 ### 평가 (사람 채점)
-- **8차 (2026-11-27, `feat/neighbor-chunks`, 노트북 미실행):** 이웃 조각 4개를 LLM에 함께 넘긴 뒤 d033(`eval.run --id d033`)에서 종속회사 항목(KB Finansia 85%)이 돌아오는지, 전체 53개에서 나빠진 질문과 입력 토큰 증가량(`--neighbors 0`과 비교). **결과는 노트북에서 돌린 뒤 여기에.**
+- **8차 (2026-11-27, `feat/neighbor-chunks`, d033만 `eval.run --id d033`):** 첫 판(순위대로 모든 조각의 이웃, 상한 4)은 **부분 그대로 + 소음** — 상한 4개가 1·2위(경영진단 절)의 이웃에 먼저 쓰여 4위(연혁)의 이웃 #30(KB Finansia 85%)은 못 들어오고, [2][7](경영진단 이웃)의 "모두의 카드생활 메이트·ALL·YOU·NEED" 상품 이야기가 연혁 답에 섞임. 토큰 5,707/503. → **질문이 말한 절(섹션 사전 낱말이 경로에 든 조각)의 이웃만** 붙이게 고침. 둘째 판 결과는 노트북에서 돌린 뒤 여기에.
 `python -m eval.run --retriever neo4j:hybrid:kure-v3 --filter corp --include-none`이 질문마다 답·인용·정답을 나란히 둔 채점표(`eval/results/*_llm_*.md`)를 만든다.
 채점 기준: 맞음 / 부분 / 틀림 / 근거없는주장(조각에 없는 말). "없음" 5개는 "찾지 못했습니다"가 정답 — 답이 있는 질문에 "찾지 못함"이라고 하는 비율(false none)도 함께 본다.
 LLM 채점은 사람 채점과 일치율을 확인한 뒤에만 도입(계획 4절).
