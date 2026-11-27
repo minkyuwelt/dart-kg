@@ -401,8 +401,14 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
 
    ```bash
    cd web && npm install && npm run dev      # WSL 안의 Linux Node(nvm, 22)로. http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
-   npm run build                             # Vercel에 올리는 정적 파일(dist/). Vercel 프로젝트의 Root Directory를 web으로, 환경변수 VITE_API_URL
+   npm run build                             # Vercel에 올리는 정적 파일(dist/)
    ```
+
+   **Vercel에 올리기** (화면만. API 서버는 따로 있어야 하고, 없으면 머리띠에 "서버에 닿지 못함"이 뜹니다):
+   1. Vercel에서 이 GitHub 저장소를 가져오고 **Root Directory = `web`** (Framework는 Vite로 자동 인식, `web/vercel.json`이 모든 경로를 `index.html`로 보내 `/corps/…` 같은 주소를 새로 고쳐도 열립니다)
+   2. 환경변수 `VITE_API_URL` = API 서버 주소(예: `https://api.example.com`, 끝에 `/` 없이). 빌드 때 박히므로 바꾸면 다시 배포
+   3. API 서버 쪽 `.env`의 `API_CORS_ORIGINS`에 Vercel 도메인(`https://….vercel.app`)을 적고 uvicorn 재시작 — 안 적으면 브라우저가 응답을 막습니다
+   4. API 서버를 둘 곳은 [0013](docs/decisions/0013-ui-and-deploy.md) "배포할 때 확인할 것"의 측정값을 보고 정합니다(kure-v3 임베딩이 CPU에서 몇 초인지, 메모리 몇 GB인지)
 
    | 경로 | 내용 |
    |---|---|
