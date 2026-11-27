@@ -8,8 +8,6 @@
 """
 
 import io
-import os
-import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -21,6 +19,7 @@ from src.loaders.collect import collect_document
 from src.loaders.documents import document_path, missing_documents, read_xml_head, save_document
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_report_details import disclosure_row
+from tests.helpers import TempDuckDBTestCase
 
 KB, SHINHAN = "00688996", "00382199"
 
@@ -81,16 +80,9 @@ class InspectZipTest(unittest.TestCase):
         self.assertEqual(entries[0].size, len(UTF8_XML))
 
 
-class SaveDocumentTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {
-            "DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb"),
-            "DOCUMENTS_PATH": str(Path(self.tmp.name) / "docs"),
-        })
-        env.start()
-        self.addCleanup(env.stop)
+class SaveDocumentTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DOCUMENTS_PATH": str(Path(self.tmp.name) / "docs")}
 
     def test_writes_file_and_upserts_row_once(self):
         zip1 = make_zip({"20240318000001.xml": UTF8_XML})

@@ -9,16 +9,14 @@
 6) 파서 3단계 (0007): 정상 → etree, 그대로의 `<`·`&` → etree+escape(글자 보존), 닫히지 않은 태그 → lxml
 """
 
-import os
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from src.loaders.document_parser import Table, escape_stray, explain_failure, is_prose_table, normalize_encoding, parse_document_xml, parse_table, parse_tree
 from src.loaders.documents import raw_context, rebuild_sections, save_document, why_lxml
 from src.loaders.duckdb_store import connect
 from tests.test_documents import make_zip
+from tests.helpers import TempDuckDBTestCase
 
 MAIN_XML = """<?xml version="1.0" encoding="utf-8"?>
 <DOCUMENT xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="dart4.xsd">
@@ -292,14 +290,9 @@ class LenientParsingTest(unittest.TestCase):
         self.assertIn("</BODY>", snippet)
 
 
-class RebuildSectionsTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb"),
-                                           "DOCUMENTS_PATH": str(Path(self.tmp.name) / "docs")})
-        env.start()
-        self.addCleanup(env.stop)
+class RebuildSectionsTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DOCUMENTS_PATH": str(Path(self.tmp.name) / "docs")}
 
     def test_rebuild_writes_sections_and_records_failures_idempotently(self):
         good = make_zip({"20260313001191.xml": MAIN_XML.encode("utf-8"), "20260313001191_00761.xml": ATTACH_XML.encode("utf-8")})

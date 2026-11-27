@@ -9,12 +9,9 @@
 """
 
 import json
-import os
-import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest import mock
 
 from eval import graph_draft as G
 from eval.questions import QuestionFormatError, load_questions, parse_question
@@ -22,6 +19,7 @@ from eval.review import review
 from src.graph import query as Q
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_graph_query import TemplateDriver, node, owns
+from tests.helpers import TempDuckDBTestCase
 from tests.test_report_details import disclosure_row
 
 KBH, SHH, HNH, WRH = "00000001", "00000002", "00000003", "00000004"
@@ -56,13 +54,9 @@ def ex(con, rcept, corp, nm, ofcps, kind, pid, vf, vt=None):
                 [rcept, next(_seq), corp, nm, ofcps, kind, pid, vf, vf, vt])
 
 
-class GraphDraftTest(unittest.TestCase):
+class GraphDraftTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         con = self.con = connect()
         self.addCleanup(con.close)
         names = {KBH: "KB금융지주", SHH: "신한지주", HNH: "하나금융지주", WRH: "우리금융지주", KBBANK: "KB국민은행", KBCARD: "KB국민카드",

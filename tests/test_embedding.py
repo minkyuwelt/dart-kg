@@ -9,19 +9,15 @@
 """
 
 import hashlib
-import json
 import math
-import os
-import tempfile
 import unittest
-from pathlib import Path
-from unittest import mock
 
 from src.rag.retrievers import make_retriever
 from src.rag.retrievers.filters import guess_corp_code
 from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from src.rag.embedding import embed_chunks, embedding_stats, pending_chunks
+from tests.helpers import TempDuckDBTestCase
 
 WOORI = "20260313000815"
 SHINHAN = "20260313000777"
@@ -51,13 +47,9 @@ class FakeReranker:
         return [1.0 if "배당" in t else 0.0 for t in texts]
 
 
-class EmbeddingTest(unittest.TestCase):
+class EmbeddingTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con

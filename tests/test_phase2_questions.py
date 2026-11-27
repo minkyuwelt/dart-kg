@@ -5,8 +5,6 @@ DART API를 호출하지 않는다.
 """
 
 import io
-import os
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import date
@@ -19,18 +17,17 @@ from src.loaders.duckdb_store import connect, save_raw
 from src.loaders.investments import ENDPOINT as INVESTMENT_ENDPOINT, rebuild_investments
 from src.loaders.relations import rebuild_relations
 from tests.test_temporal import A, B, CHANGES, EXECUTIVES, INVESTMENTS, REPORTS, SHAREHOLDERS
+from tests.helpers import TempDuckDBTestCase
 
 from notebooks import phase2_questions as pq
 
 
-class Phase2QuestionsTest(unittest.TestCase):
+class Phase2QuestionsTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db_path = str(Path(self.tmp.name) / "test.duckdb")
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": self.db_path, "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         with connect() as con:
             con.execute("INSERT INTO corp VALUES (?, '국민은행', NULL, NULL, now())", [B])
             con.execute("INSERT INTO target_corp VALUES (?, 'KB금융', 'holding', NULL, NULL, NULL, '2025', now())", [A])

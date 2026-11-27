@@ -1,15 +1,12 @@
 """수집 대상 목록(target_corp) 생성 테스트. DART API를 호출하지 않는다."""
 
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from src.collectors.corp_code import HOLDING_CORPS
 from src.loaders.duckdb_store import connect
 from src.loaders.targets import IncompleteTargetsError, latest_business_report_year, rebuild_target_corps
+from tests.helpers import TempDuckDBTestCase
 
 # 지주별 자회사 하나씩 (corp_code는 가짜)
 SUBSIDIARY_OF = {holding: f"0000010{i}" for i, holding in enumerate(HOLDING_CORPS)}
@@ -41,14 +38,7 @@ class LatestYearTest(unittest.TestCase):
         self.assertEqual(latest_business_report_year(date(2026, 3, 31)), 2024)
 
 
-class RebuildTargetsTest(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
-
+class RebuildTargetsTest(TempDuckDBTestCase):
     def test_selects_resolved_subsidiaries_over_threshold(self):
         with connect() as con:
             con.execute(

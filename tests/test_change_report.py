@@ -6,16 +6,13 @@
 3) 기간·회사 필터, markdown에 생년월이 들어가지 않음, 요약 집계
 """
 
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from src.reports.changes import build_report, render_markdown, summarize
 from tests.test_report_details import disclosure_row
+from tests.helpers import TempDuckDBTestCase
 
 KB = "00688996"
 R2024, R2025, R2025_FIX = "20250314000001", "20260313000002", "20260401000003"
@@ -49,13 +46,9 @@ def add_inv(con, rcept, name, pct, stlm, valid_to=None, seq=0):
     )
 
 
-class ChangeReportTest(unittest.TestCase):
+class ChangeReportTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con

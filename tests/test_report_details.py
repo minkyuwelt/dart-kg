@@ -8,8 +8,6 @@
 """
 
 import json
-import os
-import tempfile
 import unittest
 from datetime import date, datetime
 from pathlib import Path
@@ -27,6 +25,7 @@ from src.loaders.periodic_reports import (
 )
 from src.pipeline import definitions
 from tests.test_schedule import HOLD_WRITER  # noqa: F401  (같은 흉내 프로세스를 쓸 수 있게 둔다)
+from tests.helpers import TempDuckDBTestCase
 
 KST = ZoneInfo("Asia/Seoul")
 KB = "00688996"
@@ -57,14 +56,12 @@ class PeriodicReportKeyTest(unittest.TestCase):
         self.assertEqual(keys[:4], ["2024-11013", "2024-11012", "2024-11014", "2024-11011"])
 
 
-class DuckDBTestCase(unittest.TestCase):
+class DuckDBTestCase(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db_path = str(Path(self.tmp.name) / "test.duckdb")
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": self.db_path, "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.instance = self.enterContext(dg.instance_for_test())
         self.instance.add_dynamic_partitions("corp", [KB])
 

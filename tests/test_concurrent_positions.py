@@ -5,17 +5,13 @@
 """
 
 import json
-import os
-import tempfile
-import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from src.graph.load_relations import duckdb_counts, position_rows
 from src.loaders import concurrent_positions as CP
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_change_report import add_exec
+from tests.helpers import TempDuckDBTestCase
 from tests.test_report_details import disclosure_row
 
 KB, SHH = "00688996", "00382199"
@@ -43,13 +39,9 @@ WOORI_TABLE = table(["성명", "대상회사", "직위", "겸임일자", "상근
 OTHER_TABLE = table(["회사명", "출자회사수"], [["경영참여", "11"]])
 
 
-class ConcurrentPositionsTest(unittest.TestCase):
+class ConcurrentPositionsTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con

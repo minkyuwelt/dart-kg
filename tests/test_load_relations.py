@@ -9,26 +9,19 @@
 6) corp_lineage.csv: 근거 없는 줄·같은 corp_code는 거부, 올바른 줄은 FORMERLY
 """
 
-import os
-import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest import mock
 
 from src.graph import load_relations as lr
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_report_details import disclosure_row
+from tests.helpers import FakeResult, TempDuckDBTestCase
 
 HOLD, BANK, CARD = "00688996", "00105961", "00241653"
 R1, R2 = "20250314000001", "20260313000002"
 D1, D2 = date(2024, 12, 31), date(2025, 12, 31)
 LINEAGE_HEADER = ",".join(lr.LINEAGE_COLUMNS) + "\n"
-
-
-class FakeResult:
-    def __init__(self, records):
-        self.records = records
 
 
 class GraphDriver:
@@ -103,13 +96,9 @@ def add_exec(con, rcept, seq, corp, nm, kind, pid, stlm, valid_to=None):
     )
 
 
-class LoadRelationsTest(unittest.TestCase):
+class LoadRelationsTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con

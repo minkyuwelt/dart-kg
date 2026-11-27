@@ -16,6 +16,7 @@ from src.rag.retrievers.hit import Hit
 from eval.questions import Question
 from src.rag.ask import VIEWER_URL, ask, format_result
 from src.rag.llm import NOT_FOUND, Answer, DailyLimit, Passage, build_user_prompt, parse_answer
+from tests.helpers import TempDuckDBTestCase
 
 
 class FakeLLM:
@@ -118,14 +119,11 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class NeighborChunksTest(unittest.TestCase):
+class NeighborChunksTest(TempDuckDBTestCase):
     """0011 '같은 절의 앞뒤 조각': 검색 상위 조각과 같은 보고서·같은 섹션 경로의 seq±1 조각을 LLM에 함께 넘긴다 (d033 연혁)."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.addCleanup(self.tmp.cleanup)
         from src.loaders.duckdb_store import connect
         self.con = connect()

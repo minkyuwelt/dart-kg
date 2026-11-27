@@ -7,11 +7,8 @@
 4) daily_rag_index는 새 원문이 있었거나 지난 색인이 Neo4j 단계에서 멈췄을 때만 run을 만든다
 """
 
-import os
-import tempfile
 import unittest
 from datetime import datetime
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -25,6 +22,7 @@ from src.loaders.duckdb_store import connect, upsert_disclosures
 from src.pipeline import definitions
 from src.rag.embedding import ModelSpec, embed_chunks
 from tests.test_embedding import FakeEmbedder
+from tests.helpers import FakeResult, TempDuckDBTestCase
 from tests.test_report_details import disclosure_row
 
 KST = ZoneInfo("Asia/Seoul")
@@ -61,11 +59,6 @@ class RecordingDriver:
         return False
 
 
-class FakeResult:
-    def __init__(self, records):
-        self.records = records
-
-
 def seed_sections(con, rcept_no: str, texts: list[str]) -> None:
     for sid, text in enumerate(texts, start=1):
         con.execute(
@@ -74,13 +67,9 @@ def seed_sections(con, rcept_no: str, texts: list[str]) -> None:
         )
 
 
-class IncrementalHelpersTest(unittest.TestCase):
+class IncrementalHelpersTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         upsert_disclosures(self.con, [
@@ -124,15 +113,14 @@ class IncrementalHelpersTest(unittest.TestCase):
         self.assertEqual(stale_documents(con, "fake", "section_path", driver), [BIZ])
 
 
-class RagIndexJobTest(unittest.TestCase):
+class RagIndexJobTest(TempDuckDBTestCase):
     """chunks → chunk_embeddings → neo4j_chunks를 실제 DuckDB에서 끝까지. 임베더·Neo4j만 가짜."""
 
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb"), "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.instance = self.enterContext(dg.instance_for_test())
         self.driver = RecordingDriver()
         # 가짜 임베더는 모델 이름 'fake'·64차원. 자산이 보는 모델 상수와 Neo4j 적재의 모델 표를 함께 바꾼다
@@ -192,13 +180,12 @@ def schedule_context(instance, when):
     return dg.build_schedule_context(instance=instance, scheduled_execution_time=when)
 
 
-class RagSchedulesTest(unittest.TestCase):
+class RagSchedulesTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb"), "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.instance = self.enterContext(dg.instance_for_test())
         self.now = datetime(2026, 11, 25, 9, tzinfo=KST)
 

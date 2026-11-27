@@ -22,6 +22,7 @@ from src.loaders.investments import ENDPOINT as INVESTMENT_ENDPOINT, rebuild_inv
 from src.loaders.relations import make_person_id, rebuild_relations
 from src.loaders.temporal import apply_person_merges, chain_changes, load_person_merges
 from src.pipeline.definitions import check_relations_valid_from_sane
+from tests.helpers import TempDuckDBTestCase
 
 A, B = "00688996", "00401731"
 YANG = ("양종희", "1961년 06월", "남")
@@ -87,14 +88,12 @@ INVESTMENTS = {
 }
 
 
-class TemporalCloseTest(unittest.TestCase):
+class TemporalCloseTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db_path = str(Path(self.tmp.name) / "test.duckdb")
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": self.db_path, "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         with connect() as con:
             con.execute("INSERT INTO corp VALUES (?, '국민은행', NULL, NULL, now())", [B])
             for corp, year, code, rcept, _ in REPORTS:
@@ -210,15 +209,8 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ChangeChainingTest(unittest.TestCase):
+class ChangeChainingTest(TempDuckDBTestCase):
     """변동 테이블만 따로: 같은 날 행이 여럿이면 다음 '날짜'로 닫히고, 변동일이 기준일보다 늦어도 검사를 통과한다."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
 
     def test_same_day_rows_close_at_next_date_not_same_day(self):
         with connect() as con:
@@ -242,15 +234,8 @@ class ChangeChainingTest(unittest.TestCase):
         self.assertTrue(result.passed)
 
 
-class PersonMergeTest(unittest.TestCase):
+class PersonMergeTest(TempDuckDBTestCase):
     """config/person_merges.csv로 오타 때문에 갈라진 사람을 합친다 (0006 개정)."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
 
     def insert(self, con, person_id, stlm_dt, rcept, corp=A):
         nm, birth, sex = person_id.split("|")

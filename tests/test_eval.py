@@ -1,11 +1,9 @@
 """평가 세트 도구 테스트: 질문 형식, 지표, 키워드 기본선, 근거 섹션 찾기, 후보 초안. DART API를 호출하지 않는다."""
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from eval.draft import TEMPLATES_BY_KEY, draft_questions, fill_question, next_draft_number, seed_questions, with_particle
 from eval.locate import locate
@@ -17,6 +15,7 @@ from eval.run import evaluate
 from src.collectors.corp_code import HOLDING_CORPS
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_report_details import disclosure_row
+from tests.helpers import TempDuckDBTestCase
 
 KB = next(iter(HOLDING_CORPS))  # 지주 하나
 SHINHAN_BANK = "00149293"
@@ -104,13 +103,9 @@ def insert_sections(con, rows):
         )
 
 
-class RetrieverAndDraftTest(unittest.TestCase):
+class RetrieverAndDraftTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con
@@ -215,15 +210,11 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ReviewTest(unittest.TestCase):
+class ReviewTest(TempDuckDBTestCase):
     """대화형 정답 입력 도구. input/print를 가짜로 바꿔 돌린다."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         table = [{"caption": None, "unit": "(단위: 원)", "header_rows": 1, "rows": [["구분", "당기", "당기", "전기"], ["주당 현금배당금", "4,790", "4,790", "4,020"]]}]

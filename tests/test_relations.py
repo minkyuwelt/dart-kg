@@ -4,8 +4,6 @@
 """
 
 import json
-import os
-import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
@@ -28,6 +26,7 @@ from src.loaders.relations import (
     rebuild_relations,
     shift_months,
 )
+from tests.helpers import TempDuckDBTestCase
 
 FIXTURES = Path(__file__).parent / "fixtures"
 KB = "00688996"
@@ -212,15 +211,11 @@ class DedupeChangesTest(unittest.TestCase):
                          [("(주)외환은행", "20240814003949"), ("하나은행", "20180402000001")])  # 다른 이름은 남음
 
 
-class RebuildTest(unittest.TestCase):
+class RebuildTest(TempDuckDBTestCase):
     """임시 DuckDB에 원본 응답을 넣고 관계 테이블을 다시 만든다."""
 
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb"), "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
 
     def seed_raw(self, con):
         for name, endpoint in ENDPOINTS.items():
@@ -293,15 +288,8 @@ class RebuildTest(unittest.TestCase):
             )
 
 
-class CollectReportDetailsTest(unittest.TestCase):
+class CollectReportDetailsTest(TempDuckDBTestCase):
     """collect_report_details가 API 4건을 부르고 원본 4건을 저장하는지 (requests를 가짜로 바꿈)."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
 
     def test_saves_four_raw_responses_in_one_call(self):
         bodies = {
