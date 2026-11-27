@@ -38,7 +38,7 @@ with connect(s) as driver:
 
     corp = q("MATCH (c:Chunk {rcept_no: $r}) RETURN c.corp_code AS c LIMIT 1", r=rcept)[0]["c"]
     # 실제 검색기가 만드는 검색어: 섹션 사전(DuckDB chunk.path) → 필수 낱말 → Lucene 질의. 사전에 든 낱말이 질문을 너무 좁히는지 여기서 본다
-    from eval.retrievers.neo4j import load_section_words
+    from src.rag.retrievers.neo4j import load_section_words
     from src.graph.text_normalize import fulltext_query, section_terms
     from src.loaders.duckdb_store import connect as duck_connect
     question = f"케이비국민카드의 2025년 중 주요 {term}은 무엇인가?"

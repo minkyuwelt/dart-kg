@@ -46,7 +46,7 @@
 
 - `src/loaders/chunking.py`: 순수 함수 (`chunk_sections(meta, sections, strategy)`). DuckDB를 모른다
 - `src/loaders/chunks.py`: `document_section` → `chunk` (전략·접수번호 단위로 지우고 다시 넣음 → 멱등). CLI `build / stats / show`
-- `eval/retrievers/chunk.py`: 조각 위의 키워드 검색 `--retriever chunk:<전략>`. 임베딩 전에 전략을 같은 규칙으로 비교
+- `src/rag/retrievers/chunk.py`(2026-11-27까지 `eval/retrievers/`): 조각 위의 키워드 검색 `--retriever chunk:<전략>`. 임베딩 전에 전략을 같은 규칙으로 비교
 - 기본은 본문 파일만. 첨부(감사보고서)는 `--attachments`
 
 ## 1차 실험 계획 (5번 PR, 노트북)

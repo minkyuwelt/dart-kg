@@ -16,7 +16,7 @@
 | 점수 가중합 | 각 점수를 0~1로 정규화해 α·벡터 + (1-α)·전문검색 | 가중치로 조정 가능 | α를 평가 세트로 맞춰야 하고(과적합), 정규화 방식에 민감 |
 | Neo4j `HybridRetriever`(neo4j-graphrag) | 패키지가 두 인덱스를 질의해 합침 | 코드 적음 | 전문검색어 전처리(0004)를 끼워 넣기 어려움 → 계획 (E)절대로 처음엔 Cypher 직접 |
 
-**선택: RRF.** 매개변수가 없어 36~60개 평가 세트로도 과적합 걱정이 없다. 구현: `eval/retrievers/neo4j.py` `Neo4jHybridRetriever`(벡터 20 + 전문검색 20 → RRF → k), `--retriever neo4j:hybrid:kure-v3`.
+**선택: RRF.** 매개변수가 없어 36~60개 평가 세트로도 과적합 걱정이 없다. 구현: `src/rag/retrievers/neo4j.py`(2026-11-27까지 `eval/retrievers/`) `Neo4jHybridRetriever`(벡터 20 + 전문검색 20 → RRF → k), `--retriever neo4j:hybrid:kure-v3`.
 회사 필터는 양쪽 검색에 같이 건다(0009 결정). 재순위는 하이브리드 위에만 붙여 한 번 더 잰다(`--rerank nano`): 후보가 벡터·글자 섞인 40개가 되면 0009 3단계(벡터만 30개)와 결과가 다를 수 있다.
 
 ### 잴 것 (노트북, 188개 보고서 26만 조각, 평가 세트 늘린 뒤)

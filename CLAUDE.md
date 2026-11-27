@@ -41,13 +41,13 @@ src/loaders/       DuckDB 적재
 src/pipeline/      Dagster 자산·스케줄 정의
 config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_overrides.csv, person_merges.csv, corp_lineage.csv)
 src/graph/         Neo4j 적재(조각·관계)와 그래프 질의(라우터·템플릿·picker, 0011)
-src/rag/           검색·임베딩·LLM 답변 (0009·0010). 진입점 `python -m src.rag.ask "질문"`
+src/rag/           검색(retrievers/ — keyword·chunk·dense·neo4j 하이브리드·graph, `make_retriever`로 이름 해석)·임베딩·LLM 답변 (0009·0010). 진입점 `python -m src.rag.ask "질문"`
 src/reports/       변화 리포트 (0012)
 src/api/           FastAPI — 기존 함수를 HTTP로 감싼다 (0013)
 web/               화면 — Vite + React SPA (0013). API 응답을 그대로 보여 주고 새 로직을 두지 않는다. `cd web && npm run dev`, CI가 lint·build
 sql/schema.sql     DuckDB 테이블 정의
 tests/             오프라인 테스트 (DART API를 호출하지 않음, `python -m unittest discover -s tests -t .`)
-eval/              평가 세트: questions.jsonl(ready 53개), run.py(검색 hit@5·LLM 채점표), routing.py(라우팅 정확도), 검색 함수(retrievers/), 질문 초안 도구. 정답은 사람이 뷰어에서 확인한 것만
+eval/              평가 세트: questions.jsonl(ready 53개), run.py(검색 hit@5·LLM 채점표), routing.py(라우팅 정확도), 질문 초안 도구. 검색 함수는 src/rag/retrievers/에 있고 여기서는 가져다 쓰기만 한다. 정답은 사람이 뷰어에서 확인한 것만
 dagster_home/      Dagster 인스턴스 설정 (dagster.yaml만 커밋)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록 (NNNN-제목.md)

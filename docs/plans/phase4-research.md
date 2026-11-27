@@ -142,7 +142,7 @@ neo4j-graphrag 패키지의 Text2CypherRetriever 공식 문서도 "The LLM-gener
 - `VectorCypherRetriever`: 벡터 인덱스 hit 뒤 `retrieval_query` Cypher를 이어 붙여 그래프를 확장하고 **속성만 반환** ("It is recommended that the retrieval query returns node properties, as opposed to nodes.").
 - 하이브리드 융합은 max 정규화 또는 선형합만, **RRF 없음**. "Filters are implemented for all retrievers except the Hybrid retrievers." 2026.01 이전 버전에서 필터는 벡터 인덱스를 우회해 전수 비교.
 
-**판단: 패키지는 쓰지 않는다(제외).** 이유: 우리에게 필요한 (a) RRF 융합, (b) 하이브리드 + 시점 필터, (c) 한국어 전문검색 분석기(0004) 중 둘을 지원하지 않고, 이미 `eval/retrievers/neo4j.py`에 드라이버 + 직접 Cypher로 하이브리드가 있다. **가져올 것:** `retrieval_query`의 "인덱스 hit → 그래프 확장 → 속성만 반환" 2단계 구조(3절 1번과 같다). 이 판단은 0011에 "대안 비교" 절로 옮긴다.
+**판단: 패키지는 쓰지 않는다(제외).** 이유: 우리에게 필요한 (a) RRF 융합, (b) 하이브리드 + 시점 필터, (c) 한국어 전문검색 분석기(0004) 중 둘을 지원하지 않고, 이미 `src/rag/retrievers/neo4j.py`(당시 `eval/retrievers/`)에 드라이버 + 직접 Cypher로 하이브리드가 있다. **가져올 것:** `retrieval_query`의 "인덱스 hit → 그래프 확장 → 속성만 반환" 2단계 구조(3절 1번과 같다). 이 판단은 0011에 "대안 비교" 절로 옮긴다.
 
 ## 5. 결정 0011에 넣을 것 (초안 뼈대)
 
