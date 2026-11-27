@@ -50,8 +50,13 @@ def title_matches(title: str | None, want: str | None, duty: str | None = None) 
 
 
 def title_ok(r: str) -> str:
-    """Cypher 조각: 관계 r의 직위가 $title을 담는가. 대표이사는 적재 때 is_ceo로 계산한 r.ceo로 본다."""
-    return f"($title IS NULL OR {r}.title CONTAINS $title OR ($title = '대표이사' AND coalesce({r}.ceo, false)))"
+    """Cypher 조각: 관계 r이 $title에 해당하는가. 직위(r.title = ofcps)뿐 아니라 등기구분(r.registered = rgist_exctv_at: 사내이사·사외이사·기타비상무이사)도 본다.
+    대표이사는 적재 때 is_ceo로 계산한 r.ceo로 본다.
+
+    등기구분을 함께 보는 이유 (2026-11-27, p2-q2): 하나은행 사외이사 6명의 직위는 "이사"이고 "사외이사"는 등기구분에만 있어, 직위 글자만 보면
+    `title='사외이사'`로 0행이 나오고 규칙 7(기준일 질문은 관계표 우선)이 LLM을 "찾지 못함"으로 끌었다. 회사마다 직위 칸의 관행이 다르다."""
+    return (f"($title IS NULL OR {r}.title CONTAINS $title OR coalesce({r}.registered, '') CONTAINS $title "
+            f"OR ($title = '대표이사' AND coalesce({r}.ceo, false)))")
 
 
 def at(r: str) -> str:

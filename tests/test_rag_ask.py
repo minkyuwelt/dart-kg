@@ -116,3 +116,62 @@ class RagAskTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NeighborChunksTest(unittest.TestCase):
+    """0011 '같은 절의 앞뒤 조각': 검색 상위 조각과 같은 보고서·같은 섹션 경로의 seq±1 조각을 LLM에 함께 넘긴다 (d033 연혁)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
+        env.start()
+        self.addCleanup(env.stop)
+        self.addCleanup(self.tmp.cleanup)
+        from src.loaders.duckdb_store import connect
+        self.con = connect()
+        self.addCleanup(self.con.close)
+        # 연혁 절 조각 4개(seq 28~31) + 다른 절 조각(seq 32). 31의 뒤(32)는 경로가 달라 이웃이 아니다
+        rows = [(28, "II. 사업 > 연혁", "2023년 연혁"), (29, "II. 사업 > 연혁", "2025년 지배회사 연혁"), (30, "II. 사업 > 연혁", "2025년 종속회사 연혁 KB Finansia 85%"),
+                (31, "II. 사업 > 연혁", "2026년 연혁"), (32, "II. 사업 > 자본금", "자본금 변동")]
+        for seq, path, text in rows:
+            self.con.execute("INSERT INTO chunk VALUES (?, 'section_path', 'R1', 'R1.xml', ?, 7, 'C1', '케이비국민카드', '사업보고서 (2025.12)', ?, false, 'text', NULL, ?, ?, ?, 'h', now())",
+                             [f"section_path:R1:R1.xml:{seq}", seq, path, text, text, len(text)])
+
+    def hit(self, seq, text, score=0.9):
+        return Hit("R1", "R1.xml", 7, "II. 사업 > 연혁", score, text[:120], text)
+
+    def test_neighbors_same_section_only_and_deduped(self):
+        from src.rag.ask import expand_neighbors
+        hits = [self.hit(29, "2025년 지배회사 연혁"), self.hit(31, "2026년 연혁", 0.5)]
+        q = "케이비국민카드의 2025년 중 주요 연혁은 무엇인가?"
+        out = expand_neighbors(q, hits, self.con)
+        # 1위(29)의 앞 28·뒤 30, 2위(31)의 앞 30은 중복이라 빼고, 뒤 32는 다른 절이라 안 들어온다
+        self.assertEqual([(h.text, n, after) for h, n, after in out],
+                         [("2023년 연혁", 1, False), ("2025년 종속회사 연혁 KB Finansia 85%", 1, True)])
+        self.assertEqual(out[0][0].score, 0.0)
+        self.assertEqual(expand_neighbors(q, hits, self.con, limit=1)[0][0].text, "2023년 연혁")   # 상한
+        self.assertEqual(expand_neighbors(q, hits, self.con, limit=0), [])
+        self.assertEqual(expand_neighbors(q, hits, None), [])                                      # con 없으면 건너뜀
+        self.assertEqual(expand_neighbors(q, [Hit("R9", "R9.xml", 1, "x", 1.0, "", "모르는 조각")], self.con), [])   # chunk 표에 없는 조각
+        # 질문이 절 이름을 말하지 않으면 안 붙인다. 다른 절(자본금) 조각이 1위라도 그 이웃은 안 붙는다 (연혁 조각의 이웃만)
+        self.assertEqual(expand_neighbors("케이비국민카드는 무엇을 하는 회사인가?", hits, self.con), [])
+        other_first = [Hit("R1", "R1.xml", 7, "II. 사업 > 자본금", 0.95, "", "자본금 변동")] + hits
+        self.assertEqual([h.text for h, _, _ in expand_neighbors(q, other_first, self.con)], ["2023년 연혁", "2025년 종속회사 연혁 KB Finansia 85%"])
+        self.assertEqual([n for _, n, _ in expand_neighbors(q, other_first, self.con)], [2, 2])    # 번호는 원래 순위(2위)
+
+    def test_ask_appends_neighbors_after_hits_with_labels(self):
+        hits = [self.hit(29, "2025년 지배회사 연혁")]
+        llm = FakeLLM("종속회사는 KB Finansia 85% [3]", [3])
+        r = ask("2025년 연혁은?", FakeRetriever(hits), llm, k=5, con=self.con)
+        passages = llm.calls[0][1]
+        self.assertEqual([p.number for p in passages], [1, 2, 3])
+        self.assertEqual(passages[2].text, "2025년 종속회사 연혁 KB Finansia 85%")
+        self.assertTrue(passages[2].label.endswith("(이웃: [1]의 다음 조각)"))
+        self.assertTrue(passages[1].label.endswith("(이웃: [1]의 앞 조각)"))
+        self.assertEqual(len(r.hits), 3)                                   # 결과 hits에도 붙어 인용 번호 → 조각이 맞는다
+        self.assertEqual([n for n, _ in r.cited_hits], [3])
+        self.assertIn("(이웃: [1]의 다음 조각)", format_result(r))
+        # 끄면 그대로, LLM 없으면 검색 결과 그대로
+        llm2 = FakeLLM("x", [])
+        self.assertEqual(len(ask("2025년 연혁은?", FakeRetriever(hits), llm2, k=5, con=self.con, neighbors=0).hits), 1)
+        self.assertEqual(len(ask("2025년 연혁은?", FakeRetriever(hits), None, k=5, con=self.con).hits), 1)
