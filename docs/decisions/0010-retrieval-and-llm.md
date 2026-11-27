@@ -86,7 +86,7 @@ python -m eval.run --retrieval-only --retriever neo4j:hybrid:kure-v3 --filter co
 프로그램이 인용 번호 → 접수번호·섹션·DART 뷰어 링크(`dsaf001/main.do?rcpNo=`)로 바꾼다(usecases D3). 범위 밖 번호는 버린다.
 
 ### 비용 보호
-질문당 출력 토큰 상한 `LLM_MAX_OUTPUT_TOKENS`(600 → 2026-11-26부터 1,000. 그래프 관계표가 붙으면 `LLM_MAX_OUTPUT_TOKENS_GRAPH` 4,000), 하루 호출 한도 `LLM_DAILY_LIMIT`(200, `data/llm_calls.json`). 입력은 5 × 1,000자 ≈ 3,000~4,000토큰 → 질문당 약 $0.0005, 평가 세트 60개 ≈ $0.03.
+질문당 출력 토큰 상한 `LLM_MAX_OUTPUT_TOKENS`(600 → 2026-11-26부터 1,000 → 2026-11-27부터 2,000: 이웃 조각을 붙인 연혁 답이 1,000에서 잘렸다. 상한은 실제 쓴 토큰에만 비용이 들어 올려도 짧은 답의 비용은 그대로. 그래프 관계표가 붙으면 `LLM_MAX_OUTPUT_TOKENS_GRAPH` 4,000), 하루 호출 한도 `LLM_DAILY_LIMIT`(200, `data/llm_calls.json`). 입력은 5 × 1,000자 ≈ 3,000~4,000토큰 → 질문당 약 $0.0005, 평가 세트 60개 ≈ $0.03.
 **실측해 아래에 적는다.** OpenAI 콘솔의 월 한도도 걸어 둔다.
 
 ### 평가 (사람 채점)

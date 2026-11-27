@@ -12,7 +12,7 @@
 - 구조화 출력(JSON 스키마: answer, citations)으로 받아 프로그램이 인용 번호를 접수번호·링크로 바꾼다
 
 비용 보호
-- 질문당 출력 토큰 상한 LLM_MAX_OUTPUT_TOKENS(기본 1000), 그래프 관계표가 붙은 질문은 LLM_MAX_OUTPUT_TOKENS_GRAPH(기본 4000. 2,000에서는 g05의 45곳 나열이 잘렸다). 조각은 k개(기본 5) × 최대 1,000자
+- 질문당 출력 토큰 상한 LLM_MAX_OUTPUT_TOKENS(기본 2000. 1,000에서는 이웃 조각을 붙인 연혁 답 d033이 잘려 "찾지 못함"으로 떨어졌다, 2026-11-27 8차), 그래프 관계표가 붙은 질문은 LLM_MAX_OUTPUT_TOKENS_GRAPH(기본 4000. 2,000에서는 g05의 45곳 나열이 잘렸다). 조각은 k개(기본 5) × 최대 1,000자
   (2026-11-26 채점표: 상한 600에서 그래프 질문 g05·g12의 답이 잘려 "찾지 못함"으로 떨어짐. gpt-6-luna는 생각하는 토큰도 상한에 들어간다)
 - 하루 호출 한도 LLM_DAILY_LIMIT(기본 200): data/llm_calls.json에 날짜별 횟수를 적고 넘으면 멈춘다. 평가 세트 한 바퀴(36~60개)가 하루 한도 안
 
@@ -147,7 +147,7 @@ def settings() -> dict:
     load_dotenv()
     return {
         "model": os.getenv("LLM_MODEL") or DEFAULT_MODEL,
-        "max_output_tokens": int(os.getenv("LLM_MAX_OUTPUT_TOKENS") or 1000),
+        "max_output_tokens": int(os.getenv("LLM_MAX_OUTPUT_TOKENS") or 2000),
         "max_output_tokens_graph": int(os.getenv("LLM_MAX_OUTPUT_TOKENS_GRAPH") or 4000),
         "daily_limit": int(os.getenv("LLM_DAILY_LIMIT") or 200),
         "api_key": os.getenv("OPENAI_API_KEY") or "",
