@@ -370,6 +370,9 @@ def rebuild_relations(con: duckdb.DuckDBPyConnection) -> dict:
             ),
             "executive": _replace_table(con, "executive", executives, EXECUTIVE_COLUMNS),
         }
+        # 지주 사업보고서의 "계열회사간 임원 겸직 현황" 표 (0014). 임원 표가 없는 자회사의 겸직 자리. 사람을 임원 표로 잇기 때문에 executive 다음
+        from src.loaders.concurrent_positions import rebuild_concurrent_positions
+        counts.update(rebuild_concurrent_positions(con))
         counts.update(close_relations(con))
         con.commit()
     except Exception:

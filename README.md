@@ -209,7 +209,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 | `target_corps` | 수집 대상(지주 + 직속 자회사, 2025 기준 59곳) → `target_corp` 테이블, `disclosures`의 회사 파티션 추가 | 0건 |
 | `disclosures` | 한 회사의 한 달치 공시 목록 → `raw_api_response`(원본) + `disclosure` 테이블. 파티션 = 월 × 회사 | 파티션당 보통 1건 |
 | `report_details` | (Phase 2) 한 회사의 한 정기보고서에서 주요정보 4종(타법인 출자·최대주주·최대주주 변동·임원) 원본 저장. 파티션 = 회사 × 보고서(`2025-11011` = 사업연도-보고서종류). 공시 목록에 그 보고서가 없으면 API 없이 건너뜀 | 보고서당 4건 |
-| `relations` | (Phase 2) 원본 전체에서 `investment`·`major_shareholder`·`major_shareholder_change`·`executive` 테이블 재생성. 시간 컬럼은 [0005](docs/decisions/0005-temporal-model.md) | 0건 |
+| `relations` | (Phase 2) 원본 전체에서 `investment`·`major_shareholder`·`major_shareholder_change`·`executive` 테이블 재생성. 시간 컬럼은 [0005](docs/decisions/0005-temporal-model.md). 지주 사업보고서의 "계열회사간 임원 겸직 현황" 표(원문 파싱 결과)로 `concurrent_position`도 만든다 — 사업보고서를 내지 않는 자회사의 겸직 자리 ([0014](docs/decisions/0014-concurrent-positions.md)) | 0건 |
 | `change_report` | (Phase 3) 최근 7일 접수된 정기보고서가 임원·최대주주·출자에 만든 변화를 `data/reports/changes_날짜.md`로. 근거는 [0012](docs/decisions/0012-change-report.md) | 0건 |
 | `documents` | (Phase 3) 한 회사의 한 정기보고서 원문 ZIP 저장(정정본 각각). 파티션 = 회사 × 보고서. `document` 테이블에 없는 접수번호만 받음 | 보고서당 보통 0~1건 |
 | `chunks` | (Phase 3) 새 원문을 파싱(`document_section`)하고 조각이 없는 보고서만 자름(`chunk`). 청킹 규칙을 바꿨으면 `full_rebuild: true`로 전체 다시 | 0건 |

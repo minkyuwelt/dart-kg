@@ -150,10 +150,13 @@ MATCH (c:Corp)
 WHERE ($corps IS NULL AND EXISTS {{ (:Person)-[:HOLDS_POSITION]->(c) }}) OR c.key IN coalesce($corps, [])
 OPTIONAL MATCH (pe:Person)-[r:HOLDS_POSITION]->(c)
 WHERE {at('r')} AND (NOT $outside_only OR r.outside)
-RETURN c.key AS corp_key, c.name AS corp_name, count(DISTINCT pe) AS persons
+RETURN c.key AS corp_key, c.name AS corp_name, count(DISTINCT pe) AS persons,
+       count(DISTINCT CASE WHEN coalesce(r.source_table, 'executive') = 'executive' THEN pe END) AS own_persons
 ORDER BY c.name""",
     ("as_of", "outside_only"), ("corps",),
 )
+# own_persons: 그 회사 자신의 임원 표(executive)에서 온 사람 수. persons > 0인데 own_persons = 0이면 지주 겸직 표(0014)로 들어온 자리만 있는 회사 —
+# "임원 전부"가 아니라 "지주 임원이 겸하는 자리"만 아는 것이라 파생 값에 그렇게 적는다
 # 왜 0명인 회사도 돌려주나 (2026-11-27, g11): KB자산운용처럼 사업보고서를 내지 않는(감사보고서만) 자회사는 임원 표가 없어 그래프에 임원이 한 명도 없다.
 # 그러면 "닫힌 세계"(대조 범위의 임원은 전부 적재돼 있다) 전제가 그 회사에서는 깨진다. 몇 곳이 빠졌는지 파생 값에 적어야 LLM이 "11명"을 "전부"라고 말하지 않는다.
 

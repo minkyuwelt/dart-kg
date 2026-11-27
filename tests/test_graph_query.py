@@ -327,6 +327,12 @@ class GraphQueryTest(unittest.TestCase):
         self.assertNotIn("없음 — ", ctx3.derived[0]["value"])
         self.assertIn("회사 3곳 중 임원 표가 있는 2곳의 사외이사 16명을 대조", ctx3.derived[0]["value"])
         self.assertIn("임원 표가 없는 1곳(KB자산운용)은 셈에서 빠짐", ctx3.derived[0]["value"])
+        # 지주 겸직 표(0014)로 자리가 들어온 회사(own_persons 0)는 "지주 임원이 겸하는 자리만"으로 따로
+        scope5 = scope + [{"corp_key": "00104500", "corp_name": "KB자산운용", "persons": 1, "own_persons": 0}]
+        driver5 = TemplateDriver({"shared_positions": driver3.answers["shared_positions"], "position_scope": scope5})
+        ctx5 = Q.build_context(q, driver5, self.con, today=TODAY)
+        self.assertIn("지주 겸직 표의 자리만 아는 회사: KB자산운용 1명", ctx5.derived[0]["value"])
+        self.assertNotIn("셈에서 빠짐", ctx5.derived[0]["value"])
         # 0행 + 임원 표 없는 회사가 섞여도 '없음' 판정은 임원이 있는 회사 수로 말하고 빠진 회사를 덧붙인다
         driver4 = TemplateDriver({"shared_positions": [], "position_scope": scope3})
         ctx4 = Q.build_context(q, driver4, self.con, today=TODAY)

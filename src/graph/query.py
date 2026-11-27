@@ -217,12 +217,18 @@ def _scope_parts(s: StepResult) -> tuple[list[dict], list[dict], int, str]:
     return have, none, sum(int(r["persons"]) for r in have), who
 
 
-def _missing_note(none: list[dict], who: str) -> str:
-    if not none:
-        return ""
-    names = ", ".join(r["corp_name"] for r in none)
-    return (f" 임원 표가 없는 {len(none)}곳({names})은 셈에서 빠짐 — 사업보고서를 내지 않는 회사(감사보고서만)라 {who} 데이터가 없고,"
-            f" 그 회사 쪽 겸직은 그래프가 알 수 없음")
+def _missing_note(none: list[dict], who: str, have: list[dict] | None = None) -> str:
+    """임원 표가 없는 회사에 대한 단서. 0명인 회사(아무 데이터 없음)와, 지주 겸직 표(0014)로 들어온 자리만 있는 회사(own_persons = 0)를 나눠 적는다."""
+    parts = []
+    partial = [r for r in (have or []) if r.get("own_persons") is not None and int(r["own_persons"]) == 0]
+    if partial:
+        names = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in partial)
+        parts.append(f" 임원 표가 없어 지주 겸직 표의 자리만 아는 회사: {names} — 그 회사의 {who} 전부가 아니라 지주 임원이 겸하는 자리만")
+    if none:
+        names = ", ".join(r["corp_name"] for r in none)
+        parts.append(f" 임원 표가 없는 {len(none)}곳({names})은 셈에서 빠짐 — 사업보고서를 내지 않는 회사(감사보고서만)라 {who} 데이터가 없고,"
+                     f" 그 회사 쪽 겸직은 그래프가 알 수 없음")
+    return "".join(parts)
 
 
 def _derive_shared_scope(s: StepResult) -> list[dict]:
@@ -234,7 +240,7 @@ def _derive_shared_scope(s: StepResult) -> list[dict]:
     per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
     return [{"rule": "겸직 대조 범위 (임원 표가 있는 회사만 닫힌 세계)", "subject": "겸직",
              "value": f"기준일 {s.params.get('as_of')} 회사 {len(have) + len(none)}곳 중 임원 표가 있는 {len(have)}곳의 {who} {total}명을 대조"
-                      f" (회사별: {per}).{_missing_note(none, who)}"}]
+                      f" (회사별: {per}).{_missing_note(none, who, have)}"}]
 
 
 def _derive_no_shared(s: StepResult) -> list[dict]:
@@ -247,7 +253,7 @@ def _derive_no_shared(s: StepResult) -> list[dict]:
     per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
     return [{"rule": "겸직 없음 판정: 대조 범위의 임원 전원을 봄(그래프에 전부 적재됨)", "subject": "겸직",
              "value": f"없음 — 기준일 {s.params.get('as_of')} 회사 {len(have)}곳의 {who} {total}명 중 두 곳 이상에 있는 사람 0명 (회사별: {per})."
-                      f"{_missing_note(none, who)}"}]
+                      f"{_missing_note(none, who, have)}"}]
 
 
 def _derive_tenures(s: StepResult) -> list[dict]:
