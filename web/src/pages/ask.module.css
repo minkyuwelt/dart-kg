@@ -1,143 +1,116 @@
-/* 질문 페이지. 왼쪽 답(본문 폭 --measure), 오른쪽 근거 목록. 좁은 화면에서는 위아래로.
-   근거 목록은 카드가 아니라 왼쪽 괘선이 있는 목록이고, 인용된 것만 형광펜(--marker) 띠를 가진다. */
+/* 질문 페이지. 질문 판이 주인공, 그 아래 왼쪽 답 판(본문 폭 --measure) + 오른쪽 근거 판. 좁은 화면에서는 위아래로.
+   근거는 번호 달린 목록이고, 인용된 것만 형광펜(--marker)을 가진다. */
 
-.page { padding-top: 8px; }
-
-
-/* 질문 상자: 이 페이지의 주인공. 테두리 하나, 그림자 없음 */
-.ask { margin-top: 28px; }
+/* 질문 판 */
+.ask { padding: 12px 12px 10px; }
 .input {
   width: 100%;
   resize: vertical;
-  min-height: 72px;
-  padding: 14px 16px;
-  border: 1.5px solid var(--ink);
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-strong);
   border-radius: 6px;
   background: var(--paper);
   font-size: 18px;
   line-height: 1.55;
 }
-.input::placeholder { color: #9aa1ab; }
-.askRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
-.toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); cursor: pointer; }
+.input:hover { border-color: var(--ink-3); }
+.input:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px var(--blue-soft); }
+.input::placeholder { color: var(--ink-3); }
+.askRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
 .toggle input { width: 16px; height: 16px; accent-color: var(--blue); }
-.button {
-  padding: 9px 22px;
-  border: 0;
-  border-radius: 6px;
-  background: var(--blue);
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
-}
-.button:hover { background: var(--blue-ink); }
-.button:disabled { background: var(--rule-strong); color: #fff; cursor: default; }
 
-.lists { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; margin-top: 36px; }
-@media (max-width: 860px) { .lists { grid-template-columns: 1fr; gap: 28px; } }
-.examples { max-width: var(--measure); }
-.linkBtn { margin-left: 10px; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.examplesLead { margin: 0 0 8px; color: var(--ink-2); font-size: 14px; }
-.examples ul { list-style: none; margin: 0; padding: 0; }
-.examples li + li { border-top: 1px solid var(--rule); }
-.exampleBtn {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 10px 0;
-  background: none;
-  border: 0;
-  color: var(--blue);
-  cursor: pointer;
+/* 처음 화면: 예시 질문·이력 두 판 */
+.lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; margin-top: 10px; align-items: start; }   /* 이력이 없으면 예시 판 하나가 너비를 다 쓴다 */
+.lists > * + * { margin-top: 0; }
+@media (max-width: 860px) { .lists { grid-template-columns: 1fr; } }
+.qList { list-style: none; margin: 0; padding: 0 0 8px; }
+.qBtn {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 16px; background: none; border: 0; border-top: 1px solid var(--rule);
+  color: var(--blue); font-size: 15px; line-height: 1.5; cursor: pointer;
 }
-.exampleBtn:hover { color: var(--blue-ink); text-decoration: underline; text-underline-offset: 3px; }
-
-.error { margin: 20px 0 0; padding: 12px 14px; border-left: 3px solid var(--danger); background: var(--danger-bg); color: var(--danger); }
+.qBtn:hover { background: var(--blue-soft); color: var(--blue-ink); }
+.linkBtn { margin-left: auto; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .loading { margin: 20px 0 0; color: var(--ink-2); }
 
 /* 결과: 두 단 */
 .result {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 400px);
-  gap: 40px;
-  margin-top: 36px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 10px;
+  margin-top: 10px;
+  align-items: start;
 }
-@media (max-width: 860px) {
-  .result { grid-template-columns: 1fr; gap: 28px; }
-}
+@media (max-width: 860px) { .result { grid-template-columns: 1fr; } }
 
-.answerCol { max-width: var(--measure); min-width: 0; }
-.q { font-size: 20px; margin-bottom: 14px; }
-.answer, .answerNotFound { font-size: 17px; line-height: 1.75; white-space: pre-line; }
+.answerCol { min-width: 0; }
+.answerPanel { padding: 16px 20px 14px; }
+.q { font-size: 19px; margin-bottom: 10px; color: var(--ink-2); font-weight: 600; }
+.answer, .answerNotFound { max-width: var(--measure); font-size: 16.5px; line-height: 1.7; white-space: pre-line; }
 .answerNotFound { color: var(--ink-2); }
-.noAnswer { color: var(--ink-2); }
-.caveat { margin-top: 14px; font-size: 13px; color: var(--ink-2); }
+.noAnswer { color: var(--ink-2); margin: 0; }
+.caveat { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-3); }
 
 /* 답 안의 인용 번호 — 오른쪽 근거와 같은 번호, 같은 형광펜 */
 .cite {
   display: inline-block;
-  min-width: 1.5em;
+  min-width: 1.6em;
   margin: 0 2px;
   padding: 0 5px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   background: var(--marker);
   color: var(--marker-ink);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.5;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.6;
   vertical-align: 0.15em;
   cursor: pointer;
 }
 .cite:hover { background: #ffd84d; }
 
-.h3 { font-size: 15px; margin-bottom: 10px; }
-.h3Sub { font-weight: 400; color: var(--ink-2); margin-left: 6px; }
-
-/* 관계표 */
-.graph { margin-top: 28px; padding: 20px 8px 8px; margin-left: -8px; margin-right: -8px; border-top: 1px solid var(--rule); border-radius: 4px; }
-.derived { margin: 0 0 12px; padding: 0 0 0 0; list-style: none; }
-.derived li { padding: 4px 0; }
-.derivedRule { color: var(--ink-2); }
-.tableWrap { overflow-x: auto; }
-.table { width: 100%; min-width: 560px; font-size: 14px; }   /* 좁은 화면에서는 가로 스크롤(.tableWrap). 칸이 글자 단위로 꺾이지 않게 */
-.table th { text-align: left; font-weight: 600; color: var(--ink-2); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; }
-.table td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
-.nowrap { white-space: nowrap; }
-.trace { margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+/* 관계표 판. 칸이 꺾이지 않게 표를 내용 너비로 두고, 넘치면 판 안에서 가로 스크롤 */
+.graph { margin-top: 10px; }
+.graphTable { width: 100%; min-width: 0; }   /* 두 단 안이라 640px 최소 너비를 풀고, 이름·회사·기간만 안 꺾이게 */
+.graphTable td { padding-left: 10px; padding-right: 10px; }
+.focusedPanel { box-shadow: 0 0 0 3px var(--marker-soft); border-color: var(--marker); }
+.derived { margin: 0; padding: 0 16px 10px; list-style: none; font-size: 14.5px; }
+.derived li { padding: 3px 0; }
+.trace { padding: 8px 16px 10px; font-size: 13px; color: var(--ink-2); }
 .trace summary { cursor: pointer; }
-.trace pre { margin: 8px 0 0; padding: 10px; background: #f6f7f9; border-radius: 4px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
-.graphError { margin-top: 16px; font-size: 14px; color: var(--ink-2); }
+.trace pre { margin: 8px 0 0; padding: 10px; background: var(--desk); border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+.graphError { margin-top: 12px; font-size: 14px; color: var(--ink-2); }
 
-/* 근거 목록 */
+/* 근거 판 */
 .hitsCol { min-width: 0; }
-@media (min-width: 861px) { .hitsCol { position: sticky; top: 16px; align-self: start; } }
+@media (min-width: 861px) { .hitsCol { position: sticky; top: 16px; } }
 .hits { list-style: none; margin: 0; padding: 0; }
 .hit {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 26px minmax(0, 1fr);
   gap: 10px;
-  padding: 12px 0 12px 12px;
-  border-left: 3px solid var(--rule);
+  padding: 9px 16px 9px 12px;
+  border-top: 1px solid var(--rule);
+  border-left: 4px solid transparent;
   color: var(--ink-2);
 }
-.hit + .hit { margin-top: 6px; }
 .hitCited { border-left-color: var(--marker); color: var(--ink); }
-.hitFocused { background: #fff8d6; }
+.hitFocused { background: var(--marker-soft); }
 .hitN {
-  width: 24px; height: 24px;
-  border-radius: 3px;
-  font-size: 12px; font-weight: 600;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  font-size: 13px; font-weight: 700;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--rule); color: var(--ink-2);
+  background: #eef0f3; color: var(--ink-2);
 }
 .hitCited .hitN, .hitNCited { background: var(--marker); color: var(--marker-ink); }
-.h3 .hitN { margin-right: 8px; vertical-align: -0.35em; }
+h3 .hitN { margin-right: 8px; vertical-align: -0.4em; }
 .hitBody { min-width: 0; font-size: 14px; line-height: 1.55; }
 .hitLabel { font-weight: 600; }
-.hitCited .hitLabel { color: var(--blue); }
 .hit:not(.hitCited) .hitLabel { color: var(--ink-2); }
-.hitPath { margin: 2px 0 4px; font-size: 12px; color: var(--ink-2); }
+.hitPath { margin: 2px 0 4px; font-size: 12.5px; color: var(--ink-3); }
 .hitSnippet {
   margin: 0;
   display: -webkit-box;
@@ -145,6 +118,16 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.retriever { margin-top: 12px; font-size: 12px; color: #9aa1ab; }
+.retriever { margin: 0; padding: 8px 16px 9px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); }
 
-.visuallyHidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* 시작 화면의 지주 지도: 지주 네 칸, 칸 머리는 남색 띠 */
+.map { margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); overflow: hidden; }
+.group { min-width: 0; border-right: 1px solid var(--rule); }
+.group:last-child { border-right: 0; }
+.groupName { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; background: var(--blue); color: #fff; font-weight: 700; font-size: 15px; text-decoration: none; }
+.groupName:hover { background: var(--blue-ink); color: #fff; }
+.groupN { font-weight: 500; font-size: 13px; opacity: 0.75; }
+.groupSubs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px 14px; }
+.groupSubs a { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--desk); color: var(--ink); font-size: 13.5px; text-decoration: none; }
+.groupSubs a:hover { background: var(--blue-soft); color: var(--blue); }
+@media (max-width: 760px) { .group { border-right: 0; border-bottom: 1px solid var(--rule); } .group:last-child { border-bottom: 0; } }

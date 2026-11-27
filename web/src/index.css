@@ -1,41 +1,119 @@
-/* dart-kg 화면 디자인 토큰 (0013 "첫 화면"). 공시 서류의 흰 종이 위에 글이 놓인 느낌 — 장식 없이, 근거가 답보다 먼저 보이게.
-   색 다섯: 종이·먹·회색 글·괘선·공시 파랑. 여기에 "형광펜" 노랑 하나 — 답이 인용한 근거에만 칠한다. 나머지는 모두 조용하다. */
+/* dart-kg 화면 디자인 토큰과 공통 부품 (0013 "둘째 다듬기" 2026-11-27).
+   생각한 꼴: 공시 서류철. 연회색 책상 위에 흰 서류(판)가 놓이고, 판 하나가 표 하나다. 글자는 Pretendard 하나를 굵기로만 나눈다.
+   색은 다섯: 책상 회색·종이 흰색·먹·보조 회색·공시 남색. 형광펜 노랑은 답이 인용한 근거에만 칠한다. 그림자·그라데이션·움직임은 없다. */
 :root {
-  --paper: #ffffff;
-  --ink: #1f2328;
-  --ink-2: #5f6673;
-  --rule: #e2e5ea;
-  --rule-strong: #c9ced6;
-  --blue: #1e4fd6;        /* 공시 링크·주요 동작. DART 전자공시의 파랑에서 가져옴 */
-  --blue-ink: #163a9c;
+  --desk: #f2f4f7;        /* 바탕 */
+  --paper: #ffffff;       /* 판 */
+  --ink: #16202a;
+  --ink-2: #5b6472;
+  --ink-3: #8a92a0;       /* 꼬리표·보조 수치 */
+  --rule: #e4e7ec;
+  --rule-strong: #c8cfd9;
+  --blue: #0f3d91;        /* 공시 남색: 링크·현재 탭·단추 */
+  --blue-ink: #0a2b69;
+  --blue-soft: #e9eef8;   /* 남색의 옅은 면: 꼬리표·선택 */
   --marker: #ffe88a;      /* 형광펜 — 인용된 근거 */
+  --marker-soft: #fff6c7;
   --marker-ink: #6b5300;
   --danger: #b42318;
   --danger-bg: #fef3f2;
   --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-  --measure: 38rem;       /* 한국어 본문 한 줄 ~ 60자 */
+  --measure: 40rem;       /* 한국어 본문 한 줄 ~ 60자 */
   --gutter: 16px;
+  --radius: 8px;
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 16px; }
 body {
   margin: 0;
-  background: var(--paper);
+  background: var(--desk);
   color: var(--ink);
   font-family: var(--font);
   font-size: 16px;
-  line-height: 1.7;
+  line-height: 1.6;
   font-feature-settings: "tnum";   /* 표의 숫자가 자리를 맞춘다 */
   word-break: keep-all;            /* 한국어: 어절 단위로 줄바꿈 */
   overflow-wrap: anywhere;
 }
 a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 a:hover { color: var(--blue-ink); }
-button, input, textarea { font: inherit; color: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-h1, h2, h3 { margin: 0; line-height: 1.3; font-weight: 600; }
+h1, h2, h3, h4 { margin: 0; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; }
 table { border-collapse: collapse; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ----- 공통 부품. 세 페이지가 같이 쓴다 (페이지 CSS 모듈에서 반복하지 않으려고 여기 둔다) -----
+   .panel      흰 판. 안에 표 하나 또는 글 한 덩어리
+   .panelHead  판 머리: 제목 + 건수, 오른쪽에 한 줄 설명
+   .tbl        판 안의 표: 머리 행 회색, 본문 행 44px, 숫자 오른쪽
+   .chip       작은 꼬리표 (역할·날짜·근거)
+   .btn        남색 단추
+   .field      이름표 + 입력 */
+.panel {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+.panel + .panel { margin-top: 10px; }
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
+  padding: 11px 16px 9px;
+}
+.panelHead h3, .panelHead h4 { font-size: 16px; }
+.panelCount { color: var(--ink-3); font-weight: 500; font-size: 15px; margin-left: 2px; }
+.panelNote { margin: 0; flex: 1 1 24rem; color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.panelBody { padding: 0 16px 14px; }
+.panelEmpty { margin: 0; padding: 2px 16px 12px; color: var(--ink-2); font-size: 14px; }
+
+.tblWrap { overflow-x: auto; }
+.tbl { width: 100%; min-width: 640px; font-size: 14.5px; }   /* 좁은 화면은 .tblWrap이 가로로 스크롤. 칸이 글자 단위로 꺾이지 않게 */
+.tbl th {
+  text-align: left; font-weight: 600; font-size: 13.5px; color: var(--ink-2);
+  padding: 7px 12px; background: #f7f8fa; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); white-space: nowrap;
+}
+.tbl td { padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.45; }
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl tbody tr:hover td { background: #fafbfd; }
+.tbl th:first-child, .tbl td:first-child { padding-left: 16px; }
+.tbl th:last-child, .tbl td:last-child { padding-right: 16px; }
+.tbl .num { text-align: right; white-space: nowrap; }
+.tbl .dim { color: var(--ink-2); }
+.tbl .strong { font-weight: 600; }
+.tbl .nowrap { white-space: nowrap; }
+
+.chip {
+  display: inline-block; padding: 0 7px; border-radius: 999px;
+  background: var(--blue-soft); color: var(--blue); font-size: 12.5px; font-weight: 600; line-height: 1.6; white-space: nowrap; vertical-align: 0.1em;
+}
+.chipQuiet { background: #eef0f3; color: var(--ink-2); font-weight: 500; }
+.chipMarker { background: var(--marker); color: var(--marker-ink); }
+a.chip { text-decoration: none; }
+a.chip:hover { background: #dbe4f6; }
+
+.btn {
+  padding: 9px 20px; border: 0; border-radius: 6px;
+  background: var(--blue); color: #fff; font-weight: 600; cursor: pointer;
+}
+.btn:hover { background: var(--blue-ink); }
+.btn:disabled { background: var(--rule-strong); cursor: default; }
+.btnQuiet { padding: 5px 12px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font-size: 13.5px; color: var(--ink-2); cursor: pointer; }
+.btnQuiet:hover { color: var(--ink); border-color: var(--ink-3); }
+.btnQuietOn { color: var(--blue); border-color: var(--blue); background: var(--blue-soft); }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label { font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.field input, .field select {
+  padding: 6px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); font-size: 14.5px;
+}
+.field input:hover, .field select:hover { border-color: var(--ink-3); }
+
+.alert { margin: 16px 0 0; padding: 12px 16px; border: 1px solid #f3c6c2; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); }
+.muted { color: var(--ink-2); }
+.visuallyHidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

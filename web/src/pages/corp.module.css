@@ -1,0 +1,71 @@
+/* 회사 페이지. 위에 고르는 줄, 그 아래 회사 머리 판(이름·꼬리표·사실 네 칸), 그 아래 표 판 다섯이 세로로. */
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 20px; margin-bottom: 12px; }
+.toolbar select { min-width: 240px; }
+.toolbarHint { margin: 0 0 6px; flex: 1 1 20rem; color: var(--ink-2); font-size: 13px; }
+
+/* 회사를 안 골랐을 때: 지주 네 곳과 그 자회사 이름을 다 펼쳐 보인다 (59개, 고르는 상자보다 한눈에 들어온다) */
+.pick { padding: 0 16px 14px; display: grid; gap: 8px; }
+.pickGroup { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 12px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--rule); }
+.pickHolding { font-weight: 700; font-size: 17px; text-decoration: none; }
+.pickSubs { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.pickSubs a { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--desk); color: var(--ink); font-size: 14px; text-decoration: none; }
+.pickSubs a:hover { background: var(--blue-soft); color: var(--blue); }
+@media (max-width: 600px) { .pickGroup { grid-template-columns: 1fr; gap: 6px; } }
+
+/* 회사 머리 판: 이름이 이 페이지의 주인공 */
+.head { padding: 16px 20px 14px; margin-bottom: 10px; }
+.headTitle { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.corpName { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-right: 4px; }
+.facts { display: grid; grid-template-columns: 1fr 1.7fr 0.8fr 0.8fr; gap: 8px 24px; margin: 10px 0 0; }   /* 보고서 이름 칸이 가장 길다 */
+@media (max-width: 760px) { .facts { grid-template-columns: 1fr 1fr; } }
+.facts div { min-width: 0; }
+.facts dt { font-size: 13px; color: var(--ink-3); }
+.facts dd { margin: 0; font-size: 15px; font-weight: 500; }
+.factSub { color: var(--ink-2); font-weight: 400; white-space: nowrap; }
+.factMono { font-feature-settings: "tnum"; color: var(--ink-2); font-weight: 400; }
+.headNote { margin: 10px 0 0; padding: 8px 12px; border-radius: 6px; background: var(--marker-soft); color: var(--marker-ink); font-size: 14px; }
+
+.tools { flex: 0 0 auto; margin-left: auto; }
+
+/* 머리 판의 절 바로가기: 표 이름과 건수. 0건인 표는 흐리게 */
+.jump { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
+.jumpOn, .jumpOff { display: inline-block; padding: 2px 11px; border-radius: 999px; font-size: 13.5px; text-decoration: none; }
+.jumpOn { background: var(--blue-soft); color: var(--blue); }
+.jumpOn b { font-weight: 700; }
+.jumpOn:hover { background: #dbe4f6; }
+.jumpOff { background: var(--desk); color: var(--ink-3); }
+.jumpOff b { font-weight: 500; }
+
+/* 긴 표 접기 */
+.more { display: block; width: 100%; padding: 8px 16px; border: 0; border-top: 1px solid var(--rule); background: #f7f8fa; color: var(--blue); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; border-radius: 0 0 var(--radius) var(--radius); }
+.more:hover { background: var(--blue-soft); }
+
+/* 지배구조 그림. 가로로 지주 → 이 회사 → 출자 회사 목록. 선은 CSS 테두리, 숫자는 지분율 */
+.struct { display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin-top: 14px; padding: 12px 0 2px; border-top: 1px solid var(--rule); }
+.node { display: inline-block; padding: 5px 12px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+a.node:hover { border-color: var(--blue); color: var(--blue); }
+.nodeSelf { background: var(--blue); border-color: var(--blue); color: #fff; }
+.nodeOut { color: var(--ink-2); font-weight: 500; border-style: dashed; }
+.nodeMore { font-size: 13px; color: var(--blue); text-decoration: none; padding: 5px 4px; }
+.edge { position: relative; width: 72px; height: 0; border-top: 2px solid var(--rule-strong); flex: 0 0 auto; }
+.edge::after { content: ""; position: absolute; right: -1px; top: -5px; border: 4px solid transparent; border-left: 6px solid var(--rule-strong); }
+.edgePct { position: absolute; left: 50%; top: -20px; transform: translateX(-50%); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.edgeStub { width: 28px; height: 0; border-top: 2px solid var(--rule-strong); flex: 0 0 auto; }
+.kids { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--rule-strong); display: flex; flex-direction: column; gap: 6px; }
+.kid { display: flex; align-items: center; gap: 0; }
+.kid::before { content: ""; width: 22px; border-top: 2px solid var(--rule-strong); }
+.kidPct { min-width: 46px; padding: 0 6px 0 4px; font-size: 12px; color: var(--ink-2); text-align: right; white-space: nowrap; }
+@media (max-width: 760px) {
+  .struct { flex-direction: column; align-items: flex-start; }
+  .edge { width: 0; height: 28px; border-top: 0; border-left: 2px solid var(--rule-strong); margin-left: 18px; }
+  .edge::after { right: auto; left: -5px; top: auto; bottom: -1px; border: 4px solid transparent; border-top: 6px solid var(--rule-strong); }
+  .edgePct { left: 12px; top: 4px; transform: none; }
+  .edgeStub { width: 0; height: 14px; border-top: 0; border-left: 2px solid var(--rule-strong); margin-left: 18px; }
+  .kids { margin-left: 18px; }
+}
+
+/* 숫자 아래 막대 */
+.bar { display: inline-block; min-width: 96px; }
+.barTrack { display: block; height: 4px; margin-top: 3px; border-radius: 2px; background: var(--rule); }
+.barFill { display: block; height: 100%; border-radius: 2px; background: #8aa4dc; }

@@ -32,7 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from eval.retrievers import make_retriever
-from src.loaders.as_of import executives_as_of, shareholders_as_of, target_corps
+from src.loaders.as_of import corp_page, executives_as_of, shareholders_as_of, target_corps
 from src.loaders.duckdb_store import connect, is_lock_error
 from src.rag.ask import VIEWER_URL, ask
 from src.reports.changes import CHANGE_KINDS, PCT_THRESHOLD, build_report, summarize
@@ -283,6 +283,21 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
     def _check_corp(con, corp_code: str) -> None:
         if con.execute("SELECT 1 FROM target_corp WHERE corp_code = ?", [corp_code]).fetchone() is None:
             raise HTTPException(404, f"수집 대상에 없는 corp_code: {corp_code}")
+
+    @app.get("/corps/{corp_code}")
+    def get_corp(corp_code: str, as_of: date | None = None) -> dict:
+        """회사 페이지 한 번에 (0013): 개요·최신 정기보고서, as_of 날짜의 임원·최대주주·출자, 지주 겸직 표의 자리(0014), 지분 추이.
+        화면이 한 요청으로 받고 DuckDB도 한 번만 연다. 모든 표 행에 근거 공시 링크(url)를 붙이고, 생년월은 어디에도 없다."""
+        as_of = as_of or date.today()
+        with _open_duckdb() as con:
+            page = corp_page(con, corp_code, as_of)
+        if page is None:
+            raise HTTPException(404, f"수집 대상에 없는 corp_code: {corp_code}")
+        if page["corp"]["latest_report"]:
+            _with_url(page["corp"]["latest_report"])
+        for key in ("executives", "shareholders", "investments", "concurrent_positions", "stake_history"):
+            page[key] = [_with_url(r) for r in page[key]]
+        return page
 
     @app.get("/corps/{corp_code}/executives")
     def get_executives(corp_code: str, as_of: date | None = None, outside_only: bool = False) -> dict:
