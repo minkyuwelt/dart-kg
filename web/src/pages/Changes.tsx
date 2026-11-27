@@ -238,7 +238,7 @@ function SectionTable({ d }: { d: SectionDiff }) {
   const shown = all ? rows : rows.slice(0, SENTENCES_SHOWN);
   return (
     <div className={s.section}>
-      <p className={s.sectionHead}><span className={s.sectionPath}>{d.path}</span> <span className="muted">바뀐 문장 {d.text_changes}개 · 숫자만 {d.numbers_only}개 · 문장 {d.sentences_before} → {d.sentences_after}</span></p>
+      <p className={s.sectionHead}><span className={s.sectionPath}>{d.path}</span> <span className="muted">바뀐 문장 {d.text_changes}개 · 숫자만 {d.numbers_only}개 · 문장 {d.sentences_before} → {d.sentences_after}{d.parts_before > 1 || d.parts_after > 1 ? ` · 전년 ${d.parts_before}절 ↔ 이번 ${d.parts_after}절을 묶어 견줌` : ""}</span></p>
       <div className="tblWrap">
         <table className={`tbl ${s.textTable}`}>
           <thead><tr><th className={s.thKind}>구분</th><th>전년</th><th>이번</th></tr></thead>

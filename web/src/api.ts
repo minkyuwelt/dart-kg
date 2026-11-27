@@ -153,6 +153,8 @@ export type SectionDiff = {
   numbers_only: number;           // 숫자·날짜만 바뀐 문장 수 (글 변화로 치지 않음)
   sentences_before: number;
   sentences_after: number;
+  parts_before: number;           // 묶음에 든 전년 절 수. 하나라도 1보다 크면 상위 절로 묶어 견준 것 (해마다 절 굵기가 다름)
+  parts_after: number;
   text_changes: number;
 };
 

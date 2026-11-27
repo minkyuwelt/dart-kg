@@ -3,7 +3,7 @@
 확인하는 것
 1) 전년 같은 종류 보고서 찾기(정정본이면 최신 정정본, 반기는 반기와)
 2) 숫자·날짜만 바뀐 문장은 세기만 하고, 글이 바뀐 문장만 전후로 나온다. 자리가 같은 짝은 '바뀜', 나머지는 '삭제'·'추가'
-3) 기본 절 필터(위험·회계정책·경영진단)와 --section 바꾸기, 한쪽에만 있는 절, 첨부 파일은 보지 않음
+3) 기본 절 필터(위험·회계정책·경영진단)와 --section 바꾸기, 한쪽에만 있는 절, 첨부 파일은 보지 않음, 절 굵기가 다르면 상위 절로 묶어 견줌
 4) markdown·요약, 첫 보고서는 비교 없음
 """
 
@@ -102,6 +102,20 @@ class TextChangesTest(unittest.TestCase):
         fix = report_text_changes(self.con, R2025_FIX, prev_rcept_no=R2025)   # 정정본 ↔ 원본: 정정본 본문이 없어 모두 '삭제' 절
         self.assertEqual(fix.prev_rcept_no, R2025)
         self.assertTrue(all(s.status == "removed" for s in fix.sections))
+
+    def test_sections_split_differently_are_merged_to_common_parent(self):
+        # KB금융 2024·2025 실제 꼴: 전년은 'IV. 경영진단' 절 하나, 이번은 그 아래 소절 여럿. 상위 절로 묶어 견준다
+        self._section(R2024, 9, "IV. 이사의 경영진단 및 분석의견", "예측정보에는 불확실성이 있습니다. 당기순이익은 5조원입니다. 유동성은 충분합니다.")
+        self._section(R2025, 9, "IV. 이사의 경영진단 및 분석의견 > 1. 예측정보에 대한 주의사항", "예측정보에는 불확실성이 있습니다.")
+        self._section(R2025, 10, "IV. 이사의 경영진단 및 분석의견 > 3. 재무상태 및 영업실적", "당기순이익은 5.5조원입니다.")
+        self._section(R2025, 11, "IV. 이사의 경영진단 및 분석의견 > 4. 유동성 및 자금조달과 지출", "유동성은 충분하며 외화 조달도 늘렸습니다.")
+        tc = report_text_changes(self.con, R2025, section_words=("경영진단",))
+        self.assertEqual(len(tc.sections), 1)
+        d = tc.sections[0]
+        self.assertEqual((d.path, d.status, d.parts_before, d.parts_after, d.merged), ("IV. 이사의 경영진단 및 분석의견", "changed", 1, 3, True))
+        self.assertEqual(d.numbers_only, 1)
+        self.assertEqual(d.replaced, [("유동성은 충분합니다.", "유동성은 충분하며 외화 조달도 늘렸습니다.")])
+        self.assertIn("전년 1절 ↔ 이번 3절을 묶어 견줌", render_markdown([tc]))
 
     def test_window_and_markdown(self):
         results = build_text_report(self.con, date(2026, 3, 1), date(2026, 3, 31))

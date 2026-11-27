@@ -167,6 +167,8 @@ class SectionDiffOut(BaseModel):
     numbers_only: int
     sentences_before: int
     sentences_after: int
+    parts_before: int                 # 묶음에 든 전년 절 수. 둘 중 하나라도 1보다 크면 상위 절로 묶어 견준 것
+    parts_after: int
     text_changes: int
 
 
@@ -345,7 +347,8 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
                                   url=r.url, prev_rcept_no=r.prev_rcept_no, prev_report_nm=r.prev_report_nm, prev_url=r.prev_url,
                                   sections=[SectionDiffOut(path=d.path, status=d.status, replaced=[list(x) for x in d.replaced], removed=d.removed,
                                                            added=d.added, numbers_only=d.numbers_only, sentences_before=d.sentences_before,
-                                                           sentences_after=d.sentences_after, text_changes=d.text_changes) for d in r.sections])
+                                                           sentences_after=d.sentences_after, parts_before=d.parts_before, parts_after=d.parts_after,
+                                                           text_changes=d.text_changes) for d in r.sections])
                    for r in results]
         return TextChangesResponse(since=since, until=until, section_words=list(words), summary=tc.summarize(results), reports=reports)
 
