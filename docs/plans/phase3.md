@@ -65,7 +65,7 @@ Phase 4(그래프 적재·GraphRAG)는 여기 포함하지 않는다. 다만 Pha
 - **대상:** `disclosure` 테이블에서 정기보고서(`report_nm LIKE '%보고서 (%'`)로 뽑는다. Phase 2와 같은 선별 함수(`periodic_report_key`)를 재사용한다. 2021~2026년 618개
 - **저장:** ZIP 파일은 `data/documents/{rcept_no}.zip`에 그대로 두고(바이너리를 DuckDB JSON 컬럼에 넣을 수 없음), `document` 테이블에 메타데이터만 적는다. 정정본(`[기재정정]`)은 접수번호가 다르므로 따로 받는다
 - **Dagster:** `documents` 자산, 파티션은 `report_details`와 같은 회사 × 보고서. 백필은 `backfill_reports`처럼 프로세스 하나에서 도는 스크립트(`--dry-run` 포함)
-- **매일:** `daily_report_details`(07:30)가 새 정기보고서를 찾으면 같은 보고서의 원문도 받는다
+- **매일:** `daily_report_details`(10:45, 11-27부터)가 새 정기보고서를 찾으면 같은 보고서의 원문도 받는다
 
 ### (B) 파싱·청킹 → 결정 0008
 
@@ -141,7 +141,7 @@ report_details ─▶ documents ─▶ chunks ─▶ chunk_embeddings ─▶ neo
 - `chunk_embeddings`: 파티션 없음, 해시가 바뀐 조각만 임베딩 (API 없음 또는 임베딩 API)
 - `neo4j_chunks`: 파티션 없음, 전체 재생성. **Neo4j가 꺼져 있으면 실패하고 다음 날 다시 시도**(노트북에서 Docker가 항상 떠 있지 않다)
 - 품질 검사: 원문 없는 정기보고서 수, 조각 본문 비어 있음 0건, 임베딩 없는 조각 0건, Neo4j 조각 수 = DuckDB 조각 수
-- 스케줄: `daily_documents` 08:00(그날 새 정기보고서 원문), `daily_rag_index` 09:00(chunks → embeddings → neo4j). 스케줄은 DuckDB를 열지 않는다(기존 규칙)
+- 스케줄: `daily_documents` 11:00(그날 새 정기보고서 원문), `daily_rag_index` 12:00(11-27에 시각 변경, chunks → embeddings → neo4j). 스케줄은 DuckDB를 열지 않는다(기존 규칙)
 
 ## 4. 평가 세트 (처음부터 만든다)
 
