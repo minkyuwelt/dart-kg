@@ -108,7 +108,7 @@ export default function Changes() {
       <div className={s.views} role="tablist" aria-label="무엇의 변화">
         <button type="button" role="tab" aria-selected={view === "relations"} className={`btnQuiet ${view === "relations" ? "btnQuietOn" : ""}`} onClick={() => set({ view: "" })}>임원·주주·출자</button>
         <button type="button" role="tab" aria-selected={view === "text"} className={`btnQuiet ${view === "text" ? "btnQuietOn" : ""}`} onClick={() => set({ view: "text" })}>보고서 문장</button>
-        <span className={s.viewNote}>{view === "text" ? "전년 같은 종류의 보고서와 위험·회계정책·경영진단 절을 문장으로 견줍니다. 숫자·날짜만 바뀐 문장은 세기만 합니다." : "같은 회사의 직전 보고서 표와 견줍니다."}</span>
+        <span className={s.viewNote}>{view === "text" ? "전년 같은 종류의 보고서와 위험·회계정책·경영진단 절을 문장으로 견줍니다. 숫자·날짜·띄어쓰기만 바뀐 문장은 세기만 합니다." : "같은 회사의 직전 보고서 표와 견줍니다."}</span>
       </div>
 
       {error && <p role="alert" className="alert">{error}</p>}
@@ -167,7 +167,7 @@ function TextView({ t, loading }: { t: TextChangesResponse; loading: boolean }) 
         <section className="panel">
           <div className="panelHead">
             <h3>바뀐 문장 <span className="panelCount">{t.summary.text_changes}</span></h3>
-            <p className="panelNote">보고서 {t.summary.compared}/{t.summary.reports}개를 전년과 견줌 · 글이 바뀐 절 {t.summary.sections_changed}개 · 숫자만 바뀐 문장 {t.summary.numbers_only}개</p>
+            <p className="panelNote">보고서 {t.summary.compared}/{t.summary.reports}개를 전년과 견줌 · 글이 바뀐 절 {t.summary.sections_changed}개 · 숫자·띄어쓰기만 바뀐 문장 {t.summary.numbers_only}개</p>
           </div>
           <div className={s.reports}>
             {changed.map((r, i) => <TextReport key={r.rcept_no} r={r} open={i === 0 && changed.length <= 3} />)}
@@ -178,7 +178,7 @@ function TextView({ t, loading }: { t: TextChangesResponse; loading: boolean }) 
               <ul>
                 {quiet.map((r) => (
                   <li key={r.rcept_no}><a href={r.url} target="_blank" rel="noreferrer">{r.corp_name} {r.report_nm}</a>
-                    <span className="muted"> 접수 {r.rcept_dt} · 숫자만 바뀐 문장 {r.sections.reduce((n, d) => n + d.numbers_only, 0)}개</span></li>
+                    <span className="muted"> 접수 {r.rcept_dt} · 숫자·띄어쓰기만 바뀐 문장 {r.sections.reduce((n, d) => n + d.numbers_only, 0)}개</span></li>
                 ))}
                 {noPrev.map((r) => (
                   <li key={r.rcept_no}><a href={r.url} target="_blank" rel="noreferrer">{r.corp_name} {r.report_nm}</a>
@@ -206,7 +206,7 @@ function TextReport({ r, open }: { r: TextChanges; open: boolean }) {
         <span className={s.reportCounts}>
           <span className={s.count}>바뀐 문장 <b>{nText}</b></span>
           {extra.length > 0 && <span className={s.count}>절 추가·삭제 <b>{extra.length}</b></span>}
-          <span className={s.count}>숫자만 <b>{nNum}</b></span>
+          <span className={s.count}>숫자·띄어쓰기만 <b>{nNum}</b></span>
         </span>
         <span className={s.reportDate}>{r.rcept_dt}</span>
       </summary>
@@ -238,7 +238,7 @@ function SectionTable({ d }: { d: SectionDiff }) {
   const shown = all ? rows : rows.slice(0, SENTENCES_SHOWN);
   return (
     <div className={s.section}>
-      <p className={s.sectionHead}><span className={s.sectionPath}>{d.path}</span> <span className="muted">바뀐 문장 {d.text_changes}개 · 숫자만 {d.numbers_only}개 · 문장 {d.sentences_before} → {d.sentences_after}{d.parts_before > 1 || d.parts_after > 1 ? ` · 전년 ${d.parts_before}절 ↔ 이번 ${d.parts_after}절을 묶어 견줌` : ""}</span></p>
+      <p className={s.sectionHead}><span className={s.sectionPath}>{d.path}</span> <span className="muted">바뀐 문장 {d.text_changes}개 · 숫자·띄어쓰기만 {d.numbers_only}개 · 문장 {d.sentences_before} → {d.sentences_after}{d.parts_before > 1 || d.parts_after > 1 ? ` · 전년 ${d.parts_before}절 ↔ 이번 ${d.parts_after}절을 묶어 견줌` : ""}</span></p>
       <div className="tblWrap">
         <table className={`tbl ${s.textTable}`}>
           <thead><tr><th className={s.thKind}>구분</th><th>전년</th><th>이번</th></tr></thead>

@@ -66,7 +66,7 @@ class TextChangesTest(unittest.TestCase):
         )
 
     def test_mask_and_split(self):
-        self.assertEqual(mask("제17기(2025년 12월 31일 현재) 자산 1,234.5백만원"), "제#기(#년 #월 #일 현재) 자산 #백만원")
+        self.assertEqual(mask("제17기(2025년 12월 31일 현재) 자산 1,234.5백만원"), "제#기(#년#월#일현재)자산#백만원")
         self.assertEqual(split_sentences("가. 첫 문장입니다. 둘째 문장입니다!\n셋째 줄의 문장입니다"), ["첫 문장입니다.", "둘째 문장입니다!", "셋째 줄의 문장입니다"])
 
     def test_diff_separates_numbers_only_from_text(self):
@@ -124,7 +124,7 @@ class TextChangesTest(unittest.TestCase):
         self.assertIn("| 바뀜 | 시장위험은 VaR 모형으로 관리합니다. | 시장위험은 VaR 모형과 스트레스 테스트로 관리합니다. |", md)
         self.assertIn("| 추가 |  | 기후위험은", md)
         self.assertIn("절 추가: III. 재무에 관한 사항 > 8. 위험관리 보완", md)
-        self.assertIn("숫자만 바뀐 문장 1개", md)
+        self.assertIn("숫자·띄어쓰기만 바뀐 문장 1개", md)
         first = render_markdown([report_text_changes(self.con, R2024)])
         self.assertIn("전년 같은 종류의 보고서가 없어 비교하지 않음", first)
         self.assertNotIn(KB, md.replace("00688996", ""))  # 자리 표시 — corp_code는 본문에 안 쓴다
