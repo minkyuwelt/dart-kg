@@ -1,9 +1,10 @@
 // 변화 리포트 (0012): 기간 안에 접수된 정기보고서가 최대주주·임원·출자 관계에 만든 변화. API 응답(/changes)을 보고서별 표로.
 // 참고한 꼴: 공시 비교 도구들(BamSEC·SECSift)의 "바뀐 것만 남기고 나머지는 흐리게(blackline)", 변화마다 접수번호·기준일 꼬리표.
 // 숫자는 공시 그대로이고, 지분율 변화는 API가 정한 문턱(pct_threshold)을 넘은 것만 온다.
+// 두 보기: "관계"(임원·주주·출자 표의 변화, /changes)와 "문장"(전년 같은 보고서와 위험·회계정책·경영진단 절의 문장 비교, /changes/text — 0012 결정 4).
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ApiError, API_URL, changes, corps, type ChangesResponse, type Corp, type ReportChanges } from "../api";
+import { ApiError, API_URL, changes, corps, textChanges, type ChangesResponse, type Corp, type ReportChanges, type SectionDiff, type TextChanges, type TextChangesResponse } from "../api";
 import s from "./changes.module.css";
 
 const DAY = 86_400_000;
@@ -24,6 +25,7 @@ export default function Changes() {
   const since = params.get("since") ?? daysAgo(30);
   const until = params.get("until") ?? today();
   const corp = params.get("corp") ?? "";
+  const view = params.get("view") === "text" ? "text" : "relations";
 
   const [corpList, setCorpList] = useState<Corp[]>([]);
 
@@ -34,20 +36,22 @@ export default function Changes() {
   }, []);
 
   // 조건(기간·회사)이 바뀔 때마다 다시 받는다. 받는 중에는 이전 결과를 흐리게 둔다 (loading은 "지금 요청 중인 조건"으로 판단)
-  const key = `${since}|${until}|${corp}`;
-  const [loaded, setLoaded] = useState<{ key: string; data: ChangesResponse | null; error: string | null }>({ key: "", data: null, error: null });
+  const key = `${view}|${since}|${until}|${corp}`;
+  type Loaded = { key: string; data: ChangesResponse | null; text: TextChangesResponse | null; error: string | null };
+  const [loaded, setLoaded] = useState<Loaded>({ key: "", data: null, text: null, error: null });
   useEffect(() => {
     const c = new AbortController();
-    changes(since, until, corp ? [corp] : [], c.signal)
-      .then((d) => setLoaded({ key, data: d, error: null }))
-      .catch((e) => {
-        if (c.signal.aborted) return;
-        setLoaded({ key, data: null, error: e instanceof ApiError ? `${e.message} (${e.status})` : `API에 닿지 못했습니다. ${API_URL}에 서버가 떠 있는지 확인하세요.` });
-      });
+    const fail = (e: unknown) => {
+      if (c.signal.aborted) return;
+      setLoaded({ key, data: null, text: null, error: e instanceof ApiError ? `${e.message} (${e.status})` : `API에 닿지 못했습니다. ${API_URL}에 서버가 떠 있는지 확인하세요.` });
+    };
+    if (view === "text") textChanges(since, until, corp ? [corp] : [], c.signal).then((t) => setLoaded({ key, data: null, text: t, error: null })).catch(fail);
+    else changes(since, until, corp ? [corp] : [], c.signal).then((d) => setLoaded({ key, data: d, text: null, error: null })).catch(fail);
     return () => c.abort();
-  }, [since, until, corp, key]);
+  }, [view, since, until, corp, key]);
   const loading = loaded.key !== key;
   const data = loaded.data;
+  const text = loaded.text;
   const error = loaded.key === key ? loaded.error : null;
 
   function set(next: Record<string, string>) {
@@ -101,8 +105,16 @@ export default function Changes() {
         </div>
       </div>
 
+      <div className={s.views} role="tablist" aria-label="무엇의 변화">
+        <button type="button" role="tab" aria-selected={view === "relations"} className={`btnQuiet ${view === "relations" ? "btnQuietOn" : ""}`} onClick={() => set({ view: "" })}>임원·주주·출자</button>
+        <button type="button" role="tab" aria-selected={view === "text"} className={`btnQuiet ${view === "text" ? "btnQuietOn" : ""}`} onClick={() => set({ view: "text" })}>보고서 문장</button>
+        <span className={s.viewNote}>{view === "text" ? "전년 같은 종류의 보고서와 위험·회계정책·경영진단 절을 문장으로 견줍니다. 숫자·날짜·띄어쓰기·앞머리말만 바뀐 문장은 세기만 합니다." : "같은 회사의 직전 보고서 표와 견줍니다."}</span>
+      </div>
+
       {error && <p role="alert" className="alert">{error}</p>}
-      {loading && !data && <p className="muted" aria-live="polite">보고서를 견주고 있습니다.</p>}
+      {loading && !data && !text && <p className="muted" aria-live="polite">보고서를 견주고 있습니다.</p>}
+
+      {text && <TextView t={text} loading={loading} />}
 
       {data && (
         <div className={loading ? s.stale : undefined} aria-busy={loading}>
@@ -139,6 +151,110 @@ export default function Changes() {
         </div>
       )}
     </main>
+  );
+}
+
+function TextView({ t, loading }: { t: TextChangesResponse; loading: boolean }) {
+  const compared = t.reports.filter((r) => r.prev_rcept_no);
+  const changed = compared.filter((r) => r.sections.some((d) => d.status === "changed" || d.status === "added" || d.status === "removed"));
+  const quiet = compared.filter((r) => !changed.includes(r));
+  const noPrev = t.reports.filter((r) => !r.prev_rcept_no);
+  return (
+    <div className={loading ? s.stale : undefined} aria-busy={loading}>
+      {t.summary.reports === 0 ? (
+        <section className="panel"><p className="panelEmpty" style={{ paddingTop: 14 }}>이 기간에 본문이 적재된 정기보고서가 없습니다. 정기보고서는 보통 3·5·8·11월에 들어옵니다.</p></section>
+      ) : (
+        <section className="panel">
+          <div className="panelHead">
+            <h3>바뀐 문장 <span className="panelCount">{t.summary.text_changes}</span></h3>
+            <p className="panelNote">보고서 {t.summary.compared}/{t.summary.reports}개를 전년과 견줌 · 글이 바뀐 절 {t.summary.sections_changed}개 · 숫자·띄어쓰기·머리말만 바뀐 문장 {t.summary.numbers_only}개</p>
+          </div>
+          <div className={s.reports}>
+            {changed.map((r, i) => <TextReport key={r.rcept_no} r={r} open={i === 0 && changed.length <= 3} />)}
+          </div>
+          {(quiet.length > 0 || noPrev.length > 0) && (
+            <details className={s.quiet}>
+              <summary>문장이 바뀌지 않은 보고서 {quiet.length}개{noPrev.length ? `, 견줄 전년 보고서가 없는 것 ${noPrev.length}개` : ""}</summary>
+              <ul>
+                {quiet.map((r) => (
+                  <li key={r.rcept_no}><a href={r.url} target="_blank" rel="noreferrer">{r.corp_name} {r.report_nm}</a>
+                    <span className="muted"> 접수 {r.rcept_dt} · 숫자·띄어쓰기만 바뀐 문장 {r.sections.reduce((n, d) => n + d.numbers_only, 0)}개</span></li>
+                ))}
+                {noPrev.map((r) => (
+                  <li key={r.rcept_no}><a href={r.url} target="_blank" rel="noreferrer">{r.corp_name} {r.report_nm}</a>
+                    <span className="muted"> 접수 {r.rcept_dt} · 전년 같은 종류의 보고서가 없음</span></li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <p className={s.foot}>견준 절: 경로에 {t.section_words.join("·")}이 든 절. 표는 보지 않습니다. 해석은 넣지 않았습니다.</p>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function TextReport({ r, open }: { r: TextChanges; open: boolean }) {
+  const changed = r.sections.filter((d) => d.status === "changed");
+  const extra = r.sections.filter((d) => d.status === "added" || d.status === "removed");
+  const nText = changed.reduce((n, d) => n + d.text_changes, 0);
+  const nNum = r.sections.reduce((n, d) => n + d.numbers_only, 0);
+  return (
+    <details className={s.report} open={open}>
+      <summary className={s.reportRow}>
+        <span className={s.reportTitle}><span className={s.reportCorp}>{r.corp_name}</span> <span className={s.reportNm}>{r.report_nm}</span></span>
+        <span className={s.reportCounts}>
+          <span className={s.count}>바뀐 문장 <b>{nText}</b></span>
+          {extra.length > 0 && <span className={s.count}>절 추가·삭제 <b>{extra.length}</b></span>}
+          <span className={s.count}>숫자·띄어쓰기만 <b>{nNum}</b></span>
+        </span>
+        <span className={s.reportDate}>{r.rcept_dt}</span>
+      </summary>
+      <div className={s.reportBody}>
+        <p className={s.reportMeta}>
+          <a href={r.url} target="_blank" rel="noreferrer">이번 보고서</a> ↔ <a href={r.prev_url ?? "#"} target="_blank" rel="noreferrer">전년 {r.prev_report_nm}</a>
+        </p>
+        {changed.map((d) => <SectionTable key={d.path} d={d} />)}
+        {extra.length > 0 && (
+          <ul className={s.extra}>
+            {extra.map((d) => <li key={d.path}><span className="chip chipQuiet">{d.status === "added" ? "절 추가" : "절 삭제"}</span> {d.path} <span className="muted">문장 {d.sentences_after || d.sentences_before}개</span></li>)}
+          </ul>
+        )}
+      </div>
+    </details>
+  );
+}
+
+const SENTENCES_SHOWN = 12;
+
+function SectionTable({ d }: { d: SectionDiff }) {
+  // 절마다 표 하나. 자리가 같은 짝은 한 줄에 전·후, 나머지는 한쪽만. 길면 접어 두고 "더 보기"
+  const [all, setAll] = useState(false);
+  const rows: Array<{ kind: string; before: string; after: string }> = [
+    ...d.replaced.map(([b, a]) => ({ kind: "바뀜", before: b, after: a })),
+    ...d.removed.map((b) => ({ kind: "삭제", before: b, after: "" })),
+    ...d.added.map((a) => ({ kind: "추가", before: "", after: a })),
+  ];
+  const shown = all ? rows : rows.slice(0, SENTENCES_SHOWN);
+  return (
+    <div className={s.section}>
+      <p className={s.sectionHead}><span className={s.sectionPath}>{d.path}</span> <span className="muted">바뀐 문장 {d.text_changes}개 · 숫자·띄어쓰기만 {d.numbers_only}개 · 문장 {d.sentences_before} → {d.sentences_after}{d.parts_before > 1 || d.parts_after > 1 ? ` · 전년 ${d.parts_before}절 ↔ 이번 ${d.parts_after}절을 묶어 견줌` : ""}</span></p>
+      <div className="tblWrap">
+        <table className={`tbl ${s.textTable}`}>
+          <thead><tr><th className={s.thKind}>구분</th><th>전년</th><th>이번</th></tr></thead>
+          <tbody>
+            {shown.map((row, i) => (
+              <tr key={i} className={row.kind === "삭제" ? s.gone : row.kind === "추가" ? s.added : undefined}>
+                <td className="dim">{row.kind}</td>
+                <td className={s.before}>{row.before || "—"}</td>
+                <td className={s.after}>{row.after || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > SENTENCES_SHOWN && !all && <button type="button" className={`btnQuiet ${s.more}`} onClick={() => setAll(true)}>나머지 {rows.length - SENTENCES_SHOWN}문장 더 보기</button>}
+    </div>
   );
 }
 

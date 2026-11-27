@@ -142,12 +142,55 @@ export type ChangesResponse = {
   reports: ReportChanges[];
 };
 
+// ----- 문장 변화 (/changes/text, src/reports/text_changes.py · 0012 결정 4) -----
+
+export type SectionDiff = {
+  path: string;
+  status: "changed" | "numbers_only" | "same" | "added" | "removed" | string;
+  replaced: [string, string][];   // [전년 문장, 이번 문장] 자리가 같은 짝
+  removed: string[];
+  added: string[];
+  numbers_only: number;           // 숫자·날짜만 바뀐 문장 수 (글 변화로 치지 않음)
+  sentences_before: number;
+  sentences_after: number;
+  parts_before: number;           // 묶음에 든 전년 절 수. 하나라도 1보다 크면 상위 절로 묶어 견준 것 (해마다 절 굵기가 다름)
+  parts_after: number;
+  text_changes: number;
+};
+
+export type TextChanges = {
+  rcept_no: string;
+  corp_code: string;
+  corp_name: string;
+  report_nm: string;
+  rcept_dt: string;
+  url: string;
+  prev_rcept_no: string | null;   // 전년 같은 종류 보고서. null이면 비교 대상 없음
+  prev_report_nm: string | null;
+  prev_url: string | null;
+  sections: SectionDiff[];
+};
+
+export type TextChangesResponse = {
+  since: string;
+  until: string;
+  section_words: string[];
+  summary: { reports: number; compared: number; sections_changed: number; text_changes: number; numbers_only: number };
+  reports: TextChanges[];
+};
+
 export type Corp = { corp_code: string; corp_name: string; role: "holding" | "subsidiary" | string; parent_corp_code: string | null; stake_pct: number | null };
 
 export async function changes(since: string, until: string, corps: string[], signal?: AbortSignal): Promise<ChangesResponse> {
   const q = new URLSearchParams({ since, until });
   for (const c of corps) q.append("corp", c);
   return parse<ChangesResponse>(await fetch(`${API_URL}/changes?${q}`, { signal }));
+}
+
+export async function textChanges(since: string, until: string, corps: string[], signal?: AbortSignal): Promise<TextChangesResponse> {
+  const q = new URLSearchParams({ since, until });
+  for (const c of corps) q.append("corp", c);
+  return parse<TextChangesResponse>(await fetch(`${API_URL}/changes/text?${q}`, { signal }));
 }
 
 export async function corps(signal?: AbortSignal): Promise<Corp[]> {

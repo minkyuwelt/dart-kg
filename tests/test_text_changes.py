@@ -3,7 +3,7 @@
 확인하는 것
 1) 전년 같은 종류 보고서 찾기(정정본이면 최신 정정본, 반기는 반기와)
 2) 숫자·날짜만 바뀐 문장은 세기만 하고, 글이 바뀐 문장만 전후로 나온다. 자리가 같은 짝은 '바뀜', 나머지는 '삭제'·'추가'
-3) 기본 절 필터(위험·회계정책·경영진단)와 --section 바꾸기, 한쪽에만 있는 절, 첨부 파일은 보지 않음
+3) 기본 절 필터(위험·회계정책·경영진단)와 --section 바꾸기, 한쪽에만 있는 절, 첨부 파일은 보지 않음, 절 굵기가 다르면 상위 절로 묶어 견줌
 4) markdown·요약, 첫 보고서는 비교 없음
 """
 
@@ -66,7 +66,7 @@ class TextChangesTest(unittest.TestCase):
         )
 
     def test_mask_and_split(self):
-        self.assertEqual(mask("제17기(2025년 12월 31일 현재) 자산 1,234.5백만원"), "제#기(#년 #월 #일 현재) 자산 #백만원")
+        self.assertEqual(mask("제17기(2025년 12월 31일 현재) 자산 1,234.5백만원"), "제#기(#년#월#일현재)자산#백만원")
         self.assertEqual(split_sentences("가. 첫 문장입니다. 둘째 문장입니다!\n셋째 줄의 문장입니다"), ["첫 문장입니다.", "둘째 문장입니다!", "셋째 줄의 문장입니다"])
 
     def test_diff_separates_numbers_only_from_text(self):
@@ -103,6 +103,26 @@ class TextChangesTest(unittest.TestCase):
         self.assertEqual(fix.prev_rcept_no, R2025)
         self.assertTrue(all(s.status == "removed" for s in fix.sections))
 
+    def test_sections_split_differently_are_merged_to_common_parent(self):
+        # KB금융 2024·2025 실제 꼴: 전년은 'IV. 경영진단' 절 하나, 이번은 그 아래 소절 여럿. 상위 절로 묶어 견준다
+        self._section(R2024, 9, "IV. 이사의 경영진단 및 분석의견", "예측정보에는 불확실성이 있습니다. 당기순이익은 5조원입니다. 유동성은 충분합니다.")
+        self._section(R2025, 9, "IV. 이사의 경영진단 및 분석의견 > 1. 예측정보에 대한 주의사항", "예측정보에는 불확실성이 있습니다.")
+        self._section(R2025, 10, "IV. 이사의 경영진단 및 분석의견 > 3. 재무상태 및 영업실적", "당기순이익은 5.5조원입니다.")
+        self._section(R2025, 11, "IV. 이사의 경영진단 및 분석의견 > 4. 유동성 및 자금조달과 지출", "유동성은 충분하며 외화 조달도 늘렸습니다.")
+        tc = report_text_changes(self.con, R2025, section_words=("경영진단",))
+        self.assertEqual(len(tc.sections), 1)
+        d = tc.sections[0]
+        self.assertEqual((d.path, d.status, d.parts_before, d.parts_after, d.merged), ("IV. 이사의 경영진단 및 분석의견", "changed", 1, 3, True))
+        self.assertEqual(d.numbers_only, 1)
+        self.assertEqual(d.replaced, [("유동성은 충분합니다.", "유동성은 충분하며 외화 조달도 늘렸습니다.")])
+        self.assertIn("전년 1절 ↔ 이번 3절을 묶어 견줌", render_markdown([tc]))
+
+    def test_heading_prefix_and_captions(self):
+        # 전년은 절이 통째라 "1. 개요 : " 같은 머리말이 문장 앞에 붙고, 이번은 절 이름으로 빠진 경우 → 같은 문장. "(단위 : 백만원)"은 문장이 아니다
+        d = diff_sentences(split_sentences("1. 지배기업의 개요 : 주식회사 KB금융지주는 2008년 설립되었습니다. (단위 : 백만원)"),
+                           split_sentences("주식회사 KB금융지주는 2008년 설립되었습니다.\n(단위 : 백만원)"))
+        self.assertEqual((d.status, d.numbers_only, d.text_changes, d.sentences_before, d.sentences_after), ("numbers_only", 1, 0, 1, 1))
+
     def test_window_and_markdown(self):
         results = build_text_report(self.con, date(2026, 3, 1), date(2026, 3, 31))
         self.assertEqual([r.rcept_no for r in results], [R2025])        # 정정본은 본문이 없어 빠짐
@@ -110,7 +130,7 @@ class TextChangesTest(unittest.TestCase):
         self.assertIn("| 바뀜 | 시장위험은 VaR 모형으로 관리합니다. | 시장위험은 VaR 모형과 스트레스 테스트로 관리합니다. |", md)
         self.assertIn("| 추가 |  | 기후위험은", md)
         self.assertIn("절 추가: III. 재무에 관한 사항 > 8. 위험관리 보완", md)
-        self.assertIn("숫자만 바뀐 문장 1개", md)
+        self.assertIn("숫자·띄어쓰기·머리말만 바뀐 문장 1개", md)
         first = render_markdown([report_text_changes(self.con, R2024)])
         self.assertIn("전년 같은 종류의 보고서가 없어 비교하지 않음", first)
         self.assertNotIn(KB, md.replace("00688996", ""))  # 자리 표시 — corp_code는 본문에 안 쓴다

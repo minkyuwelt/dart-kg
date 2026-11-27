@@ -6,8 +6,10 @@
     문장을 비교한다. LLM도, 새 API 호출도 없다. 결과는 저장하지 않고 질의할 때 계산한다(1차와 같은 원칙 — 원문이 정정되면 저절로 따라온다).
 
 무엇을 변화로 치나
-    - 절(section)은 경로(path)가 같은 것끼리 짝짓는다. 한쪽에만 있는 절은 "절 추가/삭제"로 수만 센다.
-    - 문장은 줄바꿈과 마침표 뒤 공백에서 자른다. 표(tables)는 보지 않는다(표의 숫자 변화는 1차와 정형 표의 영역).
+    - 절(section)은 경로(path)가 같은 것끼리 짝짓는다. 한쪽에만 있는 절은 양쪽에 다 있는 가장 가까운 상위 절로 올려 묶어 견준다
+      (해마다 절이 나뉘는 굵기가 다르다, _pair_sections). 그래도 짝이 없으면 "절 추가/삭제"로 수만 센다.
+    - 문장은 줄바꿈과 한글 뒤 마침표에서 자른다(뒤에 공백이 없어도). 표(tables)는 보지 않는다(표의 숫자 변화는 1차와 정형 표의 영역).
+    - 순서는 보지 않는다: 같은 문장을 먼저 빼고, 남은 것끼리 충분히 닮았을 때만(PAIR_MIN_RATIO·PAIR_MIN_CONTAIN) "바뀜" 짝으로 묶는다.
     - **숫자만 바뀐 문장과 글이 바뀐 문장을 가른다.** 숫자·날짜·금액을 '#'로 가린 꼴(_mask)이 같으면 "숫자만 바뀜"으로 수만 세고,
       가린 꼴이 다르면 글이 바뀐 것이다. 사업보고서는 해마다 "제N기", "2025년 12월 31일 현재", 금액이 바뀌는 문장이 수백 개라
       이걸 가르지 않으면 리포트가 숫자 갱신에 묻힌다. 글이 바뀐 문장만 전후 문장으로 보여 준다.
@@ -48,19 +50,30 @@ SENTENCES_MAX = 20              # markdown에서 절마다 보여 주는 문장 
 # 한글 뒤에 붙은 '제N기'·'N분기'도 숫자 자리로 보고, 남은 공백은 하나로 접는다.
 _NUM_RE = re.compile(r"\d[\d,.]*")
 _WS_RE = re.compile(r"\s+")
-_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+# 문장 끝: 한글(또는 닫는 괄호) 뒤의 마침표·물음표·느낌표. 뒤에 공백이 없어도 자른다 — 원문에 "…없습니다.- 기업회계기준서…"처럼
+# 마침표 뒤에 바로 다음 항목이 붙는 곳이 많다(KB금융 2025 주석). 숫자 뒤 마침표(12.31, 1.5%)는 문장 끝이 아니다.
+_SPLIT_RE = re.compile(r"(?<=[가-힣)\]][.!?])\s*|\n+")
+_CAPTION_RE = re.compile(r"^\(?\s*단위\s*[:：]")                 # "(단위 : 백만원)" — 표 설명이지 문장이 아니다
+# 문장 앞에 붙는 절 머리말: "1. 지배기업의 개요 및 보고주체 : ", "(1) 연결 기준 1) 종속기업 ", "② ", "가. ". 전년은 절이 통째라 머리말이 문장에
+# 붙어 있고 이번은 절 이름으로 빠져 있는 일이 흔하다(KB금융 2024 ↔ 2025). 가린 꼴에서 한쪽이 다른 쪽의 끝부분이고 남는 앞머리가 이 꼴이면 같은 문장
+_HEADING_RE = re.compile(r"^(?:\(?[#①-⑳가-힣]\)?[.)]|[#①-⑳]|[가-힣]\.)")
+HEADING_MAX_CHARS = 40
+PAIR_MIN_RATIO = 0.5            # '바뀜' 짝의 최소 닮음 1: difflib ratio(2M/(la+lb), 가린 꼴). 짧은 문장이 긴 문장에 흡수된 꼴을 거른다
+PAIR_MIN_CONTAIN = 0.7          # '바뀜' 짝의 최소 닮음 2: 짧은 쪽 글자의 몇 %가 긴 쪽에 같은 순서로 있나(M/짧은 길이). 늘어난 문장을 짝으로 잡는다
+PAIR_MIN_BLOCK = 3              # M을 셀 때 3글자 미만의 우연한 일치("의", "에", "재무")는 빼고 센다
+PAIR_MAX_WORK = 400_000         # 짝 찾기 비용 상한(남은 전년 문장 수 × 이번 문장 수). 넘으면 짝짓기를 건너뛰고 삭제·추가로만 적는다
 
 
 def mask(sentence: str) -> str:
-    """숫자를 '#'로 바꾼 꼴. 두 문장의 mask가 같으면 숫자만 바뀐 것."""
-    return _WS_RE.sub(" ", _NUM_RE.sub("#", sentence)).strip()
+    """숫자를 '#'로 바꾸고 띄어쓰기를 모두 뺀 꼴. 두 문장의 mask가 같으면 숫자·띄어쓰기만 바뀐 것 ("영향은 없습니다" ↔ "영향은없습니다"는 같은 문장)."""
+    return _WS_RE.sub("", _NUM_RE.sub("#", sentence))
 
 
 def split_sentences(text: str) -> list[str]:
     out: list[str] = []
     for raw in _SPLIT_RE.split(text or ""):
         s = _WS_RE.sub(" ", raw).strip()
-        if len(s) >= MIN_SENTENCE_CHARS:
+        if len(s) >= MIN_SENTENCE_CHARS and not _CAPTION_RE.match(s):
             out.append(s)
     return out
 
@@ -72,9 +85,15 @@ class SectionDiff:
     removed: list[str] = field(default_factory=list)          # 전년에만 있던 문장 (글이 바뀐 것)
     added: list[str] = field(default_factory=list)            # 이번에만 있는 문장 (글이 바뀐 것)
     replaced: list[tuple[str, str]] = field(default_factory=list)   # (전년 문장, 이번 문장) 자리가 같은 짝
-    numbers_only: int = 0               # 숫자만 바뀐 문장 수
+    numbers_only: int = 0               # 숫자·띄어쓰기·머리말만 바뀐 문장 수
     sentences_before: int = 0
     sentences_after: int = 0
+    parts_before: int = 0               # 이 묶음에 들어간 전년 절 수 (1이면 경로 그대로 짝, 여럿이면 상위 절로 묶은 것)
+    parts_after: int = 0
+
+    @property
+    def merged(self) -> bool:
+        return self.parts_before > 1 or self.parts_after > 1
 
     @property
     def text_changes(self) -> int:
@@ -106,24 +125,80 @@ class TextChanges:
         return [s for s in self.sections if s.status == "changed"]
 
 
+def _heading_only(ma: str, mb: str) -> bool:
+    """가린 꼴 둘이 '앞에 붙은 짧은 머리말'만 다른가. 긴 쪽이 짧은 쪽으로 끝나고, 남는 앞머리가 머리말 꼴(번호·동그라미 숫자·'가.')이며 짧을 때."""
+    if ma == mb:
+        return True
+    long_, short = (ma, mb) if len(ma) > len(mb) else (mb, ma)
+    if not short or not long_.endswith(short):
+        return False
+    head = long_[: len(long_) - len(short)]
+    return len(head) <= HEADING_MAX_CHARS and bool(_HEADING_RE.match(head))
+
+
 def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
-    """두 절의 문장 목록을 비교한다. 가린 꼴(mask)로 맞추어 숫자만 바뀐 문장은 '같은 문장'으로 본 뒤, 남은 차이만 글 변화로 센다."""
-    mb, ma = [mask(s) for s in before], [mask(s) for s in after]
+    """두 절의 문장 목록을 비교한다. 순서는 보지 않는다 — 절이 해마다 다르게 나뉘고 항목 순서가 바뀌는 일이 흔해서,
+    순서대로 맞추면(difflib 옵코드) 엉뚱한 문장끼리 '바뀜' 짝이 된다(KB금융 2024 주석 1절 ↔ 2025 40절, 2026-11-27 노트북).
+
+    1) 가린 꼴(mask)이 같은 문장은 양쪽에서 뺀다. 원문이 다르면 숫자만 바뀐 것으로 센다.
+    2) 남은 전년 문장마다 남은 이번 문장 중 가장 닮은 것(ratio ≥ PAIR_MIN_RATIO 그리고 포함률 ≥ PAIR_MIN_CONTAIN, 3글자 이상 일치만 셈)을 '바뀜' 짝으로 묶는다.
+    3) 짝이 없는 것은 삭제·추가.
+    """
     d = SectionDiff(path="", status="same", sentences_before=len(before), sentences_after=len(after))
-    sm = difflib.SequenceMatcher(a=mb, b=ma, autojunk=False)
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            # 가린 꼴이 같다 → 원문이 다르면 숫자만 바뀐 것
-            d.numbers_only += sum(1 for i, j in zip(range(i1, i2), range(j1, j2)) if before[i] != after[j])
-        elif tag == "replace":
-            n = min(i2 - i1, j2 - j1)
-            d.replaced += [(before[i1 + k], after[j1 + k]) for k in range(n)]
-            d.removed += before[i1 + n:i2]
-            d.added += after[j1 + n:j2]
-        elif tag == "delete":
-            d.removed += before[i1:i2]
-        elif tag == "insert":
-            d.added += after[j1:j2]
+    by_mask_after: dict[str, list[str]] = {}
+    for a in after:
+        by_mask_after.setdefault(mask(a), []).append(a)
+    rest_before: list[tuple[str, str]] = []
+    for b in before:
+        mb = mask(b)
+        pool = by_mask_after.get(mb)
+        if pool:
+            a = pool.pop()
+            if a != b:
+                d.numbers_only += 1
+        else:
+            rest_before.append((b, mb))
+    rest_after = [(a, m) for m, pool in by_mask_after.items() for a in pool]
+    if rest_before and rest_after and len(rest_before) * len(rest_after) <= PAIR_MAX_WORK:
+        for b, mb in rest_before:
+            best, best_i = 0.0, -1
+            sm = difflib.SequenceMatcher(autojunk=False)
+            sm.set_seq2(mb)
+            for i, (_, ma) in enumerate(rest_after):
+                if ma is None:
+                    continue
+                if _heading_only(ma, mb):
+                    best, best_i = 2.0, i        # 머리말만 다른 같은 문장 — 짝 중 가장 우선
+                    break
+                sm.set_seq1(ma)
+                # 두 잣대를 다 넘어야 짝이다 (노트북 KB금융 2024·2025로 맞춤):
+                #  - ratio만 보면 "충분합니다." → "충분하며 외화 조달도 늘렸습니다."처럼 늘어난 문장이 짝이 안 되고(0.62),
+                #  - 포함률만 보면 "(단위: 백만원)"이 "① 2023년 … 요약포괄손익계산서(단위: 백만원)"에 통째로 들어 있어(1.0) 엉뚱한 짝이 된다(ratio 0.47).
+                # real_quick_ratio·quick_ratio는 ratio의 상한이라 가망 없는 쌍을 먼저 거른다
+                if sm.real_quick_ratio() < PAIR_MIN_RATIO or sm.quick_ratio() < PAIR_MIN_RATIO:
+                    continue
+                matched = sum(bl.size for bl in sm.get_matching_blocks() if bl.size >= PAIR_MIN_BLOCK)
+                ratio = 2 * matched / (len(ma) + len(mb))
+                contain = matched / (min(len(ma), len(mb)) or 1)
+                if ratio < PAIR_MIN_RATIO or contain < PAIR_MIN_CONTAIN:
+                    continue
+                if contain > best:
+                    best, best_i = contain, i
+            if best_i >= 0:
+                if best < 2.0:
+                    d.replaced.append((b, rest_after[best_i][0]))
+                else:
+                    d.numbers_only += 1
+                rest_after[best_i] = (rest_after[best_i][0], None)
+            else:
+                d.removed.append(b)
+        d.added += [a for a, m in rest_after if m is not None]
+    else:
+        d.removed += [b for b, _ in rest_before]
+        d.added += [a for a, _ in rest_after]
+    # 원문 순서대로 보여 준다
+    order_a = {a: i for i, a in enumerate(after)}
+    d.added.sort(key=lambda a: order_a.get(a, 0))
     if d.text_changes:
         d.status = "changed"
     elif d.numbers_only:
@@ -131,17 +206,45 @@ def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
     return d
 
 
-def _sections(con: duckdb.DuckDBPyConnection, rcept_no: str, words: tuple[str, ...]) -> dict[str, str]:
-    """본문 파일의 글 절을 {경로: 본문}으로. 같은 경로가 여러 번이면(목차 반복) 본문을 이어 붙인다."""
-    rows = con.execute(
+def _sections(con: duckdb.DuckDBPyConnection, rcept_no: str) -> list[tuple[str, str]]:
+    """본문 파일의 글 절을 (경로, 본문) 순서대로. 절 낱말로 거르지 않는다 — 거르기는 묶은 뒤(_pair_sections)에 한다."""
+    return con.execute(
         "SELECT path, text FROM document_section WHERE rcept_no = ? AND file_name = ? AND char_count > 0 ORDER BY section_id",
         [rcept_no, f"{rcept_no}.xml"],
     ).fetchall()
-    out: dict[str, str] = {}
-    for path, text in rows:
-        if words and not any(w in path for w in words):
+
+
+def _ancestors(path: str) -> list[str]:
+    """'A > B > C' → ['A > B > C', 'A > B', 'A'] (자기 자신부터 위로)."""
+    parts = path.split(" > ")
+    return [" > ".join(parts[:i]) for i in range(len(parts), 0, -1)]
+
+
+def _pair_sections(cur: list[tuple[str, str]], old: list[tuple[str, str]], words: tuple[str, ...]) -> list[tuple[str, list[tuple[str, str]], list[tuple[str, str]]]]:
+    """두 보고서의 절을 견줄 단위로 묶는다 → [(묶음 경로, 전년 절들, 이번 절들)].
+
+    경로가 양쪽에 다 있으면 그대로 짝이다. 한쪽에만 있으면 **양쪽에 다 있는(절이거나 절의 상위인) 가장 가까운 상위 경로**로 올려 묶는다.
+    해마다 같은 글이 다른 굵기로 나뉘기 때문이다 — KB금융 2024년 보고서는 'IV. 이사의 경영진단 및 분석의견'이 절 하나(406문장)인데
+    2025년은 그 아래 소절 6개로 파싱됐다(2026-11-27 노트북). 글자 그대로 맞추면 전부 '추가·삭제'가 되어 비교가 안 된다.
+    묶은 뒤 절 낱말(words)로 거른다: 묶음 안의 어느 절 경로에라도 낱말이 들면 그 묶음을 본다.
+    """
+    cur_paths, old_paths = {p for p, _ in cur}, {p for p, _ in old}
+    cur_pre = {a for p in cur_paths for a in _ancestors(p)}
+    old_pre = {a for p in old_paths for a in _ancestors(p)}
+    common = cur_pre & old_pre
+
+    def key(path: str) -> str:
+        return next((a for a in _ancestors(path) if a in common), path)
+
+    groups: dict[str, tuple[list, list]] = {}
+    for side, rows in ((0, old), (1, cur)):
+        for path, text in rows:
+            groups.setdefault(key(path), ([], []))[side].append((path, text))
+    out = []
+    for k, (o, c) in groups.items():
+        if words and not any(any(w in p for w in words) for p, _ in o + c):
             continue
-        out[path] = (out[path] + "\n" + text) if path in out else text
+        out.append((k, o, c))
     return out
 
 
@@ -172,15 +275,18 @@ def report_text_changes(con: duckdb.DuckDBPyConnection, rcept_no: str, section_w
                      prev["report_nm"] if prev else None, tuple(section_words))
     if prev is None:
         return tc
-    cur, old = _sections(con, rcept_no, tc.section_words), _sections(con, prev["rcept_no"], tc.section_words)
-    for path in sorted(set(cur) | set(old), key=lambda p: (p not in cur, p)):
-        if path in cur and path in old:
-            d = diff_sentences(split_sentences(old[path]), split_sentences(cur[path]))
+    pairs = _pair_sections(_sections(con, rcept_no), _sections(con, prev["rcept_no"]), tc.section_words)
+    for path, o, c in sorted(pairs, key=lambda x: (not x[2], x[0])):
+        before = split_sentences("\n".join(t for _, t in o))
+        after = split_sentences("\n".join(t for _, t in c))
+        if o and c:
+            d = diff_sentences(before, after)
             d.path = path
-        elif path in cur:
-            d = SectionDiff(path, "added", sentences_after=len(split_sentences(cur[path])))
+        elif c:
+            d = SectionDiff(c[0][0] if len(c) == 1 else path, "added", sentences_after=len(after))
         else:
-            d = SectionDiff(path, "removed", sentences_before=len(split_sentences(old[path])))
+            d = SectionDiff(o[0][0] if len(o) == 1 else path, "removed", sentences_before=len(before))
+        d.parts_before, d.parts_after = len(o), len(c)
         tc.sections.append(d)
     return tc
 
@@ -231,9 +337,9 @@ def render_markdown(results: list[TextChanges], since: date | None = None, until
     lines = [title, ""]
     s = summarize(results)
     lines.append(f"정기보고서 {s['reports']}개, 전년 같은 보고서와 비교한 것 {s['compared']}개. 글이 바뀐 절 {s['sections_changed']}개, "
-                 f"바뀐 문장 {s['text_changes']}개 (숫자만 바뀐 문장 {s['numbers_only']}개는 세기만 함).")
+                 f"바뀐 문장 {s['text_changes']}개 (숫자·띄어쓰기·머리말만 바뀐 문장 {s['numbers_only']}개는 세기만 함).")
     words = results[0].section_words if results else SECTION_WORDS_DEFAULT
-    lines.append(f"기준: 경로에 {' · '.join(words)} 가운데 하나가 든 절. 같은 경로의 절끼리 문장을 비교하고, 숫자·날짜만 바뀐 문장은 글 변화로 치지 않는다. "
+    lines.append(f"기준: 경로에 {' · '.join(words)} 가운데 하나가 든 절. 같은 경로의 절끼리 문장을 비교하고, 숫자·날짜·띄어쓰기·앞머리말만 바뀐 문장은 글 변화로 치지 않는다. "
                  "표는 보지 않는다. 해석은 넣지 않았다 (0012 결정 4).")
     lines.append("")
     if not results:
@@ -251,11 +357,12 @@ def render_markdown(results: list[TextChanges], since: date | None = None, until
         quiet = [x for x in r.sections if x.status in ("numbers_only", "same")]
         extra = [x for x in r.sections if x.status in ("added", "removed")]
         if not changed and not extra:
-            lines.append(f"글이 바뀐 절 없음 (비교한 절 {len(quiet)}개, 숫자만 바뀐 문장 {sum(x.numbers_only for x in quiet)}개).")
+            lines.append(f"글이 바뀐 절 없음 (비교한 절 {len(quiet)}개, 숫자·띄어쓰기만 바뀐 문장 {sum(x.numbers_only for x in quiet)}개).")
             lines.append("")
             continue
         for d in changed:
-            lines.append(f"**{d.path}** — 바뀐 문장 {d.text_changes}개, 숫자만 {d.numbers_only}개 (문장 {d.sentences_before} → {d.sentences_after})")
+            merged = f", 전년 {d.parts_before}절 ↔ 이번 {d.parts_after}절을 묶어 견줌" if d.merged else ""
+            lines.append(f"**{d.path}** — 바뀐 문장 {d.text_changes}개, 숫자·띄어쓰기만 {d.numbers_only}개 (문장 {d.sentences_before} → {d.sentences_after}{merged})")
             lines.append("")
             lines.append("| 구분 | 전년 | 이번 |")
             lines.append("|---|---|---|")
@@ -283,7 +390,7 @@ def render_markdown(results: list[TextChanges], since: date | None = None, until
         if extra:
             lines.append("")
         if quiet:
-            lines.append(f"글이 바뀌지 않은 절 {len(quiet)}개 (숫자만 바뀐 문장 {sum(x.numbers_only for x in quiet)}개).")
+            lines.append(f"글이 바뀌지 않은 절 {len(quiet)}개 (숫자·띄어쓰기만 바뀐 문장 {sum(x.numbers_only for x in quiet)}개).")
             lines.append("")
     return "\n".join(lines) + "\n"
 
