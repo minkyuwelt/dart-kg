@@ -5,6 +5,7 @@ import { API_URL, health, type Health } from "./api";
 import Ask from "./pages/Ask";
 import Changes from "./pages/Changes";
 import CorpPageView from "./pages/Corp";
+import History from "./pages/History";
 import s from "./shell.module.css";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
               <NavLink to="/" end className={tab}>질문</NavLink>
               <NavLink to="/changes" className={tab}>변화 리포트</NavLink>
               <NavLink to="/corps" className={tab}>회사</NavLink>
+              <NavLink to="/history" className={tab}>이력</NavLink>
             </nav>
             <ServerStatus />
           </div>
@@ -33,6 +35,7 @@ export default function App() {
             <Route path="/changes" element={<Changes />} />
             <Route path="/corps" element={<CorpPageView />} />
             <Route path="/corps/:corpCode" element={<CorpPageView />} />
+            <Route path="/history" element={<History />} />
           </Routes>
         </div>
         <p className={s.foot}>수치는 공시 그대로이며 투자 판단용이 아닙니다. 자료: 금융감독원 OpenDART</p>

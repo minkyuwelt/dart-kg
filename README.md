@@ -397,7 +397,7 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    curl -s 'localhost:8000/corps/00382199/executives?as_of=2024-06-30&outside_only=true'
    ```
 
-19. **화면 (Vite + React, 0013)** — 질문·변화 리포트·회사 세 페이지. 질문: 답의 인용 번호와 오른쪽 근거 공시가 같은 번호이고, 인용된 근거만 형광펜을 칠하며, 그래프 질문이면 관계표가 답 아래에 붙습니다. 회사: 회사 하나를 골라 기준일의 임원·최대주주·출자·겸직 표 자리와 지분 추이를 한 장으로(`/corps/{corp_code}`). 화면에 새 로직은 없고 API 응답을 그대로 보여 줍니다. API 서버(18번)가 떠 있어야 합니다.
+19. **화면 (Vite + React, 0013)** — 질문·변화 리포트·회사·이력 네 페이지(이력은 브라우저에만 저장). 질문: 답의 인용 번호와 오른쪽 근거 공시가 같은 번호이고, 인용된 근거만 형광펜을 칠하며, 그래프 질문이면 관계표가 답 아래에 붙습니다. 회사: 회사 하나를 골라 기준일의 임원·최대주주·출자·겸직 표 자리와 지분 추이를 한 장으로(`/corps/{corp_code}`). 화면에 새 로직은 없고 API 응답을 그대로 보여 줍니다. API 서버(18번)가 떠 있어야 합니다.
 
    ```bash
    cd web && npm install && npm run dev      # WSL 안의 Linux Node(nvm, 22)로. http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
