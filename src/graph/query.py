@@ -98,8 +98,9 @@ def execute(driver, plan: Plan, database: str = "neo4j") -> list[StepResult]:
                 continue
             params.update(fills[0])
         result = StepResult(step.template, params, T.run(driver, step.template, params, database))
-        if step.template == "shared_positions" and not result.paths:
-            # 0행이면 "없음"인지 "데이터가 없음"인지 가려야 한다 → 같은 범위의 임원 수를 센다 (대조한 사람이 0명이면 '없음'이라 말하지 않는다)
+        if step.template == "shared_positions":
+            # 대조 범위를 늘 함께 센다. 0행이면 "없음"인지 "데이터가 없음"인지 가리는 근거(대조한 사람이 0명이면 '없음'이라 말하지 않는다, g10).
+            # 행이 있어도 임원 표가 없는 회사(사업보고서를 내지 않는 자회사)가 몇 곳인지 적어야 "N명이 전부"가 아님을 LLM이 안다 (g11, 2026-11-27)
             scope_params = {k: params.get(k) for k in ("as_of", "outside_only", "corps")}
             result.scope = T.run(driver, "position_scope", scope_params, database)
         out.append(result)
@@ -158,8 +159,8 @@ def derive(steps: list[StepResult]) -> list[dict]:
             out += _derive_descendants(s)
         elif s.template == "person_history":
             out += _derive_tenures(s)
-        elif s.template == "shared_positions" and not s.paths:
-            out += _derive_no_shared(s)
+        elif s.template == "shared_positions":
+            out += _derive_no_shared(s) if not s.paths else _derive_shared_scope(s)
         elif s.template == "corp_lineage":
             for p in s.paths:
                 for n in p["nodes"]:
@@ -207,18 +208,46 @@ def _derive_descendants(s: StepResult) -> list[dict]:
     return out
 
 
+def _scope_parts(s: StepResult) -> tuple[list[dict], list[dict], int, str]:
+    """(임원이 있는 회사, 임원 표가 없어 0명인 회사, 임원 합계, '사외이사'/'임원')"""
+    scope = s.scope or []
+    have = [r for r in scope if int(r.get("persons") or 0) > 0]
+    none = [r for r in scope if int(r.get("persons") or 0) == 0]
+    who = "사외이사" if s.params.get("outside_only") else "임원"
+    return have, none, sum(int(r["persons"]) for r in have), who
+
+
+def _missing_note(none: list[dict], who: str) -> str:
+    if not none:
+        return ""
+    names = ", ".join(r["corp_name"] for r in none)
+    return (f" 임원 표가 없는 {len(none)}곳({names})은 셈에서 빠짐 — 사업보고서를 내지 않는 회사(감사보고서만)라 {who} 데이터가 없고,"
+            f" 그 회사 쪽 겸직은 그래프가 알 수 없음")
+
+
+def _derive_shared_scope(s: StepResult) -> list[dict]:
+    """겸직 행이 있을 때의 대조 범위. 몇 곳 중 몇 곳의 임원 몇 명을 봤고, 임원 표가 없어 빠진 회사가 있는지 (g11, 2026-11-27).
+    `scope`가 없으면(옛 호출) 아무것도 적지 않는다."""
+    if not s.scope:
+        return []
+    have, none, total, who = _scope_parts(s)
+    per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
+    return [{"rule": "겸직 대조 범위 (임원 표가 있는 회사만 닫힌 세계)", "subject": "겸직",
+             "value": f"기준일 {s.params.get('as_of')} 회사 {len(have) + len(none)}곳 중 임원 표가 있는 {len(have)}곳의 {who} {total}명을 대조"
+                      f" (회사별: {per}).{_missing_note(none, who)}"}]
+
+
 def _derive_no_shared(s: StepResult) -> list[dict]:
     """겸직 템플릿이 0행일 때의 판정. 대조한 임원이 1명 이상이면 '없음'(닫힌 세계: 그 범위의 임원은 전부 적재되어 있다),
     0명이면 '없음'이라 하지 않고 데이터가 없다고 적는다(이름 연결 실패·미적재일 수 있음). 이 구분을 LLM에 맡기지 않는다 (g10, 2026-11-26)."""
-    scope = s.scope or []
-    total = sum(int(r.get("persons") or 0) for r in scope)
-    who = "사외이사" if s.params.get("outside_only") else "임원"
+    have, none, total, who = _scope_parts(s)
     if total == 0:
         return [{"rule": "겸직 판정 보류: 대조 범위에 임원 데이터 없음", "subject": "겸직",
                  "value": f"판정 불가 — 기준일 {s.params.get('as_of')}에 대조할 {who} 데이터가 없음(회사 {len(s.params.get('corps') or [])}곳). '없음'이라 답하지 말 것"}]
-    per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in scope)
+    per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
     return [{"rule": "겸직 없음 판정: 대조 범위의 임원 전원을 봄(그래프에 전부 적재됨)", "subject": "겸직",
-             "value": f"없음 — 기준일 {s.params.get('as_of')} 회사 {len(scope)}곳의 {who} {total}명 중 두 곳 이상에 있는 사람 0명 (회사별: {per})"}]
+             "value": f"없음 — 기준일 {s.params.get('as_of')} 회사 {len(have)}곳의 {who} {total}명 중 두 곳 이상에 있는 사람 0명 (회사별: {per})."
+                      f"{_missing_note(none, who)}"}]
 
 
 def _derive_tenures(s: StepResult) -> list[dict]:
