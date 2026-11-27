@@ -15,7 +15,7 @@ import json
 from datetime import date
 from typing import Callable
 
-from src.graph.router import CorpMention, Plan, Step, _depth, _title
+from src.graph.router import CorpMention, Plan, plan_for
 from src.graph.templates import TEMPLATES
 
 # T8(근거 조각)은 고를 대상이 아니다 — 모든 템플릿 뒤에 자동으로 붙는다
@@ -38,34 +38,6 @@ SCHEMA = {
 
 def catalog() -> str:
     return "\n".join(f"{i}. {TEMPLATES[n].title}" for i, n in enumerate(CHOICES, 1))
-
-
-def default_plan(name: str, question: str, as_of: date, mentions: list[CorpMention]) -> Plan | None:
-    """고른 템플릿의 빈칸을 규칙으로 채운다. 못 채우면 None."""
-    iso = as_of.isoformat()
-    corp = mentions[0].corp_code if mentions else None
-    params: dict | None
-    if name == "shared_positions":
-        params = {"as_of": iso, "outside_only": "사외이사" in question, "corps": [m.corp_code for m in mentions], "must": None} if len(mentions) >= 2 else None
-    elif name == "ownership_path":
-        params = {"corp": corp, "other": mentions[1].corp_code, "as_of": iso} if len(mentions) >= 2 else None
-    elif corp is None:
-        params = None
-    elif name == "holder_chain":
-        params = {"corp": corp, "as_of": iso, "depth": 2}
-    elif name == "descendants":
-        params = {"corp": corp, "as_of": iso, "depth": _depth(question, 1), "min_pct": None}
-    elif name == "person_history":
-        params = {"corp": corp, "as_of": iso, "title": _title(question), "person": None}
-    elif name == "corp_lineage":
-        params = {"corp": corp, "name": mentions[0].text}
-    elif name == "facts_at":
-        params = {"corp": corp, "as_of": iso, "kind": None, "title": _title(question)}
-    else:
-        params = None
-    if params is None:
-        return None
-    return Plan(f"LLM 고르기: {name}", [Step(name, params)], as_of, mentions)
 
 
 def parse_choice(raw: str) -> str | None:
@@ -91,25 +63,18 @@ class LLMPicker:
         self.last_choice = parse_choice(raw)
         if self.last_choice is None:
             return None
-        return default_plan(self.last_choice, question, as_of, mentions)
+        return plan_for(self.last_choice, question, as_of, mentions, rule=f"LLM 고르기: {self.last_choice}")
 
 
 def _openai_complete(api_key: str | None = None) -> Callable[[str, str, dict], str]:
-    """답변 LLM과 같은 설정·하루 한도(src/rag/llm.py). api_key를 주면 .env 대신 그 키(API가 요청 헤더로 받은 보는 사람의 키, 0013)."""
-    from src.rag.llm import DailyLimit, settings
+    """답변 LLM과 같은 클라이언트·설정·하루 한도(src/rag/llm.py). api_key를 주면 .env 대신 그 키(API가 요청 헤더로 받은 보는 사람의 키, 0013)."""
+    from src.rag.llm import DailyLimit, complete_json, open_client
 
-    s = settings()
-    key = api_key or s["api_key"]
-    if not key:
-        raise SystemExit("OPENAI_API_KEY가 .env에 없습니다 (템플릿 고르기도 LLM을 씁니다)")
-    from openai import OpenAI
-
-    client, limit = OpenAI(api_key=key), DailyLimit(s["daily_limit"])
+    client, s = open_client(api_key)
+    limit = DailyLimit(s["daily_limit"])
 
     def complete(instructions: str, text: str, schema: dict) -> str:
         limit.take()
-        resp = client.responses.create(model=s["model"], instructions=instructions, input=text, max_output_tokens=200,
-                                       text={"format": {"type": "json_schema", "name": "template_choice", "schema": schema, "strict": True}})
-        return resp.output_text
+        return complete_json(client, s["model"], instructions, text, schema, "template_choice", 200).output_text
 
     return complete

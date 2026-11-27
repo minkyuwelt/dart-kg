@@ -25,6 +25,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date
 
+from src.rag.retrievers.base import BaseRetriever, Retrieval
 from src.rag.retrievers.hit import Hit
 from src.rag.retrievers.neo4j import rrf_fuse
 from src.graph import templates as T
@@ -363,8 +364,9 @@ def to_text(ctx: GraphContext) -> str:
 
 # ---------------------------------------------------------------- 검색기 (eval·ask와 같은 모양)
 
-class GraphRetriever:
-    """search(question, k) -> list[Hit]. base(Phase 3 검색기)가 있으면 RRF로 합친다. 마지막 실행의 GraphContext는 self.last."""
+class GraphRetriever(BaseRetriever):
+    """search(question, k) -> list[Hit]. base(Phase 3 검색기)가 있으면 RRF로 합친다. 마지막 실행의 GraphContext는 self.last,
+    retrieve()는 그것을 Retrieval.graph로 돌려준다 (ask는 retrieve만 본다)."""
 
     def __init__(self, driver, con, base=None, lineage: list[dict] | None = None, fetch: int = 20, picker=None,
                  today: date | None = None, database: str = "neo4j"):
@@ -392,6 +394,11 @@ class GraphRetriever:
         fused = rrf_fuse([[_as_dict(h) for h in graph_hits], [_as_dict(h) for h in rag_hits]])
         return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(sc), (r["text"] or "")[:120], r["text"] or "")
                 for r, sc in fused[:k]]
+
+    def retrieve(self, question: str, k: int) -> Retrieval:
+        hits = self.search(question, k)
+        # 이웃 조각(ask.expand_neighbors)은 전문검색기(base)의 섹션 사전을 쓴다 — 다시 만들지 않는다
+        return Retrieval(hits, graph=self.last, graph_error=self.error, section_words=self.base.section_words if self.base is not None else None)
 
 
 def _as_dict(h: Hit) -> dict:

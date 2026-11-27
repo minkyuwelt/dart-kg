@@ -86,7 +86,9 @@ class Answer:
 class LLM(Protocol):
     name: str
 
-    def answer(self, question: str, passages: list[Passage], max_output_tokens: int | None = None) -> Answer: ...
+    def answer(self, question: str, passages: list[Passage], graph: bool = False) -> Answer:
+        """graph=True면 그래프 관계표가 붙은 질문 — 답이 길어 출력 상한을 더 크게 잡는다."""
+        ...
 
 
 def build_user_prompt(question: str, passages: list[Passage], max_chars: int = 1000) -> str:
@@ -154,32 +156,39 @@ def settings() -> dict:
     }
 
 
+def open_client(api_key: str | None = None):
+    """OpenAI 클라이언트와 설정. api_key를 주면 .env 대신 그 키(API가 요청 헤더로 받은 보는 사람의 키, 0013). 키가 없으면 SystemExit.
+    답변 LLM과 템플릿 고르기(src/graph/picker.py)가 같이 쓴다 — 키 확인·클라이언트 생성을 한 곳에 (코드 리뷰 A5)."""
+    s = settings()
+    key = api_key or s["api_key"]
+    if not key:
+        raise SystemExit("OPENAI_API_KEY가 .env에 없습니다. .env.example을 보고 적어 주세요 (노트북에서만 호출합니다)")
+    from openai import OpenAI  # 노트북 전용 호출
+
+    return OpenAI(api_key=key), s
+
+
+def complete_json(client, model: str, instructions: str, text: str, schema: dict, schema_name: str, max_output_tokens: int):
+    """Responses API + JSON 스키마 구조화 출력 한 번. 응답 객체를 그대로 돌려준다 (output_text·usage·status를 부르는 쪽이 본다)."""
+    return client.responses.create(model=model, instructions=instructions, input=text, max_output_tokens=max_output_tokens,
+                                   text={"format": {"type": "json_schema", "name": schema_name, "schema": schema, "strict": True}})
+
+
 class OpenAILLM:
     """OpenAI Responses API + JSON 스키마 구조화 출력. 패키지 import는 함수 안(웹·CI는 키가 없고 부르지 않는다)."""
 
     def __init__(self, model: str | None = None, max_output_tokens: int | None = None, daily_limit: DailyLimit | None = None, api_key: str | None = None):
-        s = settings()
+        self.client, s = open_client(api_key)
         self.name = model or s["model"]
         self.max_output_tokens = max_output_tokens or s["max_output_tokens"]
         self.max_output_tokens_graph = s["max_output_tokens_graph"]
         self.daily_limit = daily_limit or DailyLimit(s["daily_limit"])
-        key = api_key or s["api_key"]
-        if not key:
-            raise SystemExit("OPENAI_API_KEY가 .env에 없습니다. .env.example을 보고 적어 주세요 (노트북에서만 호출합니다)")
-        from openai import OpenAI  # 노트북 전용 호출
 
-        self.client = OpenAI(api_key=key)
-
-    def answer(self, question: str, passages: list[Passage], max_output_tokens: int | None = None) -> Answer:
-        """max_output_tokens를 넘기면 그 상한으로 (ask가 그래프 관계표가 붙은 질문에 max_output_tokens_graph를 넘긴다)."""
+    def answer(self, question: str, passages: list[Passage], graph: bool = False) -> Answer:
+        """graph=True(관계표가 붙은 질문)면 max_output_tokens_graph(기본 4,000), 아니면 max_output_tokens(기본 2,000)."""
         self.daily_limit.take()
-        resp = self.client.responses.create(
-            model=self.name,
-            instructions=SYSTEM_PROMPT.format(not_found=NOT_FOUND),
-            input=build_user_prompt(question, passages),
-            max_output_tokens=max_output_tokens or self.max_output_tokens,
-            text={"format": {"type": "json_schema", "name": "grounded_answer", "schema": ANSWER_SCHEMA, "strict": True}},
-        )
+        resp = complete_json(self.client, self.name, SYSTEM_PROMPT.format(not_found=NOT_FOUND), build_user_prompt(question, passages),
+                             ANSWER_SCHEMA, "grounded_answer", self.max_output_tokens_graph if graph else self.max_output_tokens)
         text, cits = parse_answer(resp.output_text, len(passages))
         usage = getattr(resp, "usage", None)
         truncated = getattr(resp, "status", None) == "incomplete"

@@ -12,6 +12,7 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
+from src.rag.retrievers.base import BaseRetriever
 from src.rag.retrievers.hit import Hit
 from src.api.main import create_app
 from src.graph import picker as P
@@ -37,7 +38,7 @@ def descendants_driver(n_rows=1):
     })
 
 
-class Base:
+class Base(BaseRetriever):
     name = "neo4j-hybrid-fake"
 
     def __init__(self, hits=None):
@@ -109,14 +110,13 @@ class AskGraphTest(DbTest):
         self.assertEqual(result.cited_hits, [])           # 관계표 번호는 조각 목록에 없다
 
     def test_graph_answer_uses_larger_output_cap(self):
-        # 관계표가 붙은 답은 길어서 LLM의 그래프 상한을 넘긴다 (2026-11-26 g05·g12가 600에서 잘림). 관계표가 없으면 기본 상한(None → LLM 기본)
+        # 관계표가 붙은 답은 길어서 LLM에 graph=True로 알린다 (OpenAILLM은 그래프 상한 4,000을 쓴다. 2026-11-26 g05·g12가 600에서 잘림). 관계표가 없으면 False
         r = GraphRetriever(descendants_driver(3), self.con, base=Base(), today=TODAY)
         llm = FakeLLM("3곳입니다 [3].", [3])
-        llm.max_output_tokens_graph = 2000
         ask(self.Q, r, llm, k=2)
-        self.assertEqual(llm.last_max_output_tokens, 2000)
+        self.assertTrue(llm.last_graph)
         ask("신한은행의 배당 성향은?", r, llm, k=2)      # 그래프 질문이 아님 → 관계표 없음
-        self.assertIsNone(llm.last_max_output_tokens)
+        self.assertFalse(llm.last_graph)
 
     def test_graph_only_answer_when_no_chunks(self):
         r = GraphRetriever(descendants_driver(1), self.con, base=Base([]), today=TODAY)

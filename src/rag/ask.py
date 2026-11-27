@@ -22,8 +22,13 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 
+from typing import TYPE_CHECKING
+
 from src.rag.retrievers.hit import Hit
 from src.rag.llm import LLM, NOT_FOUND, Answer, Passage
+
+if TYPE_CHECKING:
+    from src.graph.query import GraphContext
 
 VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
@@ -40,7 +45,7 @@ class AskResult:
     hits: list[Hit]
     answer: Answer | None = None          # --no-llm이면 None
     labels: list[str] = field(default_factory=list)
-    graph: object | None = None           # GraphContext (graph: 검색기가 템플릿을 썼을 때). LLM에는 조각 뒤 마지막 번호로 넘긴다
+    graph: GraphContext | None = None     # 그래프 검색기가 템플릿을 썼을 때의 관계표. LLM에는 조각 뒤 마지막 번호로 넘긴다
     graph_error: str | None = None
 
     @property
@@ -113,31 +118,30 @@ def expand_neighbors(question: str, hits: list[Hit], con, limit: int = NEIGHBOR_
 
 
 def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None, neighbors: int = NEIGHBOR_MAX) -> AskResult:
-    """검색 → 이웃 조각 → (그래프 관계표) → LLM. 그래프 검색기(src/graph/query.GraphRetriever)면 retriever.last에 관계표가 남아 있다.
+    """검색 → 이웃 조각 → (그래프 관계표) → LLM. retriever.retrieve()가 조각과 함께 그래프 관계표·실패 사유·섹션 사전을 돌려준다(src/rag/retrievers/base.py).
 
     이웃 조각은 질문에 절 이름이 있을 때, LLM에 넘길 때만 붙인다(--no-llm·use_llm=False의 검색 결과는 검색기가 돌려준 그대로). 번호는 검색 조각 뒤에 이어 붙이고
     꼬리표에 "(이웃: [n]의 다음 조각)"을 적어 답의 인용·화면에서 검색된 조각과 구별된다. 그래프 관계표는 여전히 마지막 번호.
     """
-    hits = retriever.search(question, k)
+    found = retriever.retrieve(question, k)
+    hits, graph = found.hits, found.graph
     labels = [passage_label(h, con) for h in hits]
-    graph = getattr(retriever, "last", None)
-    result = AskResult(question, hits, None, labels, graph, getattr(retriever, "error", None))
+    result = AskResult(question, hits, None, labels, graph, found.graph_error)
     if llm is None:
         return result
     has_graph = graph is not None and bool(graph.relations or graph.derived)   # 겸직 0행의 '없음' 판정은 파생 값에만 있다
     if not hits and not has_graph:
-        result.answer = Answer(NOT_FOUND, [], getattr(llm, "name", ""))
+        result.answer = Answer(NOT_FOUND, [], llm.name)
         return result
-    base = getattr(retriever, "base", retriever)   # GraphRetriever는 안에 전문검색기(base)를 품는다. 그쪽 섹션 사전을 다시 만들지 않고 쓴다
-    for nh, n, after in expand_neighbors(question, hits, con, neighbors, getattr(base, "section_words", None)):
+    for nh, n, after in expand_neighbors(question, hits, con, neighbors, found.section_words):
         hits.append(nh)
         labels.append(f"{passage_label(nh, con)} (이웃: [{n}]의 {'다음' if after else '앞'} 조각)")
     passages = [Passage(i + 1, labels[i], h.text or h.snippet) for i, h in enumerate(hits)]
     if graph is not None:
         from src.graph.query import to_text
         passages.append(Passage(len(hits) + 1, GRAPH_LABEL, to_text(graph), max_chars=GRAPH_MAX_CHARS))
-        # 관계표가 붙은 답은 길다(회사 목록·경유·이력). 기본 상한(600→1000)에서 g05·g12가 잘렸다(2026-11-26) → 그래프 상한(4,000)을 따로 쓴다
-        result.answer = llm.answer(question, passages, max_output_tokens=getattr(llm, "max_output_tokens_graph", None))
+        # 관계표가 붙은 답은 길다(회사 목록·경유·이력). 기본 상한(600→1000)에서 g05·g12가 잘렸다(2026-11-26) → LLM이 그래프 상한(4,000)을 따로 쓴다
+        result.answer = llm.answer(question, passages, graph=True)
     else:
         result.answer = llm.answer(question, passages)
     return result
@@ -188,18 +192,19 @@ def main(argv=None) -> int:
     ap.add_argument("--neighbors", type=int, default=NEIGHBOR_MAX, help=f"상위 조각과 같은 절의 앞뒤 조각을 LLM에 함께 넘기는 상한 (기본 {NEIGHBOR_MAX}, 0이면 끔)")
     args = ap.parse_args(argv)
 
-    from src.rag.retrievers import make_retriever
+    from src.rag.retrievers import make_retriever, parse_retriever_name
     from src.loaders.duckdb_store import connect
 
     llm = None
     if not args.no_llm:
         from src.rag.llm import OpenAILLM
         llm = OpenAILLM()
+    picker = None
+    if llm is not None and parse_retriever_name(args.retriever).kind == "graph":
+        from src.graph.picker import LLMPicker
+        picker = LLMPicker()   # 규칙이 못 고른 질문만 LLM이 템플릿 번호를 고른다
     with connect(read_only=True) as con:
-        retriever = make_retriever(args.retriever, con, corp_filter=not args.no_filter, rerank=args.rerank)
-        if llm is not None and hasattr(retriever, "picker"):
-            from src.graph.picker import LLMPicker
-            retriever.picker = LLMPicker()   # 규칙이 못 고른 질문만 LLM이 템플릿 번호를 고른다
+        retriever = make_retriever(args.retriever, con, corp_filter=not args.no_filter, rerank=args.rerank, picker=picker)
         result = ask(args.question, retriever, llm, args.k, con, neighbors=args.neighbors)
     print(format_result(result))
     return 0
