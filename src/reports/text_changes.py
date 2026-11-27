@@ -9,7 +9,7 @@
     - 절(section)은 경로(path)가 같은 것끼리 짝짓는다. 한쪽에만 있는 절은 양쪽에 다 있는 가장 가까운 상위 절로 올려 묶어 견준다
       (해마다 절이 나뉘는 굵기가 다르다, _pair_sections). 그래도 짝이 없으면 "절 추가/삭제"로 수만 센다.
     - 문장은 줄바꿈과 한글 뒤 마침표에서 자른다(뒤에 공백이 없어도). 표(tables)는 보지 않는다(표의 숫자 변화는 1차와 정형 표의 영역).
-    - 순서는 보지 않는다: 같은 문장을 먼저 빼고, 남은 것끼리 닮은 정도가 PAIR_MIN_RATIO 이상일 때만 "바뀜" 짝으로 묶는다.
+    - 순서는 보지 않는다: 같은 문장을 먼저 빼고, 남은 것끼리 충분히 닮았을 때만(PAIR_MIN_RATIO·PAIR_MIN_CONTAIN) "바뀜" 짝으로 묶는다.
     - **숫자만 바뀐 문장과 글이 바뀐 문장을 가른다.** 숫자·날짜·금액을 '#'로 가린 꼴(_mask)이 같으면 "숫자만 바뀜"으로 수만 세고,
       가린 꼴이 다르면 글이 바뀐 것이다. 사업보고서는 해마다 "제N기", "2025년 12월 31일 현재", 금액이 바뀌는 문장이 수백 개라
       이걸 가르지 않으면 리포트가 숫자 갱신에 묻힌다. 글이 바뀐 문장만 전후 문장으로 보여 준다.
@@ -53,7 +53,9 @@ _WS_RE = re.compile(r"\s+")
 # 문장 끝: 한글(또는 닫는 괄호) 뒤의 마침표·물음표·느낌표. 뒤에 공백이 없어도 자른다 — 원문에 "…없습니다.- 기업회계기준서…"처럼
 # 마침표 뒤에 바로 다음 항목이 붙는 곳이 많다(KB금융 2025 주석). 숫자 뒤 마침표(12.31, 1.5%)는 문장 끝이 아니다.
 _SPLIT_RE = re.compile(r"(?<=[가-힣)\]][.!?])\s*|\n+")
-PAIR_MIN_RATIO = 0.7            # 전년·이번 문장을 '바뀜' 짝으로 묶는 최소 닮음(짧은 쪽 글자의 몇 %가 긴 쪽에 같은 순서로 있나, 가린 꼴). 낮으면 삭제·추가
+PAIR_MIN_RATIO = 0.5            # '바뀜' 짝의 최소 닮음 1: difflib ratio(2M/(la+lb), 가린 꼴). 짧은 문장이 긴 문장에 흡수된 꼴을 거른다
+PAIR_MIN_CONTAIN = 0.7          # '바뀜' 짝의 최소 닮음 2: 짧은 쪽 글자의 몇 %가 긴 쪽에 같은 순서로 있나(M/짧은 길이). 늘어난 문장을 짝으로 잡는다
+PAIR_MIN_BLOCK = 3              # M을 셀 때 3글자 미만의 우연한 일치("의", "에", "재무")는 빼고 센다
 PAIR_MAX_WORK = 400_000         # 짝 찾기 비용 상한(남은 전년 문장 수 × 이번 문장 수). 넘으면 짝짓기를 건너뛰고 삭제·추가로만 적는다
 
 
@@ -123,7 +125,7 @@ def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
     순서대로 맞추면(difflib 옵코드) 엉뚱한 문장끼리 '바뀜' 짝이 된다(KB금융 2024 주석 1절 ↔ 2025 40절, 2026-11-27 노트북).
 
     1) 가린 꼴(mask)이 같은 문장은 양쪽에서 뺀다. 원문이 다르면 숫자만 바뀐 것으로 센다.
-    2) 남은 전년 문장마다 남은 이번 문장 중 가장 닮은 것(짧은 쪽 글자의 PAIR_MIN_RATIO 이상이 긴 쪽에 같은 순서로 있음)을 '바뀜' 짝으로 묶는다.
+    2) 남은 전년 문장마다 남은 이번 문장 중 가장 닮은 것(ratio ≥ PAIR_MIN_RATIO 그리고 포함률 ≥ PAIR_MIN_CONTAIN, 3글자 이상 일치만 셈)을 '바뀜' 짝으로 묶는다.
     3) 짝이 없는 것은 삭제·추가.
     """
     d = SectionDiff(path="", status="same", sentences_before=len(before), sentences_after=len(after))
@@ -150,18 +152,20 @@ def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
                 if ma is None:
                     continue
                 sm.set_seq1(ma)
-                shorter = min(len(ma), len(mb)) or 1
-                # ratio()는 2M/(la+lb)라 짧은 문장이 길게 늘어난 경우("충분합니다." → "충분하며 외화 조달도 늘렸습니다.")에 낮게 나온다.
-                # 그래서 '짧은 쪽이 얼마나 들어 있나'(M/shorter)로 잰다. 앞의 두 빠른 상한으로 가망 없는 쌍을 먼저 거른다
-                if sm.real_quick_ratio() * (len(ma) + len(mb)) / 2 / shorter < PAIR_MIN_RATIO:
+                # 두 잣대를 다 넘어야 짝이다 (노트북 KB금융 2024·2025로 맞춤):
+                #  - ratio만 보면 "충분합니다." → "충분하며 외화 조달도 늘렸습니다."처럼 늘어난 문장이 짝이 안 되고(0.62),
+                #  - 포함률만 보면 "(단위: 백만원)"이 "① 2023년 … 요약포괄손익계산서(단위: 백만원)"에 통째로 들어 있어(1.0) 엉뚱한 짝이 된다(ratio 0.47).
+                # real_quick_ratio·quick_ratio는 ratio의 상한이라 가망 없는 쌍을 먼저 거른다
+                if sm.real_quick_ratio() < PAIR_MIN_RATIO or sm.quick_ratio() < PAIR_MIN_RATIO:
                     continue
-                if sm.quick_ratio() * (len(ma) + len(mb)) / 2 / shorter < PAIR_MIN_RATIO:
+                matched = sum(bl.size for bl in sm.get_matching_blocks() if bl.size >= PAIR_MIN_BLOCK)
+                ratio = 2 * matched / (len(ma) + len(mb))
+                contain = matched / (min(len(ma), len(mb)) or 1)
+                if ratio < PAIR_MIN_RATIO or contain < PAIR_MIN_CONTAIN:
                     continue
-                matched = sum(bl.size for bl in sm.get_matching_blocks())
-                r = matched / shorter
-                if r > best:
-                    best, best_i = r, i
-            if best >= PAIR_MIN_RATIO:
+                if contain > best:
+                    best, best_i = contain, i
+            if best_i >= 0:
                 d.replaced.append((b, rest_after[best_i][0]))
                 rest_after[best_i] = (rest_after[best_i][0], None)
             else:
