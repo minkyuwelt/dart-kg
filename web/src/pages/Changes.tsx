@@ -126,7 +126,9 @@ export default function Changes() {
             )}
           </p>
 
-          {withChanges.map((r) => <Report key={r.rcept_no} r={r} />)}
+          <div className={s.reports}>
+            {withChanges.map((r, i) => <Report key={r.rcept_no} r={r} open={i === 0 && withChanges.length <= 3} />)}
+          </div>
 
           {without.length > 0 && (
             <details className={s.quiet}>
@@ -153,36 +155,45 @@ function kindLabel(data: ChangesResponse, kind: string): string {
   return kind;
 }
 
-function Report({ r }: { r: ReportChanges }) {
+function Report({ r, open }: { r: ReportChanges; open: boolean }) {
+  // 보고서마다 한 줄(회사·보고서·접수일·변화 종류별 건수)만 보이고, 누르면 표가 펼쳐진다 — 보고서 28개를 다 펼치면 한 화면에 안 들어간다
+  const counts = new Map<string, number>();
+  for (const c of r.changes) counts.set(c.kind_label, (counts.get(c.kind_label) ?? 0) + 1);
   return (
-    <section className={s.report} aria-label={`${r.corp_name} ${r.report_nm}`}>
-      <header className={s.reportHead}>
-        <h3 className={s.h3}>
-          {r.corp_name} <span className={s.reportNm}>{r.report_nm}</span>
-        </h3>
+    <details className={s.report} open={open}>
+      <summary className={s.reportRow}>
+        <span className={s.reportTitle}>
+          <span className={s.reportCorp}>{r.corp_name}</span> <span className={s.reportNm}>{r.report_nm}</span>
+        </span>
+        <span className={s.reportCounts}>
+          {[...counts].map(([label, n]) => <span key={label} className={s.count}>{label} {n}</span>)}
+        </span>
+        <span className={s.reportDate}>{r.rcept_dt}</span>
+      </summary>
+      <div className={s.reportBody}>
         <p className={s.reportMeta}>
-          접수 {r.rcept_dt} · 기준일 {r.stlm_dt ?? "?"}{r.prev_stlm_dt ? ` (직전 ${r.prev_stlm_dt}과 견줌)` : ""} ·{" "}
+          기준일 {r.stlm_dt ?? "?"}{r.prev_stlm_dt ? ` (직전 ${r.prev_stlm_dt}과 견줌)` : ""} ·{" "}
           <a href={r.url} target="_blank" rel="noreferrer">DART에서 보기</a>
         </p>
-      </header>
-      <div className={s.tableWrap}>
-      <table className={s.table}>
-        <thead>
-          <tr><th className={s.thKind}>변화</th><th>대상</th><th className={s.thVal}>이전</th><th className={s.thVal}>이후</th><th className={s.thNote}>비고</th></tr>
-        </thead>
-        <tbody>
-          {r.changes.map((c, i) => (
-            <tr key={i} className={c.kind.endsWith("_gone") ? s.gone : c.kind.endsWith("_new") ? s.added : undefined}>
-              <td className={s.tdKind}>{c.kind_label}</td>
-              <td>{c.subject}</td>
-              <td className={s.before}>{c.before || "—"}</td>
-              <td className={s.after}>{c.after || "—"}</td>
-              <td className={s.note}>{c.note}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        <div className={s.tableWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr><th className={s.thKind}>변화</th><th>대상</th><th className={s.thVal}>이전</th><th className={s.thVal}>이후</th><th className={s.thNote}>비고</th></tr>
+            </thead>
+            <tbody>
+              {r.changes.map((c, i) => (
+                <tr key={i} className={c.kind.endsWith("_gone") ? s.gone : c.kind.endsWith("_new") ? s.added : undefined}>
+                  <td className={s.tdKind}>{c.kind_label}</td>
+                  <td>{c.subject}</td>
+                  <td className={s.before}>{c.before || "—"}</td>
+                  <td className={s.after}>{c.after || "—"}</td>
+                  <td className={s.note}>{c.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
+    </details>
   );
 }

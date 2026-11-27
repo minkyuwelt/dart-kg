@@ -45,12 +45,37 @@
 .kinds { display: block; margin-top: 6px; color: var(--ink-2); font-size: 14px; }
 .kind { display: inline-block; margin-right: 14px; }
 
-/* 보고서 한 묶음: 제목 줄 + 표. 묶음 사이는 괘선 */
-.report { margin-top: 32px; }
-.reportHead { margin-bottom: 10px; }
-.h3 { font-size: 17px; }
-.reportNm { font-weight: 400; color: var(--ink-2); margin-left: 6px; }
-.reportMeta { margin: 2px 0 0; font-size: 13px; color: var(--ink-2); }
+/* 보고서 목록: 한 줄에 회사·보고서, 변화 종류별 건수, 접수일. 괘선으로 나누고, 펼치면 표가 아래에 */
+.reports { margin-top: 20px; border-top: 1px solid var(--rule-strong); }
+.report { border-bottom: 1px solid var(--rule); }
+.reportRow {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr) auto;
+  gap: 16px;
+  align-items: baseline;
+  padding: 12px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.reportRow::-webkit-details-marker { display: none; }
+/* 펼침 표시: 제목 앞 작은 삼각형. 열리면 아래를 향한다 (상태를 알려 주는 장치라 둔다) */
+.reportTitle::before { content: "▸"; display: inline-block; width: 1em; color: var(--ink-2); font-size: 12px; }
+.report[open] .reportTitle::before { content: "▾"; }
+.reportRow:hover .reportCorp { color: var(--blue-ink); }
+.report[open] .reportRow { padding-bottom: 6px; }
+.reportTitle { min-width: 0; }
+.reportCorp { font-weight: 600; }
+.reportNm { color: var(--ink-2); margin-left: 4px; font-size: 14px; }
+.reportCounts { font-size: 13px; color: var(--ink-2); }
+.count { display: inline-block; margin-right: 12px; white-space: nowrap; }
+.reportDate { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.reportBody { padding: 0 0 18px; }
+.reportMeta { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+@media (max-width: 700px) {
+  .reportRow { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+  .reportDate { grid-row: 1; grid-column: 2; }
+  .reportCounts { grid-row: 2; grid-column: 1 / -1; }
+}
 
 /* 보고서마다 표가 따로라 열 너비를 고정해 두어야 위아래 표의 열이 맞는다. 좁은 화면은 가로 스크롤 */
 .tableWrap { overflow-x: auto; }
