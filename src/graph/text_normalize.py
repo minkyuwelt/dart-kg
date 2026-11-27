@@ -92,7 +92,27 @@ def is_section_word(raw: str, section_words: set[str]) -> bool:
     "배당"·"임원"·"연혁"처럼 섹션을 가리키는 말이 질문 낱말 안에 들어 있으면 그 섹션을 묻는 것으로 본다.
     """
     forms = [f for f in _word_forms(raw) if len(f) >= 2]
-    return any(w in f for f in forms for w in section_words)
+    return any(w in f and not _is_verb_form(f, w) for f in forms for w in section_words)
+
+
+# 명사 뒤에 붙어 동사를 만드는 어미의 첫 글자. "측정하고"·"관리하는가"·"변동되었나"·"상장시켰나"
+_VERB_SUFFIX_RE = re.compile(r"^(?:하|해|했|되|돼|됐|시키|시켜|시켰)")
+
+
+def _is_verb_form(form: str, word: str) -> bool:
+    """사전 낱말 바로 뒤가 '하·되·시키'로 이어지면 동사꼴로 본다 (2026-11-27, d005).
+
+    왜: 섹션 사전에 "측정"(공정가치 측정)·"관리"(위험관리)가 있어 "측정하고"·"관리하는가"까지 섹션 낱말이 되었고, 셋이 AND로 묶여
+    전문검색이 0개였다. 섹션 이름은 명사로 쓰고, 질문의 "명사+하다"는 동작을 묻는 말이라 공시 글에 글자 그대로 나오는 일이 드물다.
+    동사꼴은 필수에서 빼고 선택 낱말로만 둔다. 사전 낱말이 낱말 끝에 있으면("위험관리") 명사다.
+    """
+    i = form.find(word)
+    while i >= 0:
+        tail = form[i + len(word):]
+        if not tail or not _VERB_SUFFIX_RE.match(tail):
+            return False
+        i = form.find(word, i + 1)
+    return True
 
 
 def section_terms(question: str, section_words: set[str]) -> list[str]:

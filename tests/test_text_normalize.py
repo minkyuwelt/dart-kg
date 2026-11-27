@@ -60,6 +60,17 @@ class TextNormalizeTest(unittest.TestCase):
         self.assertEqual(section_terms("우리은행의 2025년 주당 현금배당금은?", vocab), ["현금배당금은", "현금배당금"])
         # 섹션 낱말이 없는 질문은 빈 질의 → 전문검색 건너뜀(벡터만)
         self.assertEqual(fulltext_query("동양생명보험은 신용위험을 어떻게 측정하고 관리하는가?", vocab), "")
+
+    def test_verb_forms_are_not_section_words(self):
+        # d005 (2026-11-27): 사전에 "측정"·"관리"가 있어도 "측정하고"·"관리하는가"는 동사꼴 → 필수가 아니라 선택. "신용위험"만 필수
+        vocab = section_vocabulary(["III. 재무에 관한 사항 > 42. 금융위험관리", "주석 > 위험 관리", "주석 > 공정가치 측정", "신용위험"])
+        self.assertEqual(section_terms("동양생명보험은 신용위험을 어떻게 측정하고 관리하는가?", vocab), ["신용위험을", "신용위험"])
+        R = '("신용위험을" OR "신용위험")'
+        self.assertEqual(fulltext_query("동양생명보험은 신용위험을 어떻게 측정하고 관리하는가?", vocab),
+                         f'{R} OR ({R} AND ("동양생명보험은" OR "동양생명보험")) OR ({R} AND "측정하고") OR ({R} AND ("관리하는가" OR "관리하는"))')
+        # 명사 끝에 있는 사전 낱말은 그대로 필수 ("위험관리는" → "위험관리")
+        self.assertEqual(section_terms("위험관리는 누가 하나?", vocab), ["위험관리는", "위험관리"])
+        self.assertEqual(section_terms("측정 기준은?", vocab), ["측정"])
         # 사전이 없으면(None) 낱말끼리 OR
         self.assertEqual(fulltext_query("대표이사 변경", None), '"대표이사" OR "변경"')
 
