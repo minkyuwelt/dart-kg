@@ -46,14 +46,38 @@ ORDER BY score DESC LIMIT $k
 # $prefer_latest: 질문에 연도·날짜가 없으면 최신 보고서 조각을 먼저. 접수번호는 YYYYMMDD로 시작해 문자열 내림차순이 곧 최신순.
 # 왜(2026-11-26 d007): "신한라이프의 주요 사업 부문은?"에 5개년 보고서의 같은 "사업의 개요" 조각이 모두 걸려 옛 보고서가 앞자리를 차지했고,
 # RRF가 그것을 상위 5개에 섞어 정답(최신 보고서)이 밀렸다. 날짜 없는 질문은 "지금 기준"으로 답하는 것이 이 시스템의 원칙(라우터 기준일도 오늘)
+# $year: 질문의 연도("2025년" → "2025"). 조각 글에 그 연도가 적힌 횟수(year_hits)가 많은 조각을 먼저. 연도 없는 질문은 NULL → 모두 0.
+# 왜(2026-11-27 d033): 연혁 절의 2025년 항목 여섯 개가 든 조각(884자)이, 2025년 날짜 하나뿐인 자회사 연혁 조각(556자)보다 Lucene 점수가 낮았다.
+# 앞부분 일치 `2025*`는 몇 번 맞든 같은 점수(constant score)이고 짧은 글이 점수를 더 받기 때문. 공시의 연혁·수상·발행 실적은 항목마다 날짜를 적으므로
+# "2025년 중 …"을 물으면 그 연도가 많이 적힌 조각이 답일 가능성이 크다. Lucene이 세지 못하는 것을 Cypher에서 센다
+# $n: Lucene이 점수 순으로 먼저 자르는 수. 최신 먼저(prefer_latest)일 때는 fetch의 FULLTEXT_LATEST_FACTOR배를 받는다 — 20개만 받으면
+# 글이 긴 옛 조각이 점수로 그 20개를 다 차지해 "최신 먼저" 정렬이 그 안에서만 돈다(2026-11-27 d005: 상위 4개가 2022·2023년 거대 조각)
 FULLTEXT_QUERY = f"""
 CALL db.index.fulltext.queryNodes('{FULLTEXT_INDEX}', $q, {{limit: $n}}) YIELD node AS c, score
 WHERE $corp IS NULL OR c.corp_code = $corp
 WITH c, score, CASE WHEN $section_words IS NOT NULL AND any(w IN $section_words WHERE c.path CONTAINS w) THEN 1 ELSE 0 END AS in_section,
-     CASE WHEN $prefer_latest THEN c.rcept_no ELSE '' END AS recency
+     CASE WHEN $prefer_latest THEN c.rcept_no ELSE '' END AS recency,
+     CASE WHEN $year IS NULL THEN 0 ELSE size(split(c.text, $year)) - 1 END AS year_hits
 RETURN c.rcept_no AS rcept_no, c.file_name AS file_name, c.section_id AS section_id, c.path AS path, score, c.text AS text
-ORDER BY in_section DESC, recency DESC, score DESC LIMIT $k
+ORDER BY in_section DESC, year_hits DESC, recency DESC, score DESC LIMIT $k
 """
+
+FULLTEXT_LATEST_FACTOR = 10
+_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})년")
+
+
+def question_year(question: str) -> str | None:
+    """질문의 첫 연도("2025년" → "2025"). 없으면 None. 연도가 둘이면 첫 것만(비교 질문은 어느 쪽을 먼저 놓아도 다른 쪽이 밀리므로 안 세는 편이 낫지만, 아직 그런 질문이 없다)."""
+    m = _YEAR_RE.search(question)
+    return m.group(1) if m else None
+
+
+def fulltext_params(question: str, q: str, corp: str | None, fetch: int, section_words: set[str] | None) -> dict:
+    """전문검색 Cypher의 매개변수 한 묶음. 검색기 둘(전문검색만·하이브리드)이 같은 값을 쓰도록 한곳에서 만든다."""
+    latest = not has_date(question)
+    words = section_terms(question, section_words) if section_words else None
+    return {"q": fulltext_with_corp(q, corp), "n": fetch * FULLTEXT_LATEST_FACTOR if latest else fetch, "corp": corp, "k": fetch,
+            "section_words": words or None, "prefer_latest": latest, "year": question_year(question)}
 
 _DATED_RE = re.compile(r"(?:19|20)\d{2}\s*년|\d{4}[.\-/]\d{1,2}|지난|작년|전년|당시|이전|직전|년도|기준")
 
@@ -119,9 +143,7 @@ class Neo4jFulltextRetriever:
         if not q:
             return []
         corp = guess_corp_code(self.con, question) if (self.corp_filter and self.con is not None) else None
-        words = section_terms(question, self.section_words) if self.section_words else None
-        return _hits(self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=k, corp=corp, k=k, section_words=words or None,
-                                               prefer_latest=not has_date(question), database_=self.database).records)
+        return _hits(self.driver.execute_query(FULLTEXT_QUERY, **fulltext_params(question, q, corp, k, self.section_words), database_=self.database).records)
 
 
 def rrf_fuse(ranked_lists: list[list[dict]], key=lambda r: (r["rcept_no"], r["file_name"], r["section_id"], r["path"], r["text"])) -> list[tuple[dict, float]]:
@@ -153,9 +175,7 @@ class Neo4jHybridRetriever:
         lists = [[dict(r) for r in self.driver.execute_query(VECTOR_QUERY, n=n, vec=vec, corp=corp, k=self.fetch, database_=self.database).records]]
         q = fulltext_query(question, self.section_words)
         if q:
-            words = section_terms(question, self.section_words) if self.section_words else None
-            lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, q=fulltext_with_corp(q, corp), n=self.fetch, corp=corp, k=self.fetch,
-                                                                    section_words=words or None, prefer_latest=not has_date(question),
+            lists.append([dict(r) for r in self.driver.execute_query(FULLTEXT_QUERY, **fulltext_params(question, q, corp, self.fetch, self.section_words),
                                                                     database_=self.database).records])
         if not has_date(question):
             lists = [keep_latest_copy(lst) for lst in lists]   # 날짜 없는 질문: 같은 글의 여러 해 복사본 중 최신만 (d007)

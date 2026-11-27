@@ -137,10 +137,17 @@ class LoadChunksTest(unittest.TestCase):
         self.assertIn("db.index.fulltext.queryNodes('chunk_text'", q)
         self.assertEqual(p["q"], '("배당은" OR "배당") OR (("배당은" OR "배당") AND "KB 금융")')   # 섹션 낱말(배당) 필수, 회사명은 선택
         self.assertEqual(p["section_words"], ["배당은", "배당"])                 # 섹션 경로에 '배당'이 든 조각을 먼저
-        self.assertIn("ORDER BY in_section DESC, recency DESC, score DESC", q)
+        self.assertIn("ORDER BY in_section DESC, year_hits DESC, recency DESC, score DESC", q)
         self.assertTrue(p["prefer_latest"])                                     # 연도 없는 질문 → 최신 보고서 먼저 (d007)
+        self.assertEqual((p["n"], p["k"]), (30, 3))                              # 최신 먼저면 Lucene에서 10배를 받아 정렬 (2026-11-27 d005)
+        self.assertIsNone(p["year"])
         ft.search("2024년 KB금융 배당은?", 3)
-        self.assertFalse(drv.calls[-1][1]["prefer_latest"])
+        p = drv.calls[-1][1]
+        self.assertFalse(p["prefer_latest"])
+        self.assertEqual((p["n"], p["year"]), (3, "2024"))                       # 연도 있는 질문: 그 연도가 많이 적힌 조각 먼저 (2026-11-27 d033)
+        from eval.retrievers.neo4j import question_year
+        self.assertEqual(question_year("케이비국민카드의 2025년 중 주요 연혁은?"), "2025")
+        self.assertIsNone(question_year("2025.02.18 이후 변동은?"))                # '년'이 붙은 연도만
         from eval.retrievers.neo4j import has_date
         self.assertTrue(has_date("2024년 사업보고서 기준 대표이사는?")); self.assertTrue(has_date("2021년 12월 31일 기준"))
         self.assertFalse(has_date("신한라이프생명보험의 주요 사업 부문은 무엇인가?"))
@@ -181,11 +188,11 @@ class LoadChunksTest(unittest.TestCase):
         q_vec, p_vec = drv.calls[-2]
         q_ft, p_ft = drv.calls[-1]
         self.assertIn("db.index.vector", q_vec); self.assertIn("db.index.fulltext", q_ft)
-        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["n"], p_ft["q"]), (20, 20, 20, 20, '"배당" OR ("배당" AND "우리은행")'))   # 양쪽 20개씩 가져와 합침 (필터 없음)
+        self.assertEqual((p_vec["k"], p_vec["n"], p_ft["k"], p_ft["n"], p_ft["q"]), (20, 20, 20, 200, '"배당" OR ("배당" AND "우리은행")'))   # 양쪽 20개씩 합침 (필터 없음). 전문검색은 날짜 없는 질문이라 Lucene에서 200개를 받아 최신 먼저로 정렬 뒤 20개
         # 회사 필터 → 후보 20×20, corp 전달
         rc = make_retriever("neo4j:hybrid:kure-v3", self.con, corp_filter=True, embedder=FakeEmbedder(), driver=drv)
         rc.search("신한은행 배당", 2)
-        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 20))      # 전문검색: 회사를 Lucene 질의 안에서 거르므로 후보 = fetch
+        self.assertEqual((drv.calls[-1][1]["corp"], drv.calls[-1][1]["n"]), ("00149293", 200))     # 전문검색: 회사는 Lucene 질의 안에서 거르므로 ×20은 없고, 날짜 없는 질문이라 최신 먼저용 ×10만
         self.assertEqual(drv.calls[-1][1]["q"], 'corp_code:00149293 AND ("배당" OR ("배당" AND "신한은행"))')
         self.assertEqual((drv.calls[-2][1]["corp"], drv.calls[-2][1]["n"]), ("00149293", 400))     # 벡터: 20×20 그대로
         # 재순위는 하이브리드에만: '배당'이 든 d가 맨 위로
