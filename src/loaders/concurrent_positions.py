@@ -9,7 +9,7 @@
   2) 행마다 이름·겸직 회사·직위·선임·상근을 열 별명 표로 읽는다 (지주마다 열 이름이 다르다, 0014 결정 1)
   3) 사람: 같은 지주 임원 표에서 같은 기준일에 유효한 같은 이름이 정확히 1명이면 그 person_id. 0명·2명 이상이면 비워 두고 방법만 적는다 (0006)
   4) 회사: 출자 표와 같은 이름 연결 (investments.resolve + config/corp_name_overrides.csv)
-  5) 시간: valid_from = 기준일, 정정본 superseded_by, 다음 스냅샷 기준일로 valid_to (temporal.mark_superseded·chain_snapshots)
+  5) 시간: valid_from = 기준일, 정정본 superseded_by, 다음 스냅샷 기준일로 valid_to (temporal.close_snapshot)
 
     python -m src.loaders.concurrent_positions rebuild      # 노트북에서 따로 돌려 볼 때 (보통은 relations rebuild가 함께 한다)
 """
@@ -24,9 +24,10 @@ from datetime import date
 
 import duckdb
 
-from src.loaders.investments import build_name_index, load_overrides, normalize_name, resolve
+from src.loaders.corp_names import build_name_index, load_overrides, normalize_name, resolve
+from src.loaders.duckdb_store import replace_rows, transaction
 from src.loaders.periodic_reports import periodic_report_key
-from src.loaders.temporal import chain_snapshots, mark_superseded
+from src.loaders.temporal import close_snapshot
 
 # 열 별명 (2026-11-27 네 지주 2025 사업보고서에서 확인). 머리 글자의 공백은 뗀 뒤 비교한다 ("성 명" → "성명", "비 고" → "비고")
 COLUMNS = {
@@ -178,13 +179,8 @@ def rebuild_concurrent_positions(con: duckdb.DuckDBPyConnection) -> dict:
     """concurrent_position을 document_section에서 다시 만든다 (API 0건). 호출하는 쪽이 트랜잭션을 연다.
     executive가 먼저 채워져 있어야 사람을 이을 수 있다 (rebuild_relations가 그 순서로 부른다)."""
     rows = collect_rows(con)
-    con.execute("DELETE FROM concurrent_position")
-    if rows:
-        con.executemany(
-            f"INSERT INTO concurrent_position ({', '.join(COLUMN_LIST)}, loaded_at) VALUES ({', '.join('?' * len(COLUMN_LIST))}, now())",
-            [[r[c] for c in COLUMN_LIST] for r in rows])
-    superseded = mark_superseded(con, "concurrent_position", "source_rcept_no", "holding_corp_code")
-    chain_snapshots(con, "concurrent_position", "holding_corp_code")
+    replace_rows(con, "concurrent_position", rows, COLUMN_LIST)
+    superseded = close_snapshot(con, "concurrent_position")
     by_method = dict(con.execute("SELECT person_method, count(*) FROM concurrent_position GROUP BY 1").fetchall())
     return {"concurrent_position": len(rows), "concurrent_superseded": superseded, "concurrent_person_by_method": by_method,
             "concurrent_non_officer": sum(1 for r in rows if not r["is_officer"]),
@@ -196,7 +192,5 @@ if __name__ == "__main__":
         sys.exit("사용법: python -m src.loaders.concurrent_positions rebuild")
     from src.loaders.duckdb_store import connect
 
-    with connect() as con:
-        con.begin()
+    with connect() as con, transaction(con):
         print(rebuild_concurrent_positions(con))
-        con.commit()

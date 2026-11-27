@@ -30,7 +30,7 @@ import duckdb
 from src.collectors.corp_code import get_api_key
 from src.collectors.disclosure_list import fetch_disclosures, parse_disclosures
 from src.loaders.duckdb_store import connect
-from src.loaders.investments import build_name_index, load_overrides, to_hangul_letters
+from src.loaders.corp_names import build_name_index, load_overrides, to_hangul_letters
 
 RECENT_DAYS = 90  # "최근 공시"로 보는 기간. 기존 override 근거(최근 3개월)와 같게 둔다
 

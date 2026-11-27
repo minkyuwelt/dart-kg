@@ -44,7 +44,7 @@ from src.graph.client import connect, settings, wait_until_ready
 from src.loaders.duckdb_store import connect as duck_connect
 from src.graph.names import NAME_CHARS, has_name, linked_names
 from src.graph.templates import is_ceo
-from src.loaders.investments import normalize_name
+from src.loaders.corp_names import normalize_name
 
 LINEAGE_PATH = Path(__file__).resolve().parents[2] / "config" / "corp_lineage.csv"
 LINEAGE_COLUMNS = ["current_corp_code", "former_corp_code", "former_name", "on", "reason", "evidence_rcept_no"]
