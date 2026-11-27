@@ -8,10 +8,7 @@
 """
 
 import os
-import tempfile
 import unittest
-from datetime import date
-from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
@@ -20,17 +17,14 @@ from src.api.main import create_app
 from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_change_report import D2024, D2025, KB, R2024, R2025, add_exec, add_holder, add_inv
+from tests.helpers import TempDuckDBTestCase
 from tests.test_rag_ask import FakeLLM
 from tests.test_report_details import disclosure_row
 
 
-class ApiTest(unittest.TestCase):
+class ApiTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         with connect() as con:
             con.execute("INSERT INTO target_corp VALUES (?, 'KB금융', 'holding', NULL, NULL, NULL, '2025', now())", [KB])
             upsert_disclosures(con, [disclosure_row(R2024, "사업보고서 (2024.12)", "20250314"), disclosure_row(R2025, "사업보고서 (2025.12)", "20260313")])

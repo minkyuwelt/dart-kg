@@ -1,9 +1,7 @@
 """report_details 백필 계획(plan_partitions)과 재생성·검사(rebuild_and_check) 테스트. DART API를 호출하지 않는다."""
 
 import os
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import dagster as dg
@@ -15,19 +13,19 @@ from src.collectors.report_detail import ENDPOINTS
 from src.loaders.duckdb_store import save_raw
 from src.pipeline.backfill_reports import plan_partitions, rebuild_and_check, run
 from tests.test_temporal import EXECUTIVES, REPORTS, SHAREHOLDERS
+from tests.helpers import TempDuckDBTestCase
 from tests.test_backfill import report_targets
 from tests.test_report_details import disclosure_row
 
 KB, SHINHAN = "00688996", "00382199"
 
 
-class PlanReportPartitionsTest(unittest.TestCase):
+class PlanReportPartitionsTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb"), "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.instance = self.enterContext(dg.instance_for_test())
         self.instance.add_dynamic_partitions("corp", [KB, SHINHAN])
         report_targets(self.instance, [KB, SHINHAN, "00000077"])

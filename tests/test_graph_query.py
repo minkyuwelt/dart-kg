@@ -8,12 +8,8 @@
 5) 그래프 근거 조각과 RAG 조각을 RRF로 합치기, 라우터가 못 고르면 RAG 그대로
 """
 
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from eval.metrics import Hit
 from src.graph import query as Q
@@ -21,16 +17,12 @@ from src.graph import templates as T
 from src.graph.router import find_corps, parse_as_of, route
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_report_details import disclosure_row
+from tests.helpers import FakeResult, TempDuckDBTestCase
 
 KBH, SHH, HNH, WRH = "00000001", "00000002", "00000003", "00000004"
 KBBANK, KBCARD, WRBANK, SHLIFE, SHSEC, WRSEC, KBLIFE_OLD = "00000011", "00000012", "00000041", "00000021", "00000022", "00000042", "00000099"
 SHBANK = "00000023"
 TODAY = date(2026, 11, 25)
-
-
-class FakeResult:
-    def __init__(self, records):
-        self.records = records
 
 
 def node(key, name, label="Corp", has=True, names=None):
@@ -60,13 +52,9 @@ class TemplateDriver:
         return FakeResult(ans(params) if callable(ans) else ans)
 
 
-class GraphQueryTest(unittest.TestCase):
+class GraphQueryTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con

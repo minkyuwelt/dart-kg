@@ -8,18 +8,15 @@
 """
 
 import json
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from src.reports.text_changes import (
     build_text_report, diff_sentences, mask, previous_report, render_markdown, report_text_changes, split_sentences, summarize,
 )
 from tests.test_report_details import disclosure_row
+from tests.helpers import TempDuckDBTestCase
 
 KB = "00688996"
 R2024, R2025, R2025_FIX, H2025 = "20250314000001", "20260313000002", "20260401000003", "20250814000004"
@@ -34,13 +31,9 @@ RISK_2025 = ("당사는 신용위험을 내부등급법으로 측정합니다. 2
              "기후위험은 2025년부터 별도 위원회가 점검합니다.")
 
 
-class TextChangesTest(unittest.TestCase):
+class TextChangesTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         upsert_disclosures(self.con, [

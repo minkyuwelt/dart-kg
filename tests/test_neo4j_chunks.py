@@ -4,10 +4,7 @@ Neo4j 없이 가짜 드라이버로 확인한다 — 어떤 Cypher가 어떤 행
 실제 인덱스 동작(근사 검색 정확도, cjk 분석기)은 노트북에서 eval.run으로 잰다 (0009·0004).
 """
 
-import os
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from eval.retrievers import make_retriever
@@ -17,14 +14,10 @@ from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from src.rag.embedding import embed_chunks
 from tests.test_embedding import FakeEmbedder
+from tests.helpers import FakeResult, TempDuckDBTestCase
 
 WOORI = "20260313000815"
 SHINHAN = "20260313000777"
-
-
-class FakeResult:
-    def __init__(self, records):
-        self.records = records
 
 
 class FakeDriver:
@@ -42,13 +35,9 @@ class FakeDriver:
         return FakeResult(self.records if "queryNodes" in query else [])
 
 
-class LoadChunksTest(unittest.TestCase):
+class LoadChunksTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         con = self.con

@@ -9,17 +9,15 @@
 """
 
 import json
-import os
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from eval.metrics import hit_at_k
 from eval.retrievers import make_retriever
-from src.loaders.chunking import Chunk, DocMeta, SectionData, chunk_sections, pack, split_long, table_header_names, table_to_lines
+from src.loaders.chunking import DocMeta, SectionData, chunk_sections, pack, split_long, table_header_names, table_to_lines
 from src.loaders.chunks import build_chunks, chunk_stats, eval_rcept_nos, parsed_rcept_nos
 from src.loaders.duckdb_store import connect, upsert_disclosures
+from tests.helpers import TempDuckDBTestCase
 
 META = DocMeta("20260313000815", "20260313000815.xml", "00254045", "우리은행", "사업보고서 (2025.12)")
 EXEC_TABLE = {"caption": None, "unit": None, "header_rows": 2,
@@ -130,15 +128,11 @@ class StrategyTest(unittest.TestCase):
             chunk_sections(META, [], "semantic")
 
 
-class BuildChunksTest(unittest.TestCase):
+class BuildChunksTest(TempDuckDBTestCase):
     RCEPT = "20260313000815"
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         self.con = connect()
         self.addCleanup(self.con.close)
         upsert_disclosures(self.con, [{"rcept_no": self.RCEPT, "corp_code": "00254045", "corp_name": "우리은행", "stock_code": "",

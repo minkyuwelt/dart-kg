@@ -6,11 +6,8 @@
 requests.get을 가짜 응답으로 바꾸고, DuckDB는 임시 폴더의 파일을 쓴다.
 """
 
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
 from unittest import mock
 
 import requests
@@ -20,6 +17,7 @@ from src.collectors.disclosure_list import fetch_disclosures, parse_disclosures
 from src.loaders.collect import collect_disclosures
 from src.loaders.duckdb_store import connect
 from src.pipeline.definitions import month_range
+from tests.helpers import TempDuckDBTestCase
 
 FAKE_KEY = "FAKEKEY1234567890FAKEKEY1234567890ABCDEF"
 
@@ -77,13 +75,9 @@ class DartClientTest(unittest.TestCase):
         self.assertEqual(parse_disclosures(pages), [])
 
 
-class LoadIdempotencyTest(unittest.TestCase):
+class LoadIdempotencyTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "test.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         interval = mock.patch.object(dart_client, "MIN_INTERVAL_SEC", 0)
         interval.start()
         self.addCleanup(interval.stop)

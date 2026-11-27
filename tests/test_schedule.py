@@ -5,13 +5,10 @@
 그래서 스케줄은 target_corps 실행 메타데이터(Dagster 인스턴스 저장소)에서 대상 목록을 읽는다.
 """
 
-import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from datetime import datetime
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -22,6 +19,7 @@ from src.loaders.duckdb_store import connect
 from src.loaders.targets import rebuild_target_corps
 from src.pipeline import definitions
 from tests.test_targets import SUBSIDIARY_OF, seed_targets
+from tests.helpers import TempDuckDBTestCase
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -49,14 +47,12 @@ def evaluate(instance: dg.DagsterInstance, when: datetime) -> list:
     return list(definitions.daily_disclosures(context))
 
 
-class DailyScheduleTest(unittest.TestCase):
+class DailyScheduleTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db_path = str(Path(self.tmp.name) / "test.duckdb")
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": self.db_path, "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         # 스케줄 컨텍스트는 인스턴스 참조(instance ref)가 필요해서 ephemeral 대신 임시 폴더 인스턴스를 쓴다
         self.instance = self.enterContext(dg.instance_for_test())
 
@@ -107,13 +103,12 @@ class DailyScheduleTest(unittest.TestCase):
         self.assertEqual([r.partition_key for r in results], ["00688996|2026-11-01"])
 
 
-class TargetCorpsMetadataTest(unittest.TestCase):
+class TargetCorpsMetadataTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(tmp.name) / "t.duckdb"), "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
 
     @mock.patch.object(definitions, "today_kst", return_value=datetime(2026, 11, 24).date())
     def test_target_corps_records_codes_and_partitions(self, _today):

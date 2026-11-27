@@ -7,12 +7,8 @@
 4) API /ask: graph 칸(실행 기록·관계·파생 값·DART 링크), picker는 use_llm일 때만
 """
 
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -24,6 +20,7 @@ from src.graph.router import CorpMention, route
 from src.loaders.duckdb_store import connect
 from src.rag.ask import ask
 from tests.test_graph_query import TemplateDriver, node, owns
+from tests.helpers import TempDuckDBTestCase
 from tests.test_rag_ask import FakeLLM
 
 KBH, KBBANK = "00000001", "00000011"
@@ -50,13 +47,9 @@ class Base:
         return self.hits[:k]
 
 
-class DbTest(unittest.TestCase):
+class DbTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         with connect() as con:
             con.execute("INSERT INTO corp VALUES (?, 'KB금융지주', NULL, NULL, now()), (?, 'KB국민은행', NULL, NULL, now())", [KBH, KBBANK])
             con.execute("INSERT INTO target_corp VALUES (?, 'KB금융지주', 'holding', NULL, NULL, NULL, '2025', now())", [KBH])

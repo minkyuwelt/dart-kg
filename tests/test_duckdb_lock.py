@@ -8,18 +8,16 @@
 다른 프로세스는 subprocess로 띄워서 실제 노트북(Jupyter)에서 연결을 열어 둔 상황을 흉내 낸다.
 """
 
-import os
 import subprocess
 import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import dagster as dg
 
 from src.loaders.duckdb_store import connect, is_lock_error
 from src.pipeline import definitions
+from tests.helpers import TempDuckDBTestCase
 
 # 읽기 전용으로 파일을 열고, 준비됐다고 알린 뒤 stdin이 닫힐 때까지 연결을 유지하는 프로세스
 HOLD_READ_ONLY = (
@@ -30,14 +28,12 @@ HOLD_READ_ONLY = (
 )
 
 
-class DuckDBLockTest(unittest.TestCase):
+class DuckDBLockTest(TempDuckDBTestCase):
+    def extra_env(self):
+        return {"DART_API_KEY": "FAKEKEY"}
+
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db_path = str(Path(self.tmp.name) / "test.duckdb")
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": self.db_path, "DART_API_KEY": "FAKEKEY"})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         # 파일과 테이블을 먼저 만들어 둔다
         with connect():
             pass

@@ -7,12 +7,8 @@
 4) markdown 표는 틀린 줄과 그래프 질문만 적는다
 """
 
-import os
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
-from unittest import mock
 
 from eval import routing as R
 from eval.graph_draft import SPECS
@@ -20,6 +16,7 @@ from eval.questions import Question
 from src.graph.router import Plan, Step
 from src.loaders.duckdb_store import connect, upsert_disclosures
 from tests.test_graph_query import HNH, KBBANK, KBCARD, KBH, SHH, SHLIFE, SHSEC, WRBANK, WRH, WRSEC
+from tests.helpers import TempDuckDBTestCase
 from tests.test_report_details import disclosure_row
 
 TODAY = date(2026, 11, 26)
@@ -29,13 +26,9 @@ def q(id_, text, type_="서술", graph_kind=None):
     return Question(id_, text, type_, 4 if graph_kind else 3, "ready", "답", graph_kind=graph_kind)
 
 
-class RoutingTest(unittest.TestCase):
+class RoutingTest(TempDuckDBTestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = mock.patch.dict(os.environ, {"DUCKDB_PATH": str(Path(self.tmp.name) / "t.duckdb")})
-        env.start()
-        self.addCleanup(env.stop)
+        super().setUp()
         con = self.con = connect()
         self.addCleanup(con.close)
         corps = [(KBH, "KB금융지주"), (SHH, "신한지주"), (HNH, "하나금융지주"), (WRH, "우리금융지주"), (KBBANK, "KB국민은행"), (KBCARD, "KB국민카드"),
