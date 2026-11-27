@@ -400,7 +400,7 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
 19. **화면 (Vite + React, 0013)** — 질문 한 페이지. 답의 인용 번호와 오른쪽 근거 공시가 같은 번호이고, 인용된 근거만 형광펜을 칠합니다. 그래프 질문이면 관계표가 답 아래에 붙습니다. 화면에 새 로직은 없고 API 응답을 그대로 보여 줍니다. API 서버(18번)가 떠 있어야 합니다.
 
    ```bash
-   cd web && npm install && npm run dev      # http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
+   cd web && npm install && npm run dev      # WSL 안의 Linux Node(nvm, 22)로. http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
    npm run build                             # Vercel에 올리는 정적 파일(dist/). Vercel 프로젝트의 Root Directory를 web으로, 환경변수 VITE_API_URL
    ```
 

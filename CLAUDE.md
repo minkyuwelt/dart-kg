@@ -63,6 +63,7 @@ docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
   - 노트북을 켜고 작업을 시작할 때 `python -m src.graph.load_chunks stats`로 DuckDB 수와 Neo4j 수가 맞는지 본다. 전문검색 인덱스 속성이 코드와 다르다고 나오면 `python -m src.graph.load_chunks reindex-fulltext`(노드·벡터 그대로, 몇 분). Neo4j가 0이면 Docker Desktop 재시작 때 `data/neo4j/` 폴더가 컨테이너에 안 붙어 빈 DB가 새로 만들어진 것 → `docker compose down && docker compose up -d`로 다시 붙인다 (2026-11-26, 데이터는 그대로 남아 있음. `-v`는 붙이지 않는다)
 - 노트북에서 다른 수업 프로젝트 컨테이너가 5432·8080·7474·7687 포트를 쓰고 있음 → Docker로 띄우는 서비스의 노트북 쪽 포트는 `.env`로 바꿀 수 있게 할 것
 - 프로젝트 폴더는 WSL 파일시스템 안에 둠
+- Node(화면 `web/`)는 WSL 안의 nvm 것(22)을 쓴다. WSL PATH에 Windows의 `/mnt/c/Program Files/nodejs/npm`이 섞여 있어, Linux Node가 없으면 `npm run dev`가 CMD.EXE로 떠서 파일 감시가 `C:\Windows`를 보는 오류가 난다 (2026-11-27). `which node`가 `~/.nvm/…`인지 확인
 - 줄바꿈은 LF로 통일 (`.gitattributes`)
 - 노트북은 과정 종료 후 반납 → 코드·문서는 모두 GitHub에 push. `data/`의 DuckDB 파일은 로컬에만 있지만 코드로 다시 만들 수 있어야 함 (전체 재수집 약 5,000건 추정, 하루 한도 안)
 
