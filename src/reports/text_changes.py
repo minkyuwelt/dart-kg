@@ -53,6 +53,11 @@ _WS_RE = re.compile(r"\s+")
 # 문장 끝: 한글(또는 닫는 괄호) 뒤의 마침표·물음표·느낌표. 뒤에 공백이 없어도 자른다 — 원문에 "…없습니다.- 기업회계기준서…"처럼
 # 마침표 뒤에 바로 다음 항목이 붙는 곳이 많다(KB금융 2025 주석). 숫자 뒤 마침표(12.31, 1.5%)는 문장 끝이 아니다.
 _SPLIT_RE = re.compile(r"(?<=[가-힣)\]][.!?])\s*|\n+")
+_CAPTION_RE = re.compile(r"^\(?\s*단위\s*[:：]")                 # "(단위 : 백만원)" — 표 설명이지 문장이 아니다
+# 문장 앞에 붙는 절 머리말: "1. 지배기업의 개요 및 보고주체 : ", "(1) 연결 기준 1) 종속기업 ", "② ", "가. ". 전년은 절이 통째라 머리말이 문장에
+# 붙어 있고 이번은 절 이름으로 빠져 있는 일이 흔하다(KB금융 2024 ↔ 2025). 가린 꼴에서 한쪽이 다른 쪽의 끝부분이고 남는 앞머리가 이 꼴이면 같은 문장
+_HEADING_RE = re.compile(r"^(?:\(?[#①-⑳가-힣]\)?[.)]|[#①-⑳]|[가-힣]\.)")
+HEADING_MAX_CHARS = 40
 PAIR_MIN_RATIO = 0.5            # '바뀜' 짝의 최소 닮음 1: difflib ratio(2M/(la+lb), 가린 꼴). 짧은 문장이 긴 문장에 흡수된 꼴을 거른다
 PAIR_MIN_CONTAIN = 0.7          # '바뀜' 짝의 최소 닮음 2: 짧은 쪽 글자의 몇 %가 긴 쪽에 같은 순서로 있나(M/짧은 길이). 늘어난 문장을 짝으로 잡는다
 PAIR_MIN_BLOCK = 3              # M을 셀 때 3글자 미만의 우연한 일치("의", "에", "재무")는 빼고 센다
@@ -68,7 +73,7 @@ def split_sentences(text: str) -> list[str]:
     out: list[str] = []
     for raw in _SPLIT_RE.split(text or ""):
         s = _WS_RE.sub(" ", raw).strip()
-        if len(s) >= MIN_SENTENCE_CHARS:
+        if len(s) >= MIN_SENTENCE_CHARS and not _CAPTION_RE.match(s):
             out.append(s)
     return out
 
@@ -80,7 +85,7 @@ class SectionDiff:
     removed: list[str] = field(default_factory=list)          # 전년에만 있던 문장 (글이 바뀐 것)
     added: list[str] = field(default_factory=list)            # 이번에만 있는 문장 (글이 바뀐 것)
     replaced: list[tuple[str, str]] = field(default_factory=list)   # (전년 문장, 이번 문장) 자리가 같은 짝
-    numbers_only: int = 0               # 숫자·띄어쓰기만 바뀐 문장 수
+    numbers_only: int = 0               # 숫자·띄어쓰기·머리말만 바뀐 문장 수
     sentences_before: int = 0
     sentences_after: int = 0
     parts_before: int = 0               # 이 묶음에 들어간 전년 절 수 (1이면 경로 그대로 짝, 여럿이면 상위 절로 묶은 것)
@@ -120,6 +125,17 @@ class TextChanges:
         return [s for s in self.sections if s.status == "changed"]
 
 
+def _heading_only(ma: str, mb: str) -> bool:
+    """가린 꼴 둘이 '앞에 붙은 짧은 머리말'만 다른가. 긴 쪽이 짧은 쪽으로 끝나고, 남는 앞머리가 머리말 꼴(번호·동그라미 숫자·'가.')이며 짧을 때."""
+    if ma == mb:
+        return True
+    long_, short = (ma, mb) if len(ma) > len(mb) else (mb, ma)
+    if not short or not long_.endswith(short):
+        return False
+    head = long_[: len(long_) - len(short)]
+    return len(head) <= HEADING_MAX_CHARS and bool(_HEADING_RE.match(head))
+
+
 def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
     """두 절의 문장 목록을 비교한다. 순서는 보지 않는다 — 절이 해마다 다르게 나뉘고 항목 순서가 바뀌는 일이 흔해서,
     순서대로 맞추면(difflib 옵코드) 엉뚱한 문장끼리 '바뀜' 짝이 된다(KB금융 2024 주석 1절 ↔ 2025 40절, 2026-11-27 노트북).
@@ -151,6 +167,9 @@ def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
             for i, (_, ma) in enumerate(rest_after):
                 if ma is None:
                     continue
+                if _heading_only(ma, mb):
+                    best, best_i = 2.0, i        # 머리말만 다른 같은 문장 — 짝 중 가장 우선
+                    break
                 sm.set_seq1(ma)
                 # 두 잣대를 다 넘어야 짝이다 (노트북 KB금융 2024·2025로 맞춤):
                 #  - ratio만 보면 "충분합니다." → "충분하며 외화 조달도 늘렸습니다."처럼 늘어난 문장이 짝이 안 되고(0.62),
@@ -166,7 +185,10 @@ def diff_sentences(before: list[str], after: list[str]) -> SectionDiff:
                 if contain > best:
                     best, best_i = contain, i
             if best_i >= 0:
-                d.replaced.append((b, rest_after[best_i][0]))
+                if best < 2.0:
+                    d.replaced.append((b, rest_after[best_i][0]))
+                else:
+                    d.numbers_only += 1
                 rest_after[best_i] = (rest_after[best_i][0], None)
             else:
                 d.removed.append(b)
@@ -315,9 +337,9 @@ def render_markdown(results: list[TextChanges], since: date | None = None, until
     lines = [title, ""]
     s = summarize(results)
     lines.append(f"정기보고서 {s['reports']}개, 전년 같은 보고서와 비교한 것 {s['compared']}개. 글이 바뀐 절 {s['sections_changed']}개, "
-                 f"바뀐 문장 {s['text_changes']}개 (숫자·띄어쓰기만 바뀐 문장 {s['numbers_only']}개는 세기만 함).")
+                 f"바뀐 문장 {s['text_changes']}개 (숫자·띄어쓰기·머리말만 바뀐 문장 {s['numbers_only']}개는 세기만 함).")
     words = results[0].section_words if results else SECTION_WORDS_DEFAULT
-    lines.append(f"기준: 경로에 {' · '.join(words)} 가운데 하나가 든 절. 같은 경로의 절끼리 문장을 비교하고, 숫자·날짜·띄어쓰기만 바뀐 문장은 글 변화로 치지 않는다. "
+    lines.append(f"기준: 경로에 {' · '.join(words)} 가운데 하나가 든 절. 같은 경로의 절끼리 문장을 비교하고, 숫자·날짜·띄어쓰기·앞머리말만 바뀐 문장은 글 변화로 치지 않는다. "
                  "표는 보지 않는다. 해석은 넣지 않았다 (0012 결정 4).")
     lines.append("")
     if not results:

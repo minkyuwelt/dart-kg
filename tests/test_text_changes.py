@@ -117,6 +117,12 @@ class TextChangesTest(unittest.TestCase):
         self.assertEqual(d.replaced, [("유동성은 충분합니다.", "유동성은 충분하며 외화 조달도 늘렸습니다.")])
         self.assertIn("전년 1절 ↔ 이번 3절을 묶어 견줌", render_markdown([tc]))
 
+    def test_heading_prefix_and_captions(self):
+        # 전년은 절이 통째라 "1. 개요 : " 같은 머리말이 문장 앞에 붙고, 이번은 절 이름으로 빠진 경우 → 같은 문장. "(단위 : 백만원)"은 문장이 아니다
+        d = diff_sentences(split_sentences("1. 지배기업의 개요 : 주식회사 KB금융지주는 2008년 설립되었습니다. (단위 : 백만원)"),
+                           split_sentences("주식회사 KB금융지주는 2008년 설립되었습니다.\n(단위 : 백만원)"))
+        self.assertEqual((d.status, d.numbers_only, d.text_changes, d.sentences_before, d.sentences_after), ("numbers_only", 1, 0, 1, 1))
+
     def test_window_and_markdown(self):
         results = build_text_report(self.con, date(2026, 3, 1), date(2026, 3, 31))
         self.assertEqual([r.rcept_no for r in results], [R2025])        # 정정본은 본문이 없어 빠짐
@@ -124,7 +130,7 @@ class TextChangesTest(unittest.TestCase):
         self.assertIn("| 바뀜 | 시장위험은 VaR 모형으로 관리합니다. | 시장위험은 VaR 모형과 스트레스 테스트로 관리합니다. |", md)
         self.assertIn("| 추가 |  | 기후위험은", md)
         self.assertIn("절 추가: III. 재무에 관한 사항 > 8. 위험관리 보완", md)
-        self.assertIn("숫자·띄어쓰기만 바뀐 문장 1개", md)
+        self.assertIn("숫자·띄어쓰기·머리말만 바뀐 문장 1개", md)
         first = render_markdown([report_text_changes(self.con, R2024)])
         self.assertIn("전년 같은 종류의 보고서가 없어 비교하지 않음", first)
         self.assertNotIn(KB, md.replace("00688996", ""))  # 자리 표시 — corp_code는 본문에 안 쓴다
