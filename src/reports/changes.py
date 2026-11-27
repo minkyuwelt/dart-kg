@@ -77,6 +77,12 @@ class ReportChanges:
         return sum(1 for c in self.changes if c.kind == kind)
 
 
+def _is_placeholder(name) -> bool:
+    """출자 대상 이름이 '-'·'해당사항 없음'·빈 값이면 표에 내용이 없다는 자리 표시 행."""
+    s = (name or "").strip()
+    return s in ("", "-", "해당사항 없음", "해당없음")
+
+
 def _pct(v) -> str:
     return "" if v is None else f"{float(v):.2f}%"
 
@@ -186,10 +192,12 @@ def investment_changes(con, corp_code: str, rcept_no: str) -> list[Change]:
     if stlm is None:
         return []
     cols = "investee_name, coalesce(share_class, ''), trmend_blce_qota_rt"
-    # 같은 대상이 취득 시점별로 여러 행이면 지분율을 합쳐 본다
+    # 같은 대상이 취득 시점별로 여러 행이면 지분율을 합쳐 본다. 이름이 '-'·빈 행은 "해당사항 없음" 자리 표시라 대상이 아니다
     def agg(rows):
         out: dict[tuple, float | None] = {}
         for name, cls, pct in rows:
+            if _is_placeholder(name):
+                continue
             key = (name, cls)
             if pct is None:
                 out.setdefault(key, None)
@@ -198,6 +206,10 @@ def investment_changes(con, corp_code: str, rcept_no: str) -> list[Change]:
         return out
     now = agg(_snapshot(con, "investment", "investor_corp_code", corp_code, stlm, cols))
     before = agg(_snapshot(con, "investment", "investor_corp_code", corp_code, prev, cols)) if prev else {}
+    # 표가 통째로 없으면(자리 표시 행뿐) 비교하지 않는다 (2026-11-27): 분기보고서는 타법인 출자 표를 싣지 않는 회사가 있어,
+    # 직전 사업보고서의 출자 전부가 "제외"로 잡혔다(하나증권 5,587건). 표가 없는 것은 변화가 아니라 "이 보고서에 그 표가 없음"이다
+    if not now or not before:
+        return []
     out: list[Change] = []
     for key, pct in now.items():
         label = f"{key[0]} {key[1]}".strip()

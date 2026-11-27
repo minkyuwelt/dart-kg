@@ -110,3 +110,39 @@ export function splitCitations(text: string): Array<{ text: string } | { cite: n
   if (last < text.length) out.push({ text: text.slice(last) });
   return out;
 }
+
+// ----- 변화 리포트 (/changes, src/reports/changes.py · 0012) -----
+
+export type Change = { kind: string; kind_label: string; subject: string; before: string; after: string; note: string };
+
+export type ReportChanges = {
+  rcept_no: string;
+  corp_code: string;
+  corp_name: string;
+  report_nm: string;
+  rcept_dt: string;
+  stlm_dt: string | null;
+  prev_stlm_dt: string | null;   // 비교한 직전 스냅샷 기준일. null이면 첫 보고서(비교 대상 없음)
+  url: string;
+  changes: Change[];
+};
+
+export type ChangesResponse = {
+  since: string;
+  until: string;
+  pct_threshold: number;
+  summary: { reports: number; reports_with_changes: number; changes: number; by_kind: Record<string, number> };
+  reports: ReportChanges[];
+};
+
+export type Corp = { corp_code: string; corp_name: string; role: "holding" | "subsidiary" | string; parent_corp_code: string | null; stake_pct: number | null };
+
+export async function changes(since: string, until: string, corps: string[], signal?: AbortSignal): Promise<ChangesResponse> {
+  const q = new URLSearchParams({ since, until });
+  for (const c of corps) q.append("corp", c);
+  return parse<ChangesResponse>(await fetch(`${API_URL}/changes?${q}`, { signal }));
+}
+
+export async function corps(signal?: AbortSignal): Promise<Corp[]> {
+  return parse<Corp[]>(await fetch(`${API_URL}/corps`, { signal }));
+}
