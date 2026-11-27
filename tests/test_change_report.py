@@ -104,6 +104,18 @@ class ChangeReportTest(unittest.TestCase):
         self.assertEqual((pct.before, pct.after, pct.note), ("8.30%", "7.90%", "-0.40%p"))
         self.assertEqual(summarize(results)["changes"], 7)
 
+    def test_investment_table_absent_is_not_a_change(self):
+        # 분기보고서가 출자 표를 싣지 않으면(자리 표시 행 '-' 하나) 직전 사업보고서의 출자가 전부 "제외"로 잡히면 안 된다 (2026-11-27)
+        con = self.con
+        RQ = "20261114000001"
+        DQ = date(2026, 9, 30)
+        upsert_disclosures(con, [disclosure_row(RQ, "분기보고서 (2026.09)", "20261114")])
+        add_exec(con, RQ, "양종희", "회장", "사내이사", "양종희|1961-06|남", DQ, seq=1)
+        add_inv(con, RQ, "-", None, DQ)
+        r = next(x for x in build_report(con, date(2026, 11, 1), date(2026, 11, 30)) if x.rcept_no == RQ)
+        self.assertEqual([c for c in r.changes if c.kind.startswith("investment")], [])
+        self.assertEqual(r.count("executive_gone"), 2)   # 임원 표는 있으니 그쪽 비교는 그대로 (김철수·박민수 퇴임)
+
     def test_first_report_has_nothing_to_compare(self):
         results = build_report(self.con, date(2025, 3, 1), date(2025, 3, 31))
         self.assertEqual([r.rcept_no for r in results], [R2024])

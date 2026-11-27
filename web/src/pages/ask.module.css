@@ -1,25 +1,8 @@
 /* 질문 페이지. 왼쪽 답(본문 폭 --measure), 오른쪽 근거 목록. 좁은 화면에서는 위아래로.
    근거 목록은 카드가 아니라 왼쪽 괘선이 있는 목록이고, 인용된 것만 형광펜(--marker) 띠를 가진다. */
 
-.page {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 28px var(--gutter) 64px;
-}
+.page { padding-top: 8px; }
 
-.top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--rule-strong);
-}
-.brand { font-size: 22px; letter-spacing: -0.01em; }
-.tagline { margin: 2px 0 0; color: var(--ink-2); font-size: 15px; }
-.status { margin: 0; font-size: 13px; color: var(--ink-2); }
-.statusBad { color: var(--danger); }
 
 /* 질문 상자: 이 페이지의 주인공. 테두리 하나, 그림자 없음 */
 .ask { margin-top: 28px; }
@@ -50,7 +33,10 @@
 .button:hover { background: var(--blue-ink); }
 .button:disabled { background: var(--rule-strong); color: #fff; cursor: default; }
 
-.examples { margin-top: 36px; max-width: var(--measure); }
+.lists { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; margin-top: 36px; }
+@media (max-width: 860px) { .lists { grid-template-columns: 1fr; gap: 28px; } }
+.examples { max-width: var(--measure); }
+.linkBtn { margin-left: 10px; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .examplesLead { margin: 0 0 8px; color: var(--ink-2); font-size: 14px; }
 .examples ul { list-style: none; margin: 0; padding: 0; }
 .examples li + li { border-top: 1px solid var(--rule); }
