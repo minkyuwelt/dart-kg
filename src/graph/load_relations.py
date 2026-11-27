@@ -92,7 +92,7 @@ MATCH (p:Person {{pid: row.pid}})
 MATCH (c:Corp {{key: row.corp}})
 MERGE (p)-[r:HOLDS_POSITION {{row_key: row.row_key}}]->(c)
 SET r.title = row.title, r.registered = row.registered, r.outside = row.outside, r.full_time = row.full_time,
-    r.duty = row.duty, r.ceo = row.ceo, {_TIME_SET}
+    r.duty = row.duty, r.ceo = row.ceo, r.source_table = row.source_table, {_TIME_SET}
 """
 
 FORMERLY_MERGE = """
@@ -205,8 +205,24 @@ def _one_line(text: str | None) -> str | None:
     return " ".join(text.split()) if text else text
 
 
+# 지주 겸직 표(concurrent_position, 0014) 중 그래프에 올리는 행: 사람이 이어졌고, 같은 사람·회사·기간이 임원 표(executive)에 이미 없는 것.
+# 겸직 회사가 자기 임원 표를 내면(국민은행 등) 임원 표 행이 있으므로 올리지 않는다 → 늘어나는 것은 임원 표가 없는 회사의 자리만. duckdb_counts와 같이 쓴다.
+# 직책이 임원이 아닌 행(본부장·센터장·부장, is_officer false)도 올리지 않는다 — 질문은 "임원 겸직"이고 임원 표의 기준과 맞춘다
+CONCURRENT_GRAPH_SQL = """
+    SELECT c.source_rcept_no, c.row_seq, c.holding_corp_code, c.person_id, c.target_name, c.target_corp_code, c.ofcps, c.fte_at,
+           c.valid_from, c.valid_to, c.superseded_by
+    FROM concurrent_position c
+    WHERE c.person_id IS NOT NULL AND c.is_officer
+      AND NOT EXISTS (
+        SELECT 1 FROM executive e
+        WHERE e.person_id = c.person_id AND e.corp_code = c.target_corp_code AND e.superseded_by IS NULL
+          AND e.valid_from <= c.valid_from AND (e.valid_to IS NULL OR e.valid_to > c.valid_from))
+"""
+
+
 def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict], int]:
-    """(HOLDS_POSITION 행, Person 행, person_id가 없어 건너뛴 행 수). 생년월·성별은 여기서 버린다."""
+    """(HOLDS_POSITION 행, Person 행, person_id가 없어 건너뛴 행 수). 생년월·성별은 여기서 버린다.
+    임원 표(executive) 행 + 지주 겸직 표(concurrent_position) 행 (0014, 임원 표에 같은 자리가 없는 것만)."""
     rows = _rows(con, """
         SELECT source_rcept_no, row_seq, corp_code, person_id, ofcps, rgist_exctv_at, fte_at, chrg_job, valid_from, valid_to, superseded_by
         FROM executive ORDER BY source_rcept_no, row_seq""")
@@ -219,12 +235,25 @@ def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict
         pid = person_key(r["person_id"])
         persons[pid] = names.get(r["person_id"]) or r["person_id"].split("|", 1)[0]
         out.append({
-            "row_key": f"exe:{r['source_rcept_no']}:{r['row_seq']}", "pid": pid, "corp": r["corp_code"],
+            "row_key": f"exe:{r['source_rcept_no']}:{r['row_seq']}", "pid": pid, "corp": r["corp_code"], "source_table": "executive",
             # 직위 칸의 줄바꿈('기타\n비상무이사')은 공백 하나로. 원문은 DuckDB에 그대로 있다
             "title": _one_line(r["ofcps"]), "registered": _one_line(r["rgist_exctv_at"]), "outside": _one_line(r["rgist_exctv_at"]) == "사외이사",
             "full_time": r["fte_at"],
             # 담당업무(한 줄로)와 대표이사 여부. 금융지주는 대표이사를 담당업무 칸에 적는다 (templates.is_ceo)
             "duty": _one_line(r["chrg_job"]), "ceo": is_ceo(r["ofcps"], r["chrg_job"]),
+            "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
+            "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
+        })
+    for r in _rows(con, CONCURRENT_GRAPH_SQL + " ORDER BY c.source_rcept_no, c.row_seq"):
+        pid = person_key(r["person_id"])
+        persons.setdefault(pid, names.get(r["person_id"]) or r["person_id"].split("|", 1)[0])
+        title = _one_line(r["ofcps"])
+        out.append({
+            "row_key": f"cp:{r['source_rcept_no']}:{r['row_seq']}", "pid": pid, "source_table": "concurrent_position",
+            # 겸직 회사가 corp_code로 안 이어지면(해외 법인 등) 출자 표와 같은 이름 노드
+            "corp": r["target_corp_code"] or name_key(r["holding_corp_code"], r["target_name"]), "corp_name": r["target_name"],
+            "title": title, "registered": None, "outside": bool(title and "사외이사" in title), "full_time": r["fte_at"],
+            "duty": None, "ceo": is_ceo(r["ofcps"], None),
             "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
             "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
         })
@@ -242,7 +271,11 @@ def corp_rows(con: duckdb.DuckDBPyConnection, owns: list[dict], positions: list[
                 name_nodes[key] = o[f"{side}_name"]
             else:
                 codes.add(key)
-    codes.update(p["corp"] for p in positions)
+    for p in positions:
+        if p["corp"].startswith("name:"):
+            name_nodes[p["corp"]] = p.get("corp_name") or p["corp"].rsplit(":", 1)[-1]
+        else:
+            codes.add(p["corp"])
     lineage_names = {}
     for row in lineage:
         codes.update((row["current_corp_code"], row["former_corp_code"]))
@@ -325,7 +358,8 @@ def duckdb_counts(con: duckdb.DuckDBPyConnection, lineage_path: Path = LINEAGE_P
     inv = con.execute(f"SELECT count(*) FROM investment WHERE regexp_matches(investee_name, '{NAME_CHARS}')").fetchone()[0]
     msh = con.execute("SELECT count(*) FROM major_shareholder").fetchone()[0]
     exe = con.execute("SELECT count(*) FROM executive WHERE person_id IS NOT NULL").fetchone()[0]
-    return {"owns": inv + msh, "positions": exe, "formerly": len(load_lineage(lineage_path))}
+    cp = con.execute(f"SELECT count(*) FROM ({CONCURRENT_GRAPH_SQL})").fetchone()[0]   # 지주 겸직 표 중 그래프에 올리는 행 (0014)
+    return {"owns": inv + msh, "positions": exe + cp, "formerly": len(load_lineage(lineage_path))}
 
 
 def stats(con: duckdb.DuckDBPyConnection, driver, database: str = "neo4j", lineage_path: Path = LINEAGE_PATH) -> dict:

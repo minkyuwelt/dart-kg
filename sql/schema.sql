@@ -180,6 +180,35 @@ ALTER TABLE executive ADD COLUMN IF NOT EXISTS person_id VARCHAR;
 
 -- 사람. executive의 (이름, 생년월, 성별) 조합마다 한 행. 닫기 단계가 executive에서 다시 만든다 (결정 0006).
 -- 같은 조합이 다른 사람일 가능성은 아주 낮지만 0이 아니다. 그 경우는 발견하면 수동 분리 규칙을 0006에 적는다.
+-- 지주 사업보고서 IX절 "회사와 계열회사간 임원 겸직 현황" 표 (결정 0014). 임원 표(executive)가 없는 자회사의 겸직 자리를 채운다.
+-- 출처는 document_section.tables(원문 표)라 API 호출이 없다. 사람은 같은 지주 임원 표의 같은 이름으로 person_id를 잇는다 (0006 보강).
+CREATE TABLE IF NOT EXISTS concurrent_position (
+    source_rcept_no    VARCHAR     NOT NULL,  -- 지주 보고서 접수번호
+    row_seq            INTEGER     NOT NULL,  -- 표 안 행 순서 (0부터)
+    holding_corp_code  VARCHAR     NOT NULL,  -- 표를 낸 지주
+    bsns_year          VARCHAR     NOT NULL,
+    reprt_code         VARCHAR     NOT NULL,
+    nm                 VARCHAR     NOT NULL,  -- 성명 그대로
+    person_id          VARCHAR,               -- 지주 임원 표에서 같은 기준일에 유효한 같은 이름이 1명일 때만
+    person_method      VARCHAR     NOT NULL,  -- holding_executive / not_found / ambiguous
+    target_name        VARCHAR     NOT NULL,  -- 겸직 회사 이름 그대로
+    target_corp_code   VARCHAR,               -- 이름 → corp_code (investments.resolve). 못 잇으면 NULL
+    resolve_method     VARCHAR     NOT NULL,  -- exact / hangul / override / ambiguous / not_found
+    ofcps              VARCHAR,               -- 겸직 직위 (직책·직위명·직위)
+    appointed_raw      VARCHAR,               -- 선임시기·선임일·겸임일자 원문
+    appointed_on       DATE,                  -- 날짜로 읽은 값. 월까지만 있으면 1일
+    appointed_method   VARCHAR,               -- date / month / NULL
+    fte_at             VARCHAR,               -- 상근 / 비상근 (비고·상근여부)
+    is_officer         BOOLEAN  NOT NULL DEFAULT true,  -- 직책에 임원 낱말(이사·회장·사장·전무·상무·행장·감사·대표…)이 있나. 본부장·센터장·부장 행은 표에 남기되 그래프에 올리지 않는다 (0014 결정 4)
+    stlm_dt            DATE     NOT NULL,     -- 보고서 결산월 말일 (표 머리의 기준일과 같다)
+    valid_from         DATE     NOT NULL,     -- = stlm_dt
+    valid_to           DATE,                  -- 같은 지주의 다음 스냅샷 기준일
+    superseded_by      VARCHAR,
+    loaded_at          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source_rcept_no, row_seq)
+);
+ALTER TABLE concurrent_position ADD COLUMN IF NOT EXISTS is_officer BOOLEAN DEFAULT true;   -- 2026-11-27 첫 적재 뒤 추가 (DuckDB는 ALTER에 NOT NULL을 못 붙인다. 적재는 늘 값을 넣는다)
+
 CREATE TABLE IF NOT EXISTS person (
     person_id    VARCHAR     PRIMARY KEY,  -- '양종희|1961-06|남'
     nm           VARCHAR     NOT NULL,

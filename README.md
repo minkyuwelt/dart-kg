@@ -129,7 +129,7 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 | 재순위(KURE-Reranker-nano) | 쓰지 않음 — hit@5 0.861 → 0.778로 하락 | | 0009·0011 |
 | 검색 (최종 설정 `graph:hybrid:kure-v3` + 회사 필터 + LLM 템플릿 고르기) | **hit@5 공시 1.000 · 섹션 0.729** (48개), 그래프 질문 12개 1.000 | 벡터만 0.896, 그래프만 0.229, 결합(고르기 없이) 0.958. 전문검색어를 고치기 전(사실상 벡터만)에는 섹션 0.604, 전문검색 정렬을 고치기 전 공시 0.979·섹션 0.708 | [0011](docs/decisions/0011-graph-schema-and-graphrag.md) |
 | 라우팅 정확도 (질문 → 템플릿) | 규칙만 53/53. LLM 고르기를 켜면 한 시점 최대주주·임원 질문 19개가 T7로 감(허용) | | 0011 |
-| LLM 답 (사람 정답과 비교, 53개) | **맞음 48 / 부분 3 / 틀림 0 / 근거없는주장 0**, "없음" 5개 모두 "찾지 못했습니다", 그래프가 대조해 없는 것(g10)은 "없음 + 대조 범위"로 | 1차 맞음 40/틀림 9 → 출력 상한·관계표 순서·프롬프트 규칙 수정 뒤 3차, "출자한 회사 중 장부가액 최대"를 그래프 규칙으로 보낸 뒤 4차, 전문검색어를 고친 뒤 d033 틀림 → 부분, 전문검색 정렬을 고친 뒤 d005 틀림 → 맞음, 같은 절의 이웃 조각을 LLM에 함께 넘긴 뒤 d001·d029·d033 부분 → 맞음(8차) | [0010](docs/decisions/0010-retrieval-and-llm.md) |
+| LLM 답 (사람 정답과 비교, 53개) | **맞음 49 / 부분 2 / 틀림 0 / 근거없는주장 0**, "없음" 5개 모두 "찾지 못했습니다", 그래프가 대조해 없는 것(g10)은 "없음 + 대조 범위"로 | 1차 맞음 40/틀림 9 → 출력 상한·관계표 순서·프롬프트 규칙 수정 뒤 3차, "출자한 회사 중 장부가액 최대"를 그래프 규칙으로 보낸 뒤 4차, 전문검색어를 고친 뒤 d033 틀림 → 부분, 전문검색 정렬을 고친 뒤 d005 틀림 → 맞음, 같은 절의 이웃 조각을 LLM에 함께 넘긴 뒤 d001·d029·d033 부분 → 맞음(8차), 지주 겸직 현황 표(0014)를 더한 뒤 g11 부분 → 맞음(9차) | [0010](docs/decisions/0010-retrieval-and-llm.md) |
 | 비용 | 평가 한 바퀴(답 53 + 고르기 41 = 94건) 약 $0.02~0.03 | | 0010 |
 
 부분 7개(연혁 본문 항목, 긴 목록 일부 빠짐 등)와 개선 후보는 0010·0011에 적어 두었습니다.
@@ -209,7 +209,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
 | `target_corps` | 수집 대상(지주 + 직속 자회사, 2025 기준 59곳) → `target_corp` 테이블, `disclosures`의 회사 파티션 추가 | 0건 |
 | `disclosures` | 한 회사의 한 달치 공시 목록 → `raw_api_response`(원본) + `disclosure` 테이블. 파티션 = 월 × 회사 | 파티션당 보통 1건 |
 | `report_details` | (Phase 2) 한 회사의 한 정기보고서에서 주요정보 4종(타법인 출자·최대주주·최대주주 변동·임원) 원본 저장. 파티션 = 회사 × 보고서(`2025-11011` = 사업연도-보고서종류). 공시 목록에 그 보고서가 없으면 API 없이 건너뜀 | 보고서당 4건 |
-| `relations` | (Phase 2) 원본 전체에서 `investment`·`major_shareholder`·`major_shareholder_change`·`executive` 테이블 재생성. 시간 컬럼은 [0005](docs/decisions/0005-temporal-model.md) | 0건 |
+| `relations` | (Phase 2) 원본 전체에서 `investment`·`major_shareholder`·`major_shareholder_change`·`executive` 테이블 재생성. 시간 컬럼은 [0005](docs/decisions/0005-temporal-model.md). 지주 사업보고서의 "계열회사간 임원 겸직 현황" 표(원문 파싱 결과)로 `concurrent_position`도 만든다 — 사업보고서를 내지 않는 자회사의 겸직 자리 ([0014](docs/decisions/0014-concurrent-positions.md)) | 0건 |
 | `change_report` | (Phase 3) 최근 7일 접수된 정기보고서가 임원·최대주주·출자에 만든 변화를 `data/reports/changes_날짜.md`로. 근거는 [0012](docs/decisions/0012-change-report.md) | 0건 |
 | `documents` | (Phase 3) 한 회사의 한 정기보고서 원문 ZIP 저장(정정본 각각). 파티션 = 회사 × 보고서. `document` 테이블에 없는 접수번호만 받음 | 보고서당 보통 0~1건 |
 | `chunks` | (Phase 3) 새 원문을 파싱(`document_section`)하고 조각이 없는 보고서만 자름(`chunk`). 청킹 규칙을 바꿨으면 `full_rebuild: true`로 전체 다시 | 0건 |
