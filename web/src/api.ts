@@ -59,7 +59,7 @@ export type Health = {
   embedder: string | null;
   duckdb: string;
   neo4j: string;
-  llm_key: boolean;
+  llm_key: boolean;   // 서버 .env에 키가 있는가. 없으면 보는 사람이 자기 키를 넣어야 답 만들기가 된다
   documents_with_chunks?: number;
 };
 
@@ -87,10 +87,13 @@ async function parse<T>(res: Response): Promise<T> {
   throw new ApiError(res.status, detail);
 }
 
-export async function ask(question: string, useLlm: boolean, signal?: AbortSignal): Promise<AskResponse> {
+/** apiKey가 있으면 X-OpenAI-Key 헤더로 보낸다 — 보는 사람의 키, 서버는 이 요청에만 쓴다 (0013) */
+export async function ask(question: string, useLlm: boolean, apiKey?: string, signal?: AbortSignal): Promise<AskResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (useLlm && apiKey) headers["X-OpenAI-Key"] = apiKey;
   const res = await fetch(`${API_URL}/ask`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ question, use_llm: useLlm }),
     signal,
   });

@@ -47,7 +47,11 @@ class ApiTest(unittest.TestCase):
             )
             build_chunks(con, [R2025], ["section_path"])
         self.llm = FakeLLM("KB금융의 주당 현금배당금은 보통주 3,000원입니다.", [1])
-        app = create_app(llm_factory=lambda: self.llm, retriever_name="chunk:section_path")
+        self.keys_seen: list[str | None] = []   # 요청 헤더의 OpenAI 키가 LLM 공장에 닿는지
+        def llm_factory(api_key=None):
+            self.keys_seen.append(api_key)
+            return self.llm
+        app = create_app(llm_factory=llm_factory, retriever_name="chunk:section_path")
         self.client = self.enterContext(TestClient(app))
 
     def test_cors_for_web(self):
@@ -135,6 +139,26 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(r["hits"][0]["cited"])
         self.assertEqual(len(self.llm.calls), 1)
         self.assertEqual(self.client.post("/ask", json={"question": "a"}).status_code, 422)
+
+    def test_ask_with_viewer_key_header(self):
+        # 보는 사람의 키(X-OpenAI-Key)는 그 요청의 LLM에만 쓰이고 응답·로그에 남지 않는다 (0013). 없으면 None → 서버 .env 키 차례
+        self.client.post("/ask", json={"question": "KB금융 주당 현금배당금은?"}, headers={"X-OpenAI-Key": " sk-viewer "})
+        self.client.post("/ask", json={"question": "KB금융 주당 현금배당금은?"})
+        self.assertEqual(self.keys_seen, ["sk-viewer", None])
+        r = self.client.post("/ask", json={"question": "KB금융 주당 현금배당금은?"}, headers={"X-OpenAI-Key": "sk-viewer"})
+        self.assertNotIn("sk-viewer", r.text)
+        # CORS 사전 요청이 이 헤더를 허용해야 브라우저가 보낼 수 있다
+        r = self.client.options("/ask", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST",
+                                                 "Access-Control-Request-Headers": "x-openai-key"})
+        self.assertIn("x-openai-key", r.headers.get("access-control-allow-headers", "").lower())
+
+    def test_ask_without_any_key_is_503(self):
+        # 가짜 LLM 공장 없이 실제 경로: .env 키도 헤더도 없으면 503과 안내. OpenAI는 호출되지 않는다
+        app = create_app(retriever_name="chunk:section_path")
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}), TestClient(app) as c:
+            r = c.post("/ask", json={"question": "KB금융 주당 현금배당금은?"})
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("OpenAI 키", r.json()["detail"])
 
     def test_changes(self):
         r = self.client.get("/changes", params={"since": "2026-03-01", "until": "2026-03-31"}).json()
