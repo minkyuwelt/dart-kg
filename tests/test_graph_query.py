@@ -197,9 +197,10 @@ class GraphQueryTest(unittest.TestCase):
                     self.assertIn("superseded_by IS NULL", t.cypher)
                 self.assertNotIn("birth", t.cypher)
         # 직위 조건은 직위 글자와 등기구분을 함께 본다 — 하나은행 사외이사는 직위 "이사"·등기구분 "사외이사" (2026-11-27 p2-q2)
-        for name in ("facts_at", "shared_positions"):
-            self.assertIn("coalesce(r0.registered, '') CONTAINS $title" if name == "shared_positions" else "coalesce(r.registered, '') CONTAINS $title",
-                          T.TEMPLATES[name].cypher, name)
+        with_title = [t for t in T.TEMPLATES.values() if "$title" in t.cypher]
+        self.assertGreaterEqual(len(with_title), 2)
+        for t in with_title:
+            self.assertRegex(t.cypher, r"coalesce\(r\w*\.registered, ''\) CONTAINS \$title", t.name)
         with self.assertRaisesRegex(ValueError, "빈칸이 비었"):
             T.TEMPLATES["holder_chain"].bind({"corp": "x", "as_of": "2025-12-31"})
         with self.assertRaisesRegex(ValueError, "모르는 빈칸"):
