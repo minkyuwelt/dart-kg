@@ -70,7 +70,7 @@ function ServerStatus() {
   return (
     <p className={`${s.status} ${bad ? s.statusBad : ""}`}>
       공시 {srv.documents_with_chunks?.toLocaleString() ?? "?"}건 색인
-      {srv.llm_key ? "" : " · 답 만들기 꺼짐(LLM 키 없음)"}
+      {srv.llm_key ? "" : " · 답은 자기 OpenAI 키로"}
       {srv.duckdb !== "ok" ? ` · DuckDB ${srv.duckdb}` : ""}
       {srv.neo4j !== "ok" && srv.neo4j !== "not used" ? ` · Neo4j ${srv.neo4j}` : ""}
     </p>

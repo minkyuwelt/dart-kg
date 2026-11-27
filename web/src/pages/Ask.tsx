@@ -3,7 +3,8 @@
 // 화면은 API 응답을 그대로 보여 준다. 답의 [n]과 오른쪽 근거 n이 같은 번호이고, 인용된 근거만 형광펜을 칠한다.
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ApiError, API_URL, ask, corps, splitCitations, type AskResponse, type Corp } from "../api";
+import { ApiError, API_URL, ask, corps, health, splitCitations, type AskResponse, type Corp } from "../api";
+import { loadKey, saveKey } from "../key";
 import { addToHistory, loadHistory, saveHistory, type Asked } from "../history";
 import s from "./ask.module.css";
 
@@ -33,6 +34,17 @@ export default function Ask() {
   }, [restore, location.pathname, navigate]);
   const [question, setQuestion] = useState(restored?.question ?? "");
   const [useLlm, setUseLlm] = useState(true);
+  // 서버에 키가 없으면(공개 서버) 보는 사람의 키가 있어야 답 만들기가 된다. 키는 브라우저에만 (key.ts)
+  const [serverKey, setServerKey] = useState<boolean | null>(null);
+  const [apiKey, setApiKey] = useState(() => loadKey());
+  useEffect(() => { saveKey(apiKey); }, [apiKey]);
+  useEffect(() => {
+    const c = new AbortController();
+    health(c.signal).then((h) => setServerKey(h.llm_key)).catch(() => setServerKey(null));
+    return () => c.abort();
+  }, []);
+  const needKey = serverKey === false;
+  const canLlm = !needKey || apiKey.trim().length > 0;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AskResponse | null>(restored);
@@ -59,7 +71,7 @@ export default function Ask() {
     setError(null);
     setFocused(null);
     try {
-      const r = await ask(text, useLlm, c.signal);
+      const r = await ask(text, useLlm && canLlm, apiKey.trim() || undefined, c.signal);
       setResult(r);
       setHistory((h) => addToHistory(h, r));
     } catch (e) {
@@ -108,9 +120,15 @@ export default function Ask() {
         />
         <div className={s.askRow}>
           <label className={s.toggle}>
-            <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
+            <input type="checkbox" checked={useLlm && canLlm} disabled={!canLlm} onChange={(e) => setUseLlm(e.target.checked)} />
             답 만들기
           </label>
+          {needKey && (
+            <label className={s.keyField}>
+              <span>OpenAI 키</span>
+              <input type="password" autoComplete="off" spellCheck={false} placeholder="sk-… (이 브라우저에만 저장)" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+            </label>
+          )}
           <button type="submit" className="btn" disabled={loading || question.trim().length < 2}>
             {loading ? "찾는 중" : "묻기"}
           </button>

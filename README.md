@@ -401,13 +401,19 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
 
    ```bash
    cd web && npm install && npm run dev      # WSL 안의 Linux Node(nvm, 22)로. http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
-   npm run build                             # Vercel에 올리는 정적 파일(dist/). Vercel 프로젝트의 Root Directory를 web으로, 환경변수 VITE_API_URL
+   npm run build                             # Vercel에 올리는 정적 파일(dist/)
    ```
+
+   **Vercel에 올리기** (화면만. API 서버는 따로 있어야 하고, 없으면 머리띠에 "서버에 닿지 못함"이 뜹니다. 공개 서버 `.env`에는 `OPENAI_API_KEY`를 두지 않습니다 — 보는 사람이 화면에 자기 키를 넣으면 그 요청에만 쓰입니다, [0013](docs/decisions/0013-ui-and-deploy.md) "키"):
+   1. Vercel에서 이 GitHub 저장소를 가져오고 **Root Directory = `web`** (Framework는 Vite로 자동 인식, `web/vercel.json`이 모든 경로를 `index.html`로 보내 `/corps/…` 같은 주소를 새로 고쳐도 열립니다)
+   2. 환경변수 `VITE_API_URL` = API 서버 주소(예: `https://api.example.com`, 끝에 `/` 없이). 빌드 때 박히므로 바꾸면 다시 배포
+   3. API 서버 쪽 `.env`의 `API_CORS_ORIGINS`에 Vercel 도메인(`https://….vercel.app`)을 적고 uvicorn 재시작 — 안 적으면 브라우저가 응답을 막습니다
+   4. API 서버를 둘 곳은 [0013](docs/decisions/0013-ui-and-deploy.md) "배포할 때 확인할 것"의 측정값을 보고 정합니다(kure-v3 임베딩이 CPU에서 몇 초인지, 메모리 몇 GB인지)
 
    | 경로 | 내용 |
    |---|---|
    | `GET /health` | DuckDB·Neo4j 연결, 임베딩 모델, LLM 키 유무 |
-   | `POST /ask` | `{question, k, use_llm, corp_filter}` → 답·인용 번호·근거 조각(DART 링크, 공시를 낸 회사의 corp_code)·관계표(회사 페이지가 있는 회사는 corp_code) |
+   | `POST /ask` | `{question, k, use_llm, corp_filter}`, 헤더 `X-OpenAI-Key`(선택, 보는 사람의 키) → 답·인용 번호·근거 조각(DART 링크, 공시를 낸 회사의 corp_code)·관계표(회사 페이지가 있는 회사는 corp_code) |
    | `GET /changes` | `since`·`until`(또는 `days`)·`corp` → 변화 리포트 JSON |
    | `GET /corps` | 수집 대상 회사 목록 |
    | `GET /corps/{corp_code}` | `as_of` → 회사 페이지 묶음: 개요·최신 정기보고서, 그 날짜의 임원·최대주주·출자, 지주 겸직 표의 자리(0014), 지분 추이(지주 출자 표가 적은 이 회사 지분율·장부가액의 기준일별 변화) |

@@ -168,8 +168,8 @@ class ApiGraphTest(DbTest):
         driver = descendants_driver(1)
         driver.verify_connectivity = lambda: None
         driver.close = lambda: None
-        app = create_app(driver=driver, llm_factory=lambda: llm, retriever_name="graph:only",
-                         picker_factory=lambda: (picker_calls.append(1), P.LLMPicker(complete=lambda *a: '{"template": 0}'))[1])
+        app = create_app(driver=driver, llm_factory=lambda api_key=None: llm, retriever_name="graph:only",
+                         picker_factory=lambda api_key=None: (picker_calls.append(1), P.LLMPicker(complete=lambda *a: '{"template": 0}'))[1])
         return self.enterContext(TestClient(app))
 
     def test_ask_returns_graph(self):

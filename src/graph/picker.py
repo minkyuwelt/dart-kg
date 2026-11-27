@@ -82,8 +82,8 @@ def parse_choice(raw: str) -> str | None:
 class LLMPicker:
     """router.route(..., picker=LLMPicker())로 넣는다. complete(instructions, input, schema) -> JSON 문자열."""
 
-    def __init__(self, complete: Callable[[str, str, dict], str] | None = None):
-        self.complete = complete or _openai_complete()
+    def __init__(self, complete: Callable[[str, str, dict], str] | None = None, api_key: str | None = None):
+        self.complete = complete or _openai_complete(api_key)
         self.last_choice: str | None = None
 
     def __call__(self, question: str, as_of: date, mentions: list[CorpMention]) -> Plan | None:
@@ -94,16 +94,17 @@ class LLMPicker:
         return default_plan(self.last_choice, question, as_of, mentions)
 
 
-def _openai_complete() -> Callable[[str, str, dict], str]:
-    """노트북 전용. 답변 LLM과 같은 설정·하루 한도(src/rag/llm.py)."""
+def _openai_complete(api_key: str | None = None) -> Callable[[str, str, dict], str]:
+    """답변 LLM과 같은 설정·하루 한도(src/rag/llm.py). api_key를 주면 .env 대신 그 키(API가 요청 헤더로 받은 보는 사람의 키, 0013)."""
     from src.rag.llm import DailyLimit, settings
 
     s = settings()
-    if not s["api_key"]:
+    key = api_key or s["api_key"]
+    if not key:
         raise SystemExit("OPENAI_API_KEY가 .env에 없습니다 (템플릿 고르기도 LLM을 씁니다)")
     from openai import OpenAI
 
-    client, limit = OpenAI(api_key=s["api_key"]), DailyLimit(s["daily_limit"])
+    client, limit = OpenAI(api_key=key), DailyLimit(s["daily_limit"])
 
     def complete(instructions: str, text: str, schema: dict) -> str:
         limit.take()

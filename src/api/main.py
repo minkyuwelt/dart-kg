@@ -27,7 +27,7 @@ from datetime import date, timedelta
 from typing import Callable
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -41,6 +41,8 @@ DEFAULT_RETRIEVER = "graph:hybrid:kure-v3"   # 그래프 질문이 아니면 neo
 
 
 DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]   # web/ 개발 서버 (vite.config.ts의 포트)
+KEY_HEADER = "X-OpenAI-Key"   # 보는 사람이 자기 OpenAI 키를 실어 보내는 헤더 (0013). 서버는 그 요청에만 쓰고 저장·기록하지 않는다
+NO_KEY_MESSAGE = "LLM 키가 없습니다. 화면의 'OpenAI 키' 칸에 자기 키를 넣거나(브라우저에만 저장), 서버 .env에 OPENAI_API_KEY를 두세요."
 
 
 def cors_origins() -> list[str]:
@@ -196,26 +198,28 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
     app.state.embedder, app.state.driver = embedder, driver
     app.state.retriever_name = retriever_name
     # 화면(web/, 다른 출처)에서 부를 수 있게. 허용 출처는 .env의 API_CORS_ORIGINS (쉼표로 여러 개). 비우면 노트북의 Vite 개발 서버만 (0013)
-    app.add_middleware(CORSMiddleware, allow_origins=cors_origins(), allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+    app.add_middleware(CORSMiddleware, allow_origins=cors_origins(), allow_methods=["GET", "POST"], allow_headers=["Content-Type", KEY_HEADER])
 
-    def make_llm():
+    # LLM 키는 둘 중 하나: 요청 헤더 X-OpenAI-Key(보는 사람의 키 — 브라우저에만 저장되고 서버는 이 요청에만 쓰고 버린다) 또는 서버 .env의 OPENAI_API_KEY.
+    # 공개 서버에는 .env 키를 두지 않아 내 키가 쓰일 길을 없앤다 (0013 "키")
+    def make_llm(api_key: str | None):
         if llm_factory is not None:
-            return llm_factory()
+            return llm_factory(api_key=api_key)
         from src.rag.llm import OpenAILLM
         try:
-            return OpenAILLM()
+            return OpenAILLM(api_key=api_key)
         except SystemExit as e:  # 키 없음
-            raise HTTPException(503, str(e)) from e
+            raise HTTPException(503, NO_KEY_MESSAGE) from e
 
-    def make_picker():
+    def make_picker(api_key: str | None):
         """규칙이 못 고른 질문에서 템플릿 번호만 고르는 LLM (0011). 답변 LLM을 쓸 때만 함께 쓴다."""
         if picker_factory is not None:
-            return picker_factory()
+            return picker_factory(api_key=api_key)
         from src.graph.picker import LLMPicker
         try:
-            return LLMPicker()
+            return LLMPicker(api_key=api_key)
         except SystemExit as e:
-            raise HTTPException(503, str(e)) from e
+            raise HTTPException(503, NO_KEY_MESSAGE) from e
 
     @app.get("/health")
     def health() -> dict:
@@ -235,16 +239,21 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
         return out
 
     @app.post("/ask", response_model=AskResponse)
-    def post_ask(req: AskRequest) -> AskResponse:
-        llm = make_llm() if req.use_llm else None
+    def post_ask(req: AskRequest, x_openai_key: str | None = Header(default=None, alias=KEY_HEADER)) -> AskResponse:
+        api_key = (x_openai_key or "").strip() or None
+        llm = make_llm(api_key) if req.use_llm else None
         with _open_duckdb() as con:
             try:
                 retriever = make_retriever(retriever_name, con, corp_filter=req.corp_filter, embedder=app.state.embedder, driver=app.state.driver)
                 if llm is not None and hasattr(retriever, "picker"):
-                    retriever.picker = make_picker()
+                    retriever.picker = make_picker(api_key)
                 result = ask(req.question, retriever, llm, req.k, con)
             except SystemExit as e:
                 raise HTTPException(500, str(e)) from e
+            except Exception as e:
+                if type(e).__name__ == "AuthenticationError":   # openai.AuthenticationError — 헤더로 온 키가 틀림. openai를 여기서 import하지 않으려고 이름으로 본다
+                    raise HTTPException(401, "OpenAI 키가 맞지 않습니다. 키를 확인해 다시 넣어 주세요.") from e
+                raise
             # 회사 페이지로 잇는 데 필요한 것: 조각의 공시를 낸 회사, 관계표의 회사가 수집 대상인지
             corp_of = dict(con.execute("SELECT rcept_no, corp_code FROM disclosure WHERE rcept_no IN (SELECT UNNEST(?))",
                                        [[h.rcept_no for h in result.hits]]).fetchall()) if result.hits else {}
