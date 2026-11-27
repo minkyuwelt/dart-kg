@@ -20,7 +20,7 @@ DART 공시를 자동 수집해 기업·주주·임원 관계를 지식그래프
 기술 선정 근거: `docs/decisions/0001-tech-stack.md`, 한국어 전문검색 방식: `docs/decisions/0004-korean-fulltext.md`
 
 현재 단계: **Phase 3·4 완료** (2026-11-26, 개선 2026-11-27). Phase 2는 2026-11-23(백필 618개 보고서, 시점 질의 5개 검증). Phase 3·4는 평가까지 끝남 — 검색 hit@5 공시 1.000·섹션 0.729(48개), LLM 답 맞음 47/부분 6/틀림 0(53개), 라우팅 규칙만 53/53(일반 4개는 T2 허용) → `docs/decisions/0010`·`0011`, `docs/devlog/2026-11-27.md`. 검색이 놓친 질문은 `PYTHONPATH=. python notebooks/rank_diag.py <id>`로 정답 조각의 벡터·전문검색·하이브리드 순위를 먼저 본다
-다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보" — 이웃 조각은 11-27 코드 완료, 노트북 검증 대기), 매일 운영 확인, 화면(Next.js, 0013). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
+다음: 평가에서 나온 개선 후보(0010·0011 "개선 후보" — 이웃 조각은 11-27 코드 완료, 노트북 검증 중), 매일 운영 확인(`src.pipeline.status`), 화면(Vite + React `web/`, 0013 — 질문 페이지 11-27, 다음은 질문 이력·변화 리포트·회사 페이지). 계획 문서: `docs/plans/phase3.md`(완료 표시), 0011 "다시 판단할 조건"
 방향: `docs/plans/usecases.md` — 누가 쓰나, 업무 질문 11개, 비슷한 서비스와 차별점 5개. 기능을 넣을지는 이 문서의 질문을 돕는지로 판단한다
 Phase 4 설계 전 조사: `docs/plans/phase4-research.md` — 논문·도구마다 채택/보류/제외와 이유. 0011은 이 문서 5절의 뼈대로 쓴다
 
@@ -43,7 +43,8 @@ config/            수동 매핑 등 사람이 관리하는 설정 (corp_name_ov
 src/graph/         Neo4j 적재(조각·관계)와 그래프 질의(라우터·템플릿·picker, 0011)
 src/rag/           검색·임베딩·LLM 답변 (0009·0010). 진입점 `python -m src.rag.ask "질문"`
 src/reports/       변화 리포트 (0012)
-src/api/           FastAPI — 기존 함수를 HTTP로 감싼다 (0013). 화면은 Next.js로 따로
+src/api/           FastAPI — 기존 함수를 HTTP로 감싼다 (0013)
+web/               화면 — Vite + React SPA (0013). API 응답을 그대로 보여 주고 새 로직을 두지 않는다. `cd web && npm run dev`, CI가 lint·build
 sql/schema.sql     DuckDB 테이블 정의
 tests/             오프라인 테스트 (DART API를 호출하지 않음, `python -m unittest discover -s tests -t .`)
 eval/              평가 세트: questions.jsonl(ready 53개), run.py(검색 hit@5·LLM 채점표), routing.py(라우팅 정확도), 검색 함수(retrievers/), 질문 초안 도구. 정답은 사람이 뷰어에서 확인한 것만
@@ -62,6 +63,7 @@ docs/devlog/       날짜별 개발 일지 (YYYY-MM-DD.md)
   - 노트북을 켜고 작업을 시작할 때 `DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.status`로 스케줄·작업·자산의 마지막 실행과 DuckDB ↔ Neo4j 수를 한 장으로 본다(읽기만). 판정에 문제가 나오면 그 줄의 안내대로. 조각 수만 보려면 `python -m src.graph.load_chunks stats`. 전문검색 인덱스 속성이 코드와 다르다고 나오면 `python -m src.graph.load_chunks reindex-fulltext`(노드·벡터 그대로, 몇 분). Neo4j가 0이면 Docker Desktop 재시작 때 `data/neo4j/` 폴더가 컨테이너에 안 붙어 빈 DB가 새로 만들어진 것 → `docker compose down && docker compose up -d`로 다시 붙인다 (2026-11-26, 데이터는 그대로 남아 있음. `-v`는 붙이지 않는다)
 - 노트북에서 다른 수업 프로젝트 컨테이너가 5432·8080·7474·7687 포트를 쓰고 있음 → Docker로 띄우는 서비스의 노트북 쪽 포트는 `.env`로 바꿀 수 있게 할 것
 - 프로젝트 폴더는 WSL 파일시스템 안에 둠
+- Node(화면 `web/`)는 WSL 안의 nvm 것(22)을 쓴다. WSL PATH에 Windows의 `/mnt/c/Program Files/nodejs/npm`이 섞여 있어, Linux Node가 없으면 `npm run dev`가 CMD.EXE로 떠서 파일 감시가 `C:\Windows`를 보는 오류가 난다 (2026-11-27). `which node`가 `~/.nvm/…`인지 확인
 - 줄바꿈은 LF로 통일 (`.gitattributes`)
 - 노트북은 과정 종료 후 반납 → 코드·문서는 모두 GitHub에 push. `data/`의 DuckDB 파일은 로컬에만 있지만 코드로 다시 만들 수 있어야 함 (전체 재수집 약 5,000건 추정, 하루 한도 안)
 

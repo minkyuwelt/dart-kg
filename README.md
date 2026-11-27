@@ -115,7 +115,7 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 | Phase 2 관계 데이터 | 최대주주·임원·타법인 출자 현황 테이블 (이중 시간축, 사람 식별) | 완료 (2021~2026년 보고서 618개, 임원 15,546행, 사람 1,693명) |
 | Phase 3 공시 RAG | 공시 원문 → 섹션·조각(1,000자, 꼬리표) → KURE-v3 임베딩 → Neo4j 벡터+전문검색(RRF) → LLM 답 + 근거 링크. 변화 리포트, FastAPI | 완료 (2026-11-25. 보고서 193개, 조각 269,066개. 계획: [docs/plans/phase3.md](docs/plans/phase3.md)) |
 | Phase 4 지식그래프 | DuckDB 관계 → Neo4j `Corp`·`Person`·`OWNS`·`HOLDS_POSITION`(시간 속성) → 라우터 + 고정 Cypher 템플릿 8개 → 관계표를 검색 결과와 RRF로 합쳐 LLM에 | 완료 (2026-11-26. [0011](docs/decisions/0011-graph-schema-and-graphrag.md)) |
-| 다음 | 평가에서 나온 개선 후보(0010·0011), 매일 운영, 화면(Next.js → Vercel, 0013) | 예정 |
+| 다음 | 평가에서 나온 개선 후보(0010·0011), 매일 운영, 화면(Vite + React → Vercel, 0013. 질문 페이지는 11-27) | 예정 |
 
 ## 결과 (2026-11-26 기준)
 
@@ -145,7 +145,8 @@ src/pipeline/      Dagster 자산·스케줄 정의
 src/graph/         (Phase 3~4) Neo4j 적재
 src/rag/           (Phase 3) 검색·생성
 src/reports/       (Phase 3) 변화 리포트 (0012)
-src/api/           (Phase 3) FastAPI — 기존 함수를 HTTP로 감싼다 (0013). 화면은 Next.js로 따로
+src/api/           (Phase 3) FastAPI — 기존 함수를 HTTP로 감싼다 (0013)
+web/               화면 (Vite + React, 0013). 질문 → 답 + 근거 공시 + 관계표
 sql/               DuckDB 테이블 정의 (schema.sql)
 notebooks/         탐색·실험용
 docs/decisions/    기술 결정 기록
@@ -394,6 +395,13 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    curl -s -X POST localhost:8000/ask -H 'content-type: application/json' -d '{"question":"2025년 신한은행의 주당 현금배당금은 얼마인가?","use_llm":false}'
    curl -s 'localhost:8000/changes?since=2026-03-01&until=2026-04-30'
    curl -s 'localhost:8000/corps/00382199/executives?as_of=2024-06-30&outside_only=true'
+   ```
+
+19. **화면 (Vite + React, 0013)** — 질문 한 페이지. 답의 인용 번호와 오른쪽 근거 공시가 같은 번호이고, 인용된 근거만 형광펜을 칠합니다. 그래프 질문이면 관계표가 답 아래에 붙습니다. 화면에 새 로직은 없고 API 응답을 그대로 보여 줍니다. API 서버(18번)가 떠 있어야 합니다.
+
+   ```bash
+   cd web && npm install && npm run dev      # WSL 안의 Linux Node(nvm, 22)로. http://localhost:5173 (API는 기본 http://127.0.0.1:8000, 바꾸려면 web/.env.example → .env.local)
+   npm run build                             # Vercel에 올리는 정적 파일(dist/). Vercel 프로젝트의 Root Directory를 web으로, 환경변수 VITE_API_URL
    ```
 
    | 경로 | 내용 |
