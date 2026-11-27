@@ -32,7 +32,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from eval.retrievers import make_retriever
+from src.rag.retrievers import make_retriever
 from src.loaders.as_of import corp_page, executives_as_of, shareholders_as_of, target_corps
 from src.loaders.duckdb_store import connect, is_lock_error
 from src.rag.ask import VIEWER_URL, ask

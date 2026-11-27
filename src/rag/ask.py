@@ -22,7 +22,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 
-from eval.metrics import Hit
+from src.rag.retrievers.hit import Hit
 from src.rag.llm import LLM, NOT_FOUND, Answer, Passage
 
 VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
@@ -79,7 +79,7 @@ def expand_neighbors(question: str, hits: list[Hit], con, limit: int = NEIGHBOR_
     out: list[tuple[Hit, int, bool]] = []
     if con is None or limit <= 0 or not hits:
         return out
-    from eval.retrievers.neo4j import load_section_words
+    from src.rag.retrievers.neo4j import load_section_words
     from src.graph.text_normalize import section_terms
 
     words = section_words or load_section_words(con)
@@ -188,7 +188,7 @@ def main(argv=None) -> int:
     ap.add_argument("--neighbors", type=int, default=NEIGHBOR_MAX, help=f"상위 조각과 같은 절의 앞뒤 조각을 LLM에 함께 넘기는 상한 (기본 {NEIGHBOR_MAX}, 0이면 끔)")
     args = ap.parse_args(argv)
 
-    from eval.retrievers import make_retriever
+    from src.rag.retrievers import make_retriever
     from src.loaders.duckdb_store import connect
 
     llm = None

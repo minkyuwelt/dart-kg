@@ -9,12 +9,13 @@
 - graph:only:             (Phase 4, 0011) 라우터 → 그래프 템플릿 → 근거 조각만. 템플릿에 안 맞는 질문은 빈 결과
 - graph:hybrid:<모델>:    그래프 근거 조각 + neo4j:hybrid:<모델> → RRF. 템플릿에 안 맞으면 neo4j:hybrid 그대로
 선택 단계(모든 조각 검색기에 공통): corp_filter(질문의 회사명으로 좁힘), reranker(상위 후보를 교차 인코더로 다시 매김).
-설정 이름(--retriever)으로 고르므로 run.py는 검색 방식을 모른다.
+설정 이름(--retriever)으로 고르므로 eval/run.py는 검색 방식을 모른다.
+2026-11-27 `eval/retrievers/`에서 여기로 옮김: API·답변(src)이 실제로 쓰는 검색이 평가 폴더에 있어 의존 방향이 거꾸로였다. 평가는 이것을 가져다 쓰기만 한다.
 """
 
 from typing import Protocol
 
-from eval.metrics import Hit
+from src.rag.retrievers.hit import Hit
 
 
 class Retriever(Protocol):
@@ -32,20 +33,20 @@ def make_retriever(name: str, con, corp_filter: bool = False, rerank: str | None
         reranker = LocalReranker(rerank)
 
     if name == "keyword":
-        from eval.retrievers.keyword import KeywordRetriever
+        from src.rag.retrievers.keyword import KeywordRetriever
         if corp_filter or reranker:
             raise SystemExit("keyword(섹션 기본선)에는 회사 필터·재순위를 붙이지 않습니다. chunk:<전략>을 쓰세요")
         return KeywordRetriever(con)
 
     if name.startswith("chunk:"):
-        from eval.retrievers.chunk import ChunkKeywordRetriever
+        from src.rag.retrievers.chunk import ChunkKeywordRetriever
         strategy = name.split(":", 1)[1]
         if strategy not in STRATEGIES:
             raise SystemExit(f"모르는 청킹 전략: {strategy} (가능: {', '.join(STRATEGIES)})")
         return ChunkKeywordRetriever(con, strategy, corp_filter=corp_filter, reranker=reranker)
 
     if name.startswith("dense:"):
-        from eval.retrievers.dense import DenseRetriever
+        from src.rag.retrievers.dense import DenseRetriever
         from src.rag.embedding import MODELS
         parts = name.split(":")
         if len(parts) != 3:
@@ -74,7 +75,7 @@ def make_retriever(name: str, con, corp_filter: bool = False, rerank: str | None
         return GraphRetriever(driver, con, base=base, lineage=load_lineage())
 
     if name.startswith("neo4j:"):
-        from eval.retrievers.neo4j import Neo4jFulltextRetriever, Neo4jHybridRetriever, Neo4jVectorRetriever
+        from src.rag.retrievers.neo4j import Neo4jFulltextRetriever, Neo4jHybridRetriever, Neo4jVectorRetriever
         from src.rag.embedding import MODELS
         parts = name.split(":")
         if reranker and parts[1:2] != ["hybrid"]:

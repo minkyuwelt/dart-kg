@@ -41,7 +41,7 @@ fp32일 때 GPU 전력이 상한 90W의 절반(40W)에 머문 것은 fp32 계산
 
 - `src/rag/embedding.py`: `MODELS`(설정 이름 → HF id·차원), `LocalEmbedder`(sentence-transformers, GPU 자동, 함수 안 import), `embed_chunks`(해시가 바뀐 조각만, 배치마다 커밋, 1,000개당 초 출력), CLI `build`/`stats`
 - `src/rag/rerank.py`: `LocalReranker`(CrossEncoder), `rerank()`
-- `eval/retrievers/dense.py`: `--retriever dense:<모델>:<전략>`. `eval/retrievers/filters.py`: `guess_corp_code`. `--filter corp`, `--rerank nano`는 chunk·dense 검색기 공통
+- `src/rag/retrievers/dense.py`(2026-11-27까지 `eval/retrievers/`): `--retriever dense:<모델>:<전략>`. `src/rag/retrievers/filters.py`: `guess_corp_code`. `--filter corp`, `--rerank nano`는 chunk·dense 검색기 공통
 - `sql/schema.sql`: `chunk_embedding(chunk_id, model_name, text_hash, dim, vector FLOAT[])`. 모델마다 행, 옛 모델 행은 남김
 - `requirements-ml.txt`: torch 2.14.1, sentence-transformers 6.2.0 — **노트북 전용**. CI와 웹은 설치하지 않고 테스트는 가짜 임베더로
 

@@ -7,9 +7,9 @@
 
 import duckdb
 
-from eval.metrics import Hit
-from eval.retrievers.filters import guess_corp_code
-from eval.retrievers.keyword import tokenize
+from src.rag.retrievers.hit import Hit
+from src.rag.retrievers.filters import guess_corp_code
+from src.rag.retrievers.keyword import tokenize
 from src.rag.rerank import Reranker, rerank
 
 

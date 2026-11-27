@@ -12,7 +12,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
-from eval.metrics import Hit
+from src.rag.retrievers.hit import Hit
 from eval.questions import Question
 from src.rag.ask import VIEWER_URL, ask, format_result
 from src.rag.llm import NOT_FOUND, Answer, DailyLimit, Passage, build_user_prompt, parse_answer

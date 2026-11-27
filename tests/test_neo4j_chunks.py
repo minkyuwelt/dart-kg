@@ -10,8 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from eval.retrievers import make_retriever
-from eval.retrievers.neo4j import rrf_fuse
+from src.rag.retrievers import make_retriever
+from src.rag.retrievers.neo4j import rrf_fuse
 from src.graph.load_chunks import CHUNK_MERGE, DOCUMENT_MERGE, build, chunk_rows, document_rows, pending_count, schema_statements
 from src.loaders.chunks import build_chunks
 from src.loaders.duckdb_store import connect, upsert_disclosures
@@ -145,10 +145,10 @@ class LoadChunksTest(unittest.TestCase):
         p = drv.calls[-1][1]
         self.assertFalse(p["prefer_latest"])
         self.assertEqual((p["n"], p["year"]), (3, "2024"))                       # 연도 있는 질문: 그 연도가 많이 적힌 조각 먼저 (2026-11-27 d033)
-        from eval.retrievers.neo4j import question_year
+        from src.rag.retrievers.neo4j import question_year
         self.assertEqual(question_year("케이비국민카드의 2025년 중 주요 연혁은?"), "2025")
         self.assertIsNone(question_year("2025.02.18 이후 변동은?"))                # '년'이 붙은 연도만
-        from eval.retrievers.neo4j import has_date
+        from src.rag.retrievers.neo4j import has_date
         self.assertTrue(has_date("2024년 사업보고서 기준 대표이사는?")); self.assertTrue(has_date("2021년 12월 31일 기준"))
         self.assertFalse(has_date("신한라이프생명보험의 주요 사업 부문은 무엇인가?"))
         self.assertEqual(ft.search("   ", 3), [])                               # 낱말이 없으면 질의하지 않음
@@ -157,7 +157,7 @@ class LoadChunksTest(unittest.TestCase):
                 make_retriever(bad, self.con, driver=drv, embedder=None if bad.endswith("nope") else FakeEmbedder())
 
     def test_keep_latest_copy_drops_older_duplicates_only_for_undated_questions(self):
-        from eval.retrievers.neo4j import keep_latest_copy
+        from src.rag.retrievers.neo4j import keep_latest_copy
         old = {"rcept_no": "20240314000001", "file_name": "f", "section_id": 1, "path": "II. 사업의 내용 > 1. 사업의 개요", "score": 0.9, "text": "생명보험업"}
         new = {**old, "rcept_no": "20260331000001", "score": 0.89}
         other = {**old, "text": "배당", "score": 0.5}

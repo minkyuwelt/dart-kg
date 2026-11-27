@@ -11,7 +11,7 @@ from eval.draft import TEMPLATES_BY_KEY, draft_questions, fill_question, next_dr
 from eval.locate import locate
 from eval.metrics import Hit, hit_at_k, reciprocal_rank, score_question, summarize
 from eval.questions import NO_ANSWER, QuestionFormatError, load_questions, parse_question
-from eval.retrievers.keyword import KeywordRetriever, tokenize
+from src.rag.retrievers.keyword import KeywordRetriever, tokenize
 from eval.review import first_preview, line_id, pending, read_lines, review, section_preview
 from eval.run import evaluate
 from src.collectors.corp_code import HOLDING_CORPS
