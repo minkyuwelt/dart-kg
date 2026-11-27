@@ -48,7 +48,7 @@ DART 공시를 자동으로 모아 **기업·주주·임원 관계를 지식그�
 
 단계를 자르는 기준은 **"다시 만들 수 있는가"**입니다. 원본(1)은 API 한도 때문에 한 번 받으면 지키고, 그 아래(2)(3)는 코드만으로 다시 만들 수 있어야 합니다. 그래서 노트북을 반납해 DuckDB 파일을 잃어도 하루(약 6,600건)면 복구됩니다.
 
-매일 운영은 Dagster 스케줄 7개가 맡습니다(코드에서 기본 켜짐). 10:00 대상 목록 확인 → 10:05 이번 달 공시 목록 → 10:45 그날 접수된 정기보고서 → 11:00 그 보고서의 원문 → 11:30 관계 테이블 재생성 → 11:45 관계 그래프(Neo4j) → 12:00 원문 색인(파싱·청킹·임베딩·Neo4j). 조건은 그 시각에 `dagster dev`가 떠 있는 것입니다(노트북은 보통 09:30에 켜므로 그 뒤로 두었습니다). 꺼져 있던 날은 다음에 켜진 날 놓친 평가 중 가장 최근 하나를 따라잡는데, 그때는 7개가 한꺼번에 평가되어 정기보고서 주요정보·원문은 하루 늦게 들어옵니다. 아침 루틴: `docker compose up -d` → `dagster dev` → `python -m src.pipeline.status`(스케줄·작업·자산 마지막 실행과 DuckDB ↔ Neo4j 수 한 장).
+매일 운영은 Dagster 스케줄 7개가 맡습니다(코드에서 기본 켜짐). 10:00 대상 목록 확인 → 10:05 이번 달 공시 목록 → 10:45 새 접수번호가 있는 정기보고서의 주요정보(이미 처리한 접수번호는 건너뜀, 정정본은 다시) → 11:00 그 보고서의 원문 → 11:30 관계 테이블 재생성 → 11:45 관계 그래프(Neo4j) → 12:00 원문 색인(파싱·청킹·임베딩·Neo4j). 조건은 그 시각에 `dagster dev`가 떠 있는 것입니다(노트북은 보통 09:30에 켜므로 그 뒤로 두었습니다). 꺼져 있던 날은 다음에 켜진 날 놓친 평가 중 가장 최근 하나를 따라잡는데, 그때는 7개가 한꺼번에 평가되어 정기보고서 주요정보·원문은 하루 늦게 들어옵니다. 아침 루틴: `docker compose up -d` → `dagster dev` → `python -m src.pipeline.status`(스케줄·작업·자산 마지막 실행과 DuckDB ↔ Neo4j 수 한 장).
 
 ## 내 역할
 
@@ -245,7 +245,7 @@ corp_codes ─▶ holding_investments ─▶ target_corps ─▶ disclosures
    DAGSTER_HOME=$PWD/dagster_home python -m src.pipeline.backfill_reports --rebuild-only   # 수집 없이 재생성·검사만
    ```
 
-   이후에는 `daily_report_details`(10:45, 그날 새로 접수된 정기보고서만 수집)·`daily_relations`(11:30, 관계 테이블 재생성)·`daily_graph`(11:45, Neo4j 관계 그래프)가 매일 이어서 합니다(기본 켜짐).
+   이후에는 `daily_report_details`(10:45, 아직 처리하지 않은 접수번호의 정기보고서만 수집 — 매일 다시 받지 않음)·`daily_relations`(11:30, 관계 테이블 재생성)·`daily_graph`(11:45, Neo4j 관계 그래프)가 매일 이어서 합니다(기본 켜짐).
 
 6. **(Phase 2) 관계 데이터 조회** — 관계 테이블(`investment`, `major_shareholder`, `major_shareholder_change`, `executive`)의 행은 "보고서 기준일(`valid_from`)부터 다음 보고서 기준일(`valid_to`)까지 참"입니다. 정정된 행은 `superseded_by`에 정정본 접수번호가 있습니다([0005](docs/decisions/0005-temporal-model.md)). 사람은 `person_id`(이름|생년월|성별, [0006](docs/decisions/0006-person-identity.md))로 묶입니다.
 

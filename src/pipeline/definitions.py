@@ -249,8 +249,11 @@ def disclosures(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
         corp_name = row[0] if row else corp_code
         context.log.info(f"{corp_name}({corp_code}) {bgn_de}~{end_de} 공시 목록 수집")
         stats = collect_disclosures(con, get_api_key(), corp_code, bgn_de, end_de)
-        # 이 달에 접수된 정기보고서(정정본 포함). daily_report_details 스케줄이 DuckDB를 열지 않고 읽는 곳
-        reports = sorted({report_partition_key(r["bsns_year"], r["reprt_code"]) for r in periodic_reports_of(con, corp_code, bgn_de, end_de)})
+        # 이 달에 접수된 정기보고서(정정본 포함)의 보고서 키 → 최신 접수번호. daily_report_details·daily_documents 스케줄이 DuckDB를 열지 않고
+        # 읽는 곳. 접수번호를 함께 남겨 스케줄이 "이 접수번호는 이미 처리했다"를 자산 실행 기록과 견줄 수 있다 (2026-11-27, 전에는 키 목록만)
+        reports = {}
+        for r in periodic_reports_of(con, corp_code, bgn_de, end_de):   # 접수일 순이라 마지막 것이 최신(정정본)
+            reports[report_partition_key(r["bsns_year"], r["reprt_code"])] = r["rcept_no"]
     return dg.MaterializeResult(
         metadata={
             "corp_code": corp_code,
@@ -312,7 +315,7 @@ def report_details(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
     # 응답의 rcept_no가 목록의 최신 접수번호와 다르면 목록이 오래됐거나(정정본이 아직 목록에 없음) API가 다른 버전을 준 것
     return dg.MaterializeResult(
         metadata={"corp_code": corp_code, "corp_name": corp_name, "report": report,
-                  "listed_rcept_no": listed["rcept_no"], "listed_report_nm": listed["report_nm"], **stats,
+                  LISTED_RCEPT_NO_METADATA_KEY: listed["rcept_no"], "listed_report_nm": listed["report_nm"], **stats,
                   "rcept_no_matches_listing": stats["rcept_no"] == listed["rcept_no"]}
     )
 
@@ -532,42 +535,69 @@ LOOKBACK_DAYS = 2  # 스케줄이 "최근"으로 보는 범위. 하루 꺼져 �
 
 @dg.schedule(job=report_details_job, cron_schedule="45 10 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def daily_report_details(context: dg.ScheduleEvaluationContext):
-    """매일 10:45(KST), 최근 disclosures 실행이 새로 본 정기보고서(정정본 포함)의 주요정보를 수집한다.
+    """매일 10:45(KST), 최근 disclosures 실행이 본 정기보고서(정정본 포함) 중 아직 그 접수번호로 처리하지 않은 것의 주요정보를 수집한다.
 
-    10:05 daily_disclosures가 남긴 실행 메타데이터(periodic_reports)를 Dagster 인스턴스에서 읽는다.
-    DuckDB는 열지 않는다. 정기보고서가 없는 날은 건너뛰므로 평소 API 0건, 보고서 접수 시기에 보고서당 4건.
+    10:05 daily_disclosures가 남긴 실행 메타데이터(periodic_reports: 보고서 키 → 최신 접수번호)를 Dagster 인스턴스에서 읽고,
+    report_details 파티션의 마지막 실행 기록(listed_rcept_no)과 견준다. DuckDB는 열지 않는다.
+    새 접수번호가 없는 날은 건너뛰므로 평소 API 0건, 보고서 접수 시기에 새 보고서당 4건.
     """
-    yield from _runs_for_new_periodic_reports(context, run_prefix="")
+    yield from _runs_for_new_periodic_reports(context, report_details.key, run_prefix="")
 
 
-def _runs_for_new_periodic_reports(context: dg.ScheduleEvaluationContext, run_prefix: str):
-    """최근 disclosures 실행 메타데이터(periodic_reports)에서 새 정기보고서를 모아 회사 × 보고서 파티션 run을 만든다.
+def _runs_for_new_periodic_reports(context: dg.ScheduleEvaluationContext, asset_key: dg.AssetKey, run_prefix: str):
+    """최근 disclosures 실행 메타데이터(periodic_reports)의 정기보고서 중, 그 자산(asset_key)이 아직 그 접수번호로 돌지 않은 것만 회사 × 보고서 run으로.
 
-    report_details(주요정보)와 documents(원문)가 같은 파티션을 쓰므로 둘이 공유한다. run_key 앞에 run_prefix를 붙여
-    두 스케줄의 run이 서로 구분된다. DuckDB는 열지 않는다.
+    report_details(주요정보)와 documents(원문)가 같은 파티션을 쓰므로 둘이 공유한다. run_key 앞에 run_prefix를 붙여 두 스케줄의 run이 구분된다.
+    "이미 처리했다"의 판단: 그 파티션의 마지막 자산 실행 기록 메타데이터 `listed_rcept_no`가 목록의 최신 접수번호와 같으면 건너뛴다.
+    기록이 없으면(새 보고서, 또는 어제 run이 실패) 돌리고, 접수번호가 다르면(정정본) 다시 돌린다. DuckDB는 열지 않는다.
+    (2026-11-27 전에는 최근 2일 목록의 보고서를 매일 전부 돌려 11월 내내 29개 × 4 = 116 호출이 매일 나갔다.)
+    옛 메타데이터(접수번호 없는 키 목록)는 접수번호를 모르니 돌린다.
     """
     now = context.scheduled_execution_time
     today = now.astimezone(KST).date()
-    wanted: set[tuple[str, str]] = set()
+    wanted: dict[tuple[str, str], str | None] = {}
     for record in _recent_materializations(context.instance, disclosures.key, now.timestamp() - LOOKBACK_DAYS * 86400):
         meta = record.asset_materialization.metadata
         corp = meta.get("corp_code")
         reports = meta.get(PERIODIC_REPORTS_METADATA_KEY)
         if corp is None or reports is None:
             continue
-        wanted.update((corp.value, r) for r in reports.value)
+        value = reports.value
+        items = value.items() if isinstance(value, dict) else ((r, None) for r in value)
+        for report, rcept_no in items:
+            key = (corp.value, report)
+            if wanted.get(key) is None or (rcept_no or "") > (wanted[key] or ""):   # 여러 기록 중 가장 큰 접수번호(= 최신)
+                wanted[key] = rcept_no
     if not wanted:
         yield dg.SkipReason(f"최근 {LOOKBACK_DAYS}일 공시 수집에서 새 정기보고서가 없습니다.")
         return
     known = set(context.instance.get_dynamic_partitions("corp"))
-    for corp_code, report in sorted(wanted):
+    done = 0
+    for (corp_code, report), rcept_no in sorted(wanted.items()):
         if corp_code not in known or report not in report_partitions.get_partition_keys():
             context.log.warning(f"파티션에 없는 조합 건너뜀: {corp_code} {report}")
+            continue
+        if rcept_no is not None and _processed_rcept_no(context.instance, asset_key, f"{corp_code}|{report}") == rcept_no:
+            done += 1
             continue
         yield dg.RunRequest(
             run_key=f"{run_prefix}{today.isoformat()}|{corp_code}|{report}",
             partition_key=dg.MultiPartitionKey({"corp": corp_code, "report": report}),
         )
+    if done == len(wanted):
+        yield dg.SkipReason(f"정기보고서 {done}개 모두 최신 접수번호로 이미 처리됐습니다.")
+
+
+def _processed_rcept_no(instance: dg.DagsterInstance, asset_key: dg.AssetKey, partition: str) -> str | None:
+    """그 자산의 그 파티션(\"corp|report\")의 마지막 실행 기록에 적힌 listed_rcept_no. 기록이 없거나 값이 없으면 None."""
+    records = instance.fetch_materializations(dg.AssetRecordsFilter(asset_key=asset_key, asset_partitions=[partition]), limit=1).records
+    if not records:
+        return None
+    value = records[0].asset_materialization.metadata.get(LISTED_RCEPT_NO_METADATA_KEY)
+    return value.value if value is not None else None
+
+
+LISTED_RCEPT_NO_METADATA_KEY = "listed_rcept_no"   # report_details·documents가 "이 접수번호를 처리했다"고 남기는 칸. 스케줄이 읽는다
 
 
 @dg.schedule(job=relations_job, cron_schedule="30 11 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
@@ -608,9 +638,11 @@ def documents(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
     corp_code, report = keys["corp"], keys["report"]
     bsns_year, reprt_code = split_report_partition_key(report)
     with write_connection() as con:
+        listed = latest_periodic_report(con, corp_code, bsns_year, reprt_code)
+        listed_meta = {LISTED_RCEPT_NO_METADATA_KEY: listed["rcept_no"]} if listed else {}   # daily_documents 스케줄이 "이 접수번호는 처리했다"로 읽는다
         todo = missing_documents_of_report(con, corp_code, bsns_year, reprt_code)
         if not todo:
-            return dg.MaterializeResult(metadata={"corp_code": corp_code, "report": report, "api_calls": 0,
+            return dg.MaterializeResult(metadata={"corp_code": corp_code, "report": report, "api_calls": 0, **listed_meta,
                                                   DOCUMENTS_SAVED_METADATA_KEY: 0, "skipped": "받을 원문 없음 (목록에 없거나 이미 저장)"})
         saved, no_file, api_calls = [], [], 0
         for r in todo:
@@ -618,7 +650,7 @@ def documents(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
             result = collect_document(con, get_api_key(), r["rcept_no"])
             api_calls += result["api_calls"]
             (no_file if result.get("no_file") else saved).append(r["rcept_no"])
-    return dg.MaterializeResult(metadata={"corp_code": corp_code, "report": report, "api_calls": api_calls,
+    return dg.MaterializeResult(metadata={"corp_code": corp_code, "report": report, "api_calls": api_calls, **listed_meta,
                                           DOCUMENTS_SAVED_METADATA_KEY: len(saved), "saved_rcept_no": ", ".join(saved) or "없음",
                                           "no_file": ", ".join(no_file) or "없음"})
 
@@ -781,7 +813,7 @@ def daily_documents(context: dg.ScheduleEvaluationContext):
 
     DuckDB는 열지 않는다. 평소 API 0건, 보고서 접수 시기에 보고서당 1건.
     """
-    yield from _runs_for_new_periodic_reports(context, run_prefix="documents|")
+    yield from _runs_for_new_periodic_reports(context, documents.key, run_prefix="documents|")
 
 
 def _latest_materialization_time(instance: dg.DagsterInstance, asset_key: dg.AssetKey) -> float | None:

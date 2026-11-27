@@ -180,3 +180,58 @@ class TargetsFreshnessScheduleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewPeriodicReportsScheduleTest(unittest.TestCase):
+    """daily_report_details·daily_documents: 정기보고서의 최신 접수번호를 그 자산이 아직 처리하지 않은 것만 run (2026-11-27).
+    전에는 최근 2일 목록의 보고서를 매일 전부 돌려 29개 × 4 호출이 11월 내내 매일 나갔다."""
+
+    CORP, REPORT, RCEPT = "00688996", "2026-11014", "20261114000111"
+
+    def setUp(self):
+        self.instance = self.enterContext(dg.instance_for_test())
+        self.instance.add_dynamic_partitions("corp", [self.CORP])
+
+    def disclosures_seen(self, reports):
+        """disclosures 자산이 실행된 것처럼: 보고서 키 → 최신 접수번호 (옛 꼴은 키 목록)."""
+        self.instance.report_runless_asset_event(dg.AssetMaterialization(
+            asset_key=definitions.disclosures.key, partition=f"{self.CORP}|2026-11-01",
+            metadata={"corp_code": self.CORP, definitions.PERIODIC_REPORTS_METADATA_KEY: dg.MetadataValue.json(reports)}))
+
+    def processed(self, asset, rcept_no):
+        """그 자산이 그 파티션을 그 접수번호로 처리한 기록."""
+        self.instance.report_runless_asset_event(dg.AssetMaterialization(
+            asset_key=asset.key, partition=f"{self.CORP}|{self.REPORT}",
+            metadata={"corp_code": self.CORP, definitions.LISTED_RCEPT_NO_METADATA_KEY: rcept_no}))
+
+    def evaluate(self, schedule):
+        when = datetime.now(tz=KST)   # 실행 기록 시각은 '지금'이라 평가 시각도 지금이어야 최근 2일 안에 든다
+        context = dg.build_schedule_context(instance=self.instance, scheduled_execution_time=when)
+        return list(schedule(context))
+
+    def test_runs_new_report_then_skips_once_processed_then_reruns_correction(self):
+        self.disclosures_seen({self.REPORT: self.RCEPT})
+        runs = self.evaluate(definitions.daily_report_details)
+        self.assertEqual([r.partition_key for r in runs if isinstance(r, dg.RunRequest)], [f"{self.CORP}|{self.REPORT}"])
+        # 주요정보가 그 접수번호로 처리됨 → 건너뜀 (원문은 아직이라 documents 스케줄은 run)
+        self.processed(definitions.report_details, self.RCEPT)
+        out = self.evaluate(definitions.daily_report_details)
+        self.assertEqual(len(out), 1)
+        self.assertIsInstance(out[0], dg.SkipReason)
+        self.assertIn("이미 처리", str(out[0].skip_message))
+        docs = self.evaluate(definitions.daily_documents)
+        self.assertEqual([r.run_key for r in docs if isinstance(r, dg.RunRequest)][0][:10], "documents|")
+        # 정정본(새 접수번호)이 목록에 들어오면 다시 run
+        self.disclosures_seen({self.REPORT: "20261127000999"})
+        runs = self.evaluate(definitions.daily_report_details)
+        self.assertEqual(len([r for r in runs if isinstance(r, dg.RunRequest)]), 1)
+
+    def test_old_style_metadata_without_rcept_no_still_runs(self):
+        self.disclosures_seen([self.REPORT])      # 11-27 전의 기록: 키 목록만
+        self.processed(definitions.report_details, self.RCEPT)
+        runs = self.evaluate(definitions.daily_report_details)
+        self.assertEqual(len([r for r in runs if isinstance(r, dg.RunRequest)]), 1)
+
+    def test_skips_when_nothing_seen(self):
+        out = self.evaluate(definitions.daily_report_details)
+        self.assertIsInstance(out[0], dg.SkipReason)
