@@ -114,7 +114,7 @@ def load_section_words(con: duckdb.DuckDBPyConnection | None) -> set[str] | None
 
 
 def _hits(records) -> list[Hit]:
-    return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(r["score"]), (r["text"] or "")[:120], r["text"] or "") for r in records]
+    return [Hit.from_record(r, r["score"]) for r in records]
 
 
 class Neo4jVectorRetriever(BaseRetriever):
@@ -184,5 +184,5 @@ class Neo4jHybridRetriever(BaseRetriever):
         if self.reranker:
             top = [rec for rec, _ in fused[: self.rerank_candidates]]
             ranked = rerank(self.reranker, question, top, lambda r: r["text"] or "", k)
-            return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(s), (r["text"] or "")[:120], r["text"] or "") for r, s in ranked]
-        return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(s), (r["text"] or "")[:120], r["text"] or "") for r, s in fused[:k]]
+            return [Hit.from_record(r, s) for r, s in ranked]
+        return [Hit.from_record(r, s) for r, s in fused[:k]]

@@ -369,10 +369,6 @@ def write_drafts(questions: list[Question], draft_path: Path, questions_path: Pa
 
 # ---------------------------------------------------------------- 그래프와 대조
 
-_TOTAL_RE = re.compile(r"합계 (\d+)곳")
-_NO_CODE_RE = re.compile(r"corp_code 없음 (\d+)곳")
-
-
 def _same(name: str) -> str:
     """이름 대조용: 띄어쓰기·법인 표기·전각을 뗀 꼴 ('우리금융지주 우리사주조합' = '우리금융지주우리사주조합')."""
     return bare(unicodedata.normalize("NFKC", name or ""))
@@ -380,7 +376,8 @@ def _same(name: str) -> str:
 
 def graph_view(ctx) -> tuple[set[str], int | None, int | None]:
     """GraphContext → (나온 이름들, 합계 곳 수, corp_code 없는 곳 수).
-    이름은 관계 표뿐 아니라 경로 위 노드의 names(공시에 나온 다른 이름, '신한금융지주회사' = 신한지주)까지 본다."""
+    이름은 관계 표뿐 아니라 경로 위 노드의 names(공시에 나온 다른 이름, '신한금융지주회사' = 신한지주)와 파생 값의 names 칸까지 본다.
+    수는 파생 값의 count·no_code_count 칸에서 읽는다 (src/graph/query.py의 파생 값이 문장과 함께 넣어 준다. 문장을 다시 파싱하지 않는다)."""
     names = set()
     for r in ctx.relations:
         names |= {r["src"], r["dst"]}
@@ -391,12 +388,11 @@ def graph_view(ctx) -> tuple[set[str], int | None, int | None]:
     total = no_code = None
     for d in ctx.derived:
         names.add(str(d["subject"]))
-        for part in d["value"].split(";"):
-            names |= {w.strip() for w in re.split(r"[:,()→]", part) if w.strip()}
-        if (m := _TOTAL_RE.search(d["value"])):
-            total = int(m.group(1))
-        if (m := _NO_CODE_RE.search(d["value"])):
-            no_code = int(m.group(1))
+        names |= set(d.get("names") or [])
+        if d.get("count") is not None:
+            total = int(d["count"])
+        if d.get("no_code_count") is not None:
+            no_code = int(d["no_code_count"])
     return {_same(n) for n in names if n}, total, no_code
 
 

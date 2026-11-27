@@ -174,3 +174,14 @@ class NeighborChunksTest(TempDuckDBTestCase):
         llm2 = FakeLLM("x", [])
         self.assertEqual(len(ask("2025년 연혁은?", FakeRetriever(hits), llm2, k=5, con=self.con, neighbors=0).hits), 1)
         self.assertEqual(len(ask("2025년 연혁은?", FakeRetriever(hits), None, k=5, con=self.con).hits), 1)
+
+
+class HitHelpersTest(unittest.TestCase):
+    def test_from_record_from_row_and_as_record(self):
+        rec = {"rcept_no": "1", "file_name": "1.xml", "section_id": 3, "path": "II. 사업", "text": "가" * 200}
+        h = Hit.from_record(rec, 2)
+        self.assertEqual((h.rcept_no, h.section_id, h.score, len(h.snippet), len(h.text)), ("1", 3, 2.0, 120, 200))
+        self.assertEqual(h.as_record(), rec)
+        self.assertEqual(Hit.from_record({**rec, "text": None}, 1).text, "")   # 글이 없는 조각
+        row = ("1", "1.xml", 3, "II. 사업", 0.7, "나")
+        self.assertEqual(Hit.from_row(row, row[4]), Hit("1", "1.xml", 3, "II. 사업", 0.7, "나", "나"))

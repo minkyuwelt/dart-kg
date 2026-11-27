@@ -133,6 +133,17 @@ def _iso(d) -> str | None:
     return d.isoformat() if d is not None else None
 
 
+def _time_fields(r: dict, rcept_col: str) -> dict:
+    """관계에 그대로 옮기는 시간 4필드 (0005의 값, 여기서 계산하지 않음)."""
+    return {"valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
+            "source_rcept_no": r[rcept_col], "superseded_by": r["superseded_by"]}
+
+
+def _person_name(names: dict[str, str], person_id: str) -> str:
+    """person 표의 이름, 없으면 person_id 앞 칸(이름). 생년월·성별은 어디에도 내보내지 않는다."""
+    return names.get(person_id) or person_id.split("|", 1)[0]
+
+
 def _rows(con: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> list[dict]:
     cur = con.execute(sql, params or [])
     cols = [c[0] for c in cur.description]
@@ -179,9 +190,7 @@ def owns_rows(con: duckdb.DuckDBPyConnection) -> list[dict]:
             "src": r["investor_corp_code"], "dst": dst, "dst_name": r["investee_name"],
             "src_name": None,
             "pct": r["trmend_blce_qota_rt"], "shares": r["trmend_blce_qy"], "book_value": r["trmend_blce_acntbk_amount"],
-            "share_class": r["share_class"], "relate": None, "purpose": r["invstmnt_purps"],
-            "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
-            "source_rcept_no": r["rcept_no"], "superseded_by": r["superseded_by"],
+            "share_class": r["share_class"], "relate": None, "purpose": r["invstmnt_purps"], **_time_fields(r, "rcept_no"),
         })
     for r in _rows(con, """
         SELECT source_rcept_no, row_seq, corp_code, nm, relate, stock_knd, holder_corp_code,
@@ -194,9 +203,7 @@ def owns_rows(con: duckdb.DuckDBPyConnection) -> list[dict]:
             "src": src, "dst": r["corp_code"], "src_name": name,
             "dst_name": None,
             "pct": r["trmend_posesn_stock_qota_rt"], "shares": r["trmend_posesn_stock_co"], "book_value": None,
-            "share_class": r["stock_knd"], "relate": r["relate"], "purpose": None,
-            "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
-            "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
+            "share_class": r["stock_knd"], "relate": r["relate"], "purpose": None, **_time_fields(r, "source_rcept_no"),
         })
     return out
 
@@ -233,29 +240,25 @@ def position_rows(con: duckdb.DuckDBPyConnection) -> tuple[list[dict], list[dict
             skipped += 1
             continue
         pid = person_key(r["person_id"])
-        persons[pid] = names.get(r["person_id"]) or r["person_id"].split("|", 1)[0]
+        persons[pid] = _person_name(names, r["person_id"])
         out.append({
             "row_key": f"exe:{r['source_rcept_no']}:{r['row_seq']}", "pid": pid, "corp": r["corp_code"], "source_table": "executive",
             # 직위 칸의 줄바꿈('기타\n비상무이사')은 공백 하나로. 원문은 DuckDB에 그대로 있다
             "title": _one_line(r["ofcps"]), "registered": _one_line(r["rgist_exctv_at"]), "outside": _one_line(r["rgist_exctv_at"]) == "사외이사",
             "full_time": r["fte_at"],
             # 담당업무(한 줄로)와 대표이사 여부. 금융지주는 대표이사를 담당업무 칸에 적는다 (templates.is_ceo)
-            "duty": _one_line(r["chrg_job"]), "ceo": is_ceo(r["ofcps"], r["chrg_job"]),
-            "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
-            "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
+            "duty": _one_line(r["chrg_job"]), "ceo": is_ceo(r["ofcps"], r["chrg_job"]), **_time_fields(r, "source_rcept_no"),
         })
     for r in _rows(con, CONCURRENT_GRAPH_SQL + " ORDER BY c.source_rcept_no, c.row_seq"):
         pid = person_key(r["person_id"])
-        persons.setdefault(pid, names.get(r["person_id"]) or r["person_id"].split("|", 1)[0])
+        persons.setdefault(pid, _person_name(names, r["person_id"]))
         title = _one_line(r["ofcps"])
         out.append({
             "row_key": f"cp:{r['source_rcept_no']}:{r['row_seq']}", "pid": pid, "source_table": "concurrent_position",
             # 겸직 회사가 corp_code로 안 이어지면(해외 법인 등) 출자 표와 같은 이름 노드
             "corp": r["target_corp_code"] or name_key(r["holding_corp_code"], r["target_name"]), "corp_name": r["target_name"],
             "title": title, "registered": None, "outside": bool(title and "사외이사" in title), "full_time": r["fte_at"],
-            "duty": None, "ceo": is_ceo(r["ofcps"], None),
-            "valid_from": _iso(r["valid_from"]), "valid_to": _iso(r["valid_to"]),
-            "source_rcept_no": r["source_rcept_no"], "superseded_by": r["superseded_by"],
+            "duty": None, "ceo": is_ceo(r["ofcps"], None), **_time_fields(r, "source_rcept_no"),
         })
     return out, [{"pid": k, "name": v} for k, v in sorted(persons.items())], skipped
 
@@ -318,8 +321,10 @@ def _strip(rows: list[dict], keep: tuple[str, ...]) -> list[dict]:
     return [{k: r[k] for k in keep} for r in rows]
 
 
-OWNS_KEYS = ("row_key", "source_table", "src", "dst", "pct", "shares", "book_value", "share_class", "relate", "purpose",
-             "valid_from", "valid_to", "source_rcept_no", "superseded_by")
+# Cypher에 넘기는 속성만 (src_name·dst_name·corp_name은 corp_rows가 노드 이름을 정할 때만 쓴다)
+TIME_KEYS = ("valid_from", "valid_to", "source_rcept_no", "superseded_by")
+OWNS_KEYS = ("row_key", "source_table", "src", "dst", "pct", "shares", "book_value", "share_class", "relate", "purpose") + TIME_KEYS
+POSITION_KEYS = ("row_key", "source_table", "pid", "corp", "title", "registered", "outside", "full_time", "duty", "ceo") + TIME_KEYS
 
 
 def build(con: duckdb.DuckDBPyConnection, driver, database: str = "neo4j", lineage_path: Path = LINEAGE_PATH, log=print) -> dict:
@@ -340,7 +345,7 @@ def build(con: duckdb.DuckDBPyConnection, driver, database: str = "neo4j", linea
     for rows in _batches(owns):
         driver.execute_query(OWNS_MERGE, rows=_strip(rows, OWNS_KEYS), database_=database)
     for rows in _batches(positions):
-        driver.execute_query(POSITION_MERGE, rows=rows, database_=database)
+        driver.execute_query(POSITION_MERGE, rows=_strip(rows, POSITION_KEYS), database_=database)
     if lineage:
         driver.execute_query(FORMERLY_MERGE, database_=database, rows=[
             {"current": r["current_corp_code"], "former": r["former_corp_code"], "on": r["on"], "reason": r["reason"],
