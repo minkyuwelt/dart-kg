@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -99,11 +100,10 @@ def execute(driver, plan: Plan, database: str = "neo4j") -> list[StepResult]:
                 continue
             params.update(fills[0])
         result = StepResult(step.template, params, T.run(driver, step.template, params, database))
-        if step.template == "shared_positions":
-            # 대조 범위를 늘 함께 센다. 0행이면 "없음"인지 "데이터가 없음"인지 가리는 근거(대조한 사람이 0명이면 '없음'이라 말하지 않는다, g10).
-            # 행이 있어도 임원 표가 없는 회사(사업보고서를 내지 않는 자회사)가 몇 곳인지 적어야 "N명이 전부"가 아님을 LLM이 안다 (g11, 2026-11-27)
-            scope_params = {k: params.get(k) for k in ("as_of", "outside_only", "corps")}
-            result.scope = T.run(driver, "position_scope", scope_params, database)
+        scope = DERIVERS.get(step.template, (None, None))[0]
+        if scope:
+            scope_template, scope_keys = scope
+            result.scope = T.run(driver, scope_template, {k: params.get(k) for k in scope_keys}, database)
         out.append(result)
     return out
 
@@ -155,61 +155,77 @@ def relation_rows(steps: list[StepResult]) -> list[dict]:
 
 
 # ---------------------------------------------------------------- 파생 값 (규칙 계산, 저장하지 않음)
-
-def derive(steps: list[StepResult]) -> list[dict]:
-    out: list[dict] = []
-    for s in steps:
-        if s.template == "descendants":
-            out += _derive_descendants(s)
-        elif s.template == "person_history":
-            out += _derive_tenures(s)
-        elif s.template == "shared_positions":
-            out += _derive_no_shared(s) if not s.paths else _derive_shared_scope(s)
-        elif s.template == "corp_lineage":
-            for p in s.paths:
-                for n in p["nodes"]:
-                    if len(n.get("names") or []) > 1:
-                        out.append({"rule": "공시에 나온 이름 목록", "subject": n["name"], "value": " → ".join(n["names"])})
-    return out
-
+#
+# 파생 값 한 줄 = {"rule": 어떤 규칙으로 계산했나, "subject": 누구에 대한 값, "value": 사람이 읽는 문장, ...구조화된 칸}
+# 구조화된 칸(names·count·no_code_count)은 문장과 같은 내용을 기계가 읽기 위한 것이다 (eval/graph_draft.compare). 문장을 다시
+# 파싱하지 않게 하려는 것이므로, 문장을 고치면 이 칸도 같이 맞춘다.
 
 def _derive_descendants(s: StepResult) -> list[dict]:
-    """경로 끝 회사마다: 가장 짧은 경로 길이, 간접 지분율(경로 지분율 곱의 최댓값), 직접/간접, corp_code 유무."""
+    """출자 경로 템플릿의 파생 값: [단계별 회사 수 합계] + [직접 출자 중 장부가액 최대] + 회사별 줄(가까운 단계·이름 순).
+
+    합계 줄을 맨 앞에 두는 이유: 회사별 줄이 1,000개를 넘으면 LLM 표(to_text)는 앞쪽만 넘기므로 합계가 잘리지 않게.
+    """
+    best = _descendants_by_company(s.paths)
+    out = [_descendants_summary(s, best)]
+    if (top := _max_direct_book_value(s)) is not None:
+        out.append(top)
+    return out + [_descendant_row(b) for b in sorted(best.values(), key=lambda b: (b["min_hops"], b["name"]))]
+
+
+def _descendants_by_company(paths: list[dict]) -> dict[str, dict]:
+    """경로 끝 회사마다: 가장 짧은 경로 길이와 그 경유 회사, 간접 지분율(경로 지분율 곱의 최댓값), corp_code 유무."""
     best: dict[str, dict] = {}
-    for p in s.paths:
+    for p in paths:
         end = p["nodes"][-1]
         pct = 1.0
         for r in p["rels"]:
             pct *= (r.get("pct") or 0) / 100
-        via = " → ".join(n["name"] for n in p["nodes"][1:-1])
-        cur = best.get(end["key"])
+        via = [n["name"] for n in p["nodes"][1:-1]]
         hops = len(p["rels"])
+        cur = best.get(end["key"])
         if cur is None:
             best[end["key"]] = {"name": end["name"], "min_hops": hops, "pct": pct, "via": via, "has_corp_code": end.get("has_corp_code")}
         else:
             if hops < cur["min_hops"]:
                 cur["min_hops"], cur["via"] = hops, via
             cur["pct"] = max(cur["pct"], pct)
-    out = []
-    for key, b in sorted(best.items(), key=lambda kv: (kv[1]["min_hops"], kv[1]["name"])):
-        kind = "직접" if b["min_hops"] == 1 else f"간접만({b['min_hops']}단계, {b['via']} 경유)"
-        out.append({"rule": "출자 경로: 직접/간접, 경로 지분율의 곱", "subject": b["name"],
-                    "value": f"{kind}, 간접 지분율 {b['pct'] * 100:.2f}%" + ("" if b["has_corp_code"] else ", 국내 공시 대상 아님(corp_code 없음)")})
+    return best
+
+
+def _descendant_row(b: dict) -> dict:
+    kind = "직접" if b["min_hops"] == 1 else f"간접만({b['min_hops']}단계, {' → '.join(b['via'])} 경유)"
+    return {"rule": "출자 경로: 직접/간접, 경로 지분율의 곱", "subject": b["name"],
+            "value": f"{kind}, 간접 지분율 {b['pct'] * 100:.2f}%" + ("" if b["has_corp_code"] else ", 국내 공시 대상 아님(corp_code 없음)"),
+            "names": [b["name"], *b["via"]]}
+
+
+def _descendants_summary(s: StepResult, best: dict[str, dict]) -> dict:
     hop_counts: dict[int, int] = {}
     for b in best.values():
         hop_counts[b["min_hops"]] = hop_counts.get(b["min_hops"], 0) + 1
-    # 직접 출자(1단계) 중 장부가액 최대: "출자한 회사 중 장부가액이 가장 큰 곳" 질문의 답. 표에서 LLM이 최대를 고르다 틀리지 않게 규칙으로 계산
+    no_code = sum(1 for b in best.values() if not b["has_corp_code"])
+    return {"rule": "출자 경로: 단계별 회사 수", "subject": s.params.get("corp"),
+            "value": ", ".join(f"{h}단계 {n}곳" for h, n in sorted(hop_counts.items())) + f" (합계 {len(best)}곳, corp_code 없음 {no_code}곳)",
+            "count": len(best), "no_code_count": no_code}
+
+
+def _max_direct_book_value(s: StepResult) -> dict | None:
+    """직접 출자(1단계) 중 장부가액 최대: "출자한 회사 중 장부가액이 가장 큰 곳" 질문의 답. 표에서 LLM이 최대를 고르다 틀리지 않게 규칙으로 계산."""
     direct = [(p["rels"][0].get("book_value"), p["nodes"][-1]["name"]) for p in s.paths
               if len(p["rels"]) == 1 and p["rels"][0].get("book_value") is not None]
-    if direct:
-        bv, name = max(direct)
-        out.insert(0, {"rule": "직접 출자 중 장부가액 최대", "subject": s.params.get("corp"),
-                       "value": f"{name} {bv:,.0f}원 ({bv / 1_000_000:,.0f}백만원, 직접 출자 {len(direct)}곳 중)"})
-    # 합계 줄을 맨 앞에: 회사별 줄이 1,000개를 넘으면 LLM 표(to_text)는 앞쪽만 넘기므로 합계가 잘리지 않게
-    out.insert(0, {"rule": "출자 경로: 단계별 회사 수", "subject": s.params.get("corp"),
-                   "value": ", ".join(f"{h}단계 {n}곳" for h, n in sorted(hop_counts.items())) + f" (합계 {len(best)}곳, "
-                            f"corp_code 없음 {sum(1 for b in best.values() if not b['has_corp_code'])}곳)"})
-    return out
+    if not direct:
+        return None
+    bv, name = max(direct)
+    return {"rule": "직접 출자 중 장부가액 최대", "subject": s.params.get("corp"),
+            "value": f"{name} {bv:,.0f}원 ({bv / 1_000_000:,.0f}백만원, 직접 출자 {len(direct)}곳 중)", "names": [name]}
+
+
+def _derive_shared(s: StepResult) -> list[dict]:
+    """겸직 템플릿의 판정·대조 범위. 0행이면 '없음'인지 '데이터 없음'인지를 규칙으로 가르고(g10), 행이 있으면 대조 범위를 적는다(g11).
+    이 구분을 LLM에 맡기지 않는다. 대조 범위(scope)는 execute가 position_scope 템플릿으로 늘 함께 센다."""
+    if not s.paths:
+        return _derive_no_shared(s)
+    return _derive_shared_scope(s)
 
 
 def _scope_parts(s: StepResult) -> tuple[list[dict], list[dict], int, str]:
@@ -221,18 +237,25 @@ def _scope_parts(s: StepResult) -> tuple[list[dict], list[dict], int, str]:
     return have, none, sum(int(r["persons"]) for r in have), who
 
 
+def _per_corp(have: list[dict]) -> str:
+    return ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
+
+
 def _missing_note(none: list[dict], who: str, have: list[dict] | None = None) -> str:
     """임원 표가 없는 회사에 대한 단서. 0명인 회사(아무 데이터 없음)와, 지주 겸직 표(0014)로 들어온 자리만 있는 회사(own_persons = 0)를 나눠 적는다."""
     parts = []
     partial = [r for r in (have or []) if r.get("own_persons") is not None and int(r["own_persons"]) == 0]
     if partial:
-        names = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in partial)
-        parts.append(f" 임원 표가 없어 지주 겸직 표의 자리만 아는 회사: {names} — 그 회사의 {who} 전부가 아니라 지주 임원이 겸하는 자리만")
+        parts.append(f" 임원 표가 없어 지주 겸직 표의 자리만 아는 회사: {_per_corp(partial)} — 그 회사의 {who} 전부가 아니라 지주 임원이 겸하는 자리만")
     if none:
         names = ", ".join(r["corp_name"] for r in none)
         parts.append(f" 임원 표가 없는 {len(none)}곳({names})은 셈에서 빠짐 — 사업보고서를 내지 않는 회사(감사보고서만)라 {who} 데이터가 없고,"
                      f" 그 회사 쪽 겸직은 그래프가 알 수 없음")
     return "".join(parts)
+
+
+def _scope_row(rule: str, value: str, s: StepResult) -> dict:
+    return {"rule": rule, "subject": "겸직", "value": value, "names": [r["corp_name"] for r in (s.scope or []) if r.get("corp_name")]}
 
 
 def _derive_shared_scope(s: StepResult) -> list[dict]:
@@ -241,23 +264,21 @@ def _derive_shared_scope(s: StepResult) -> list[dict]:
     if not s.scope:
         return []
     have, none, total, who = _scope_parts(s)
-    per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
-    return [{"rule": "겸직 대조 범위 (임원 표가 있는 회사만 닫힌 세계)", "subject": "겸직",
-             "value": f"기준일 {s.params.get('as_of')} 회사 {len(have) + len(none)}곳 중 임원 표가 있는 {len(have)}곳의 {who} {total}명을 대조"
-                      f" (회사별: {per}).{_missing_note(none, who, have)}"}]
+    return [_scope_row("겸직 대조 범위 (임원 표가 있는 회사만 닫힌 세계)",
+                       f"기준일 {s.params.get('as_of')} 회사 {len(have) + len(none)}곳 중 임원 표가 있는 {len(have)}곳의 {who} {total}명을 대조"
+                       f" (회사별: {_per_corp(have)}).{_missing_note(none, who, have)}", s)]
 
 
 def _derive_no_shared(s: StepResult) -> list[dict]:
     """겸직 템플릿이 0행일 때의 판정. 대조한 임원이 1명 이상이면 '없음'(닫힌 세계: 그 범위의 임원은 전부 적재되어 있다),
-    0명이면 '없음'이라 하지 않고 데이터가 없다고 적는다(이름 연결 실패·미적재일 수 있음). 이 구분을 LLM에 맡기지 않는다 (g10, 2026-11-26)."""
+    0명이면 '없음'이라 하지 않고 데이터가 없다고 적는다(이름 연결 실패·미적재일 수 있음). (g10, 2026-11-26)"""
     have, none, total, who = _scope_parts(s)
     if total == 0:
-        return [{"rule": "겸직 판정 보류: 대조 범위에 임원 데이터 없음", "subject": "겸직",
-                 "value": f"판정 불가 — 기준일 {s.params.get('as_of')}에 대조할 {who} 데이터가 없음(회사 {len(s.params.get('corps') or [])}곳). '없음'이라 답하지 말 것"}]
-    per = ", ".join(f"{r['corp_name']} {r['persons']}명" for r in have)
-    return [{"rule": "겸직 없음 판정: 대조 범위의 임원 전원을 봄(그래프에 전부 적재됨)", "subject": "겸직",
-             "value": f"없음 — 기준일 {s.params.get('as_of')} 회사 {len(have)}곳의 {who} {total}명 중 두 곳 이상에 있는 사람 0명 (회사별: {per})."
-                      f"{_missing_note(none, who, have)}"}]
+        return [_scope_row("겸직 판정 보류: 대조 범위에 임원 데이터 없음",
+                           f"판정 불가 — 기준일 {s.params.get('as_of')}에 대조할 {who} 데이터가 없음(회사 {len(s.params.get('corps') or [])}곳). '없음'이라 답하지 말 것", s)]
+    return [_scope_row("겸직 없음 판정: 대조 범위의 임원 전원을 봄(그래프에 전부 적재됨)",
+                       f"없음 — 기준일 {s.params.get('as_of')} 회사 {len(have)}곳의 {who} {total}명 중 두 곳 이상에 있는 사람 0명 (회사별: {_per_corp(have)})."
+                       f"{_missing_note(none, who, have)}", s)]
 
 
 def _derive_tenures(s: StepResult) -> list[dict]:
@@ -279,7 +300,37 @@ def _derive_tenures(s: StepResult) -> list[dict]:
     for sp in sorted(spans.values(), key=lambda x: (x["from"] or "", x["corp"])):
         end = "현재" if sp["open"] else sp["to"]
         out.append({"rule": "연속 보고서 합치기(보고서 기준일 단위)", "subject": sp["person"],
-                    "value": f"{sp['corp']} {sp['title']} {sp['from']} ~ {end}"})
+                    "value": f"{sp['corp']} {sp['title']} {sp['from']} ~ {end}", "names": [sp["person"], sp["corp"]]})
+    return out
+
+
+def _derive_lineage(s: StepResult) -> list[dict]:
+    """경로 위 회사 중 공시에 이름이 둘 이상 나온 회사: 이름 목록 (옛 이름 → 지금 이름)."""
+    out = []
+    for p in s.paths:
+        for n in p["nodes"]:
+            if len(n.get("names") or []) > 1:
+                out.append({"rule": "공시에 나온 이름 목록", "subject": n["name"], "value": " → ".join(n["names"]), "names": list(n["names"])})
+    return out
+
+
+# 템플릿 → (보조 질의: (템플릿 이름, 넘길 빈칸) 또는 None, 파생 함수). 템플릿을 늘리면 여기 한 줄과 templates.EVIDENCE_SECTIONS·picker.CHOICES를 본다.
+# shared_positions의 보조 질의(position_scope)는 대조 범위를 늘 함께 센다: 0행이면 "없음"인지 "데이터가 없음"인지 가리는 근거(g10)이고,
+# 행이 있어도 임원 표가 없는 회사가 몇 곳인지 적어야 "N명이 전부"가 아님을 LLM이 안다 (g11, 2026-11-27)
+DERIVERS: dict[str, tuple[tuple[str, tuple[str, ...]] | None, Callable[[StepResult], list[dict]]]] = {
+    "descendants": (None, _derive_descendants),
+    "person_history": (None, _derive_tenures),
+    "shared_positions": (("position_scope", ("as_of", "outside_only", "corps")), _derive_shared),
+    "corp_lineage": (None, _derive_lineage),
+}
+
+
+def derive(steps: list[StepResult]) -> list[dict]:
+    out: list[dict] = []
+    for s in steps:
+        deriver = DERIVERS.get(s.template)
+        if deriver:
+            out += deriver[1](s)
     return out
 
 
@@ -302,8 +353,7 @@ def evidence(driver, relations: list[dict], limit: int = EVIDENCE_LIMIT, databas
     recs.sort(key=lambda r: (order.get(r["rcept_no"], len(order)), r.get("seq") or 0))   # Cypher도 같은 순서로 주지만, 가짜 드라이버(테스트)를 위해 한 번 더
     recs = interleave_by_report(recs)
     n = len(recs)
-    return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(n - i), (r["text"] or "")[:120], r["text"] or "")
-            for i, r in enumerate(recs)]
+    return [Hit.from_record(r, n - i) for i, r in enumerate(recs)]
 
 
 def interleave_by_report(recs: list[dict]) -> list[dict]:
@@ -391,18 +441,13 @@ class GraphRetriever(BaseRetriever):
         rag_hits = self.base.search(question, self.fetch)
         if not graph_hits:
             return rag_hits[:k]
-        fused = rrf_fuse([[_as_dict(h) for h in graph_hits], [_as_dict(h) for h in rag_hits]])
-        return [Hit(r["rcept_no"], r["file_name"], r["section_id"], r["path"], float(sc), (r["text"] or "")[:120], r["text"] or "")
-                for r, sc in fused[:k]]
+        fused = rrf_fuse([[h.as_record() for h in graph_hits], [h.as_record() for h in rag_hits]])
+        return [Hit.from_record(r, sc) for r, sc in fused[:k]]
 
     def retrieve(self, question: str, k: int) -> Retrieval:
         hits = self.search(question, k)
         # 이웃 조각(ask.expand_neighbors)은 전문검색기(base)의 섹션 사전을 쓴다 — 다시 만들지 않는다
         return Retrieval(hits, graph=self.last, graph_error=self.error, section_words=self.base.section_words if self.base is not None else None)
-
-
-def _as_dict(h: Hit) -> dict:
-    return {"rcept_no": h.rcept_no, "file_name": h.file_name, "section_id": h.section_id, "path": h.path, "text": h.text}
 
 
 def main(argv=None) -> int:

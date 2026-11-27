@@ -29,14 +29,14 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
 
 from src.loaders.duckdb_store import REPO_ROOT, connect
 
-VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
+from src.viewer import VIEWER_URL  # noqa: F401  (text_changes가 여기서 가져간다)
 PCT_THRESHOLD = 0.1  # 지분율 변화로 치는 최소 차이(%p). 0012 참고
 REPORTS_DIR = REPO_ROOT / "data" / "reports"
 
@@ -128,53 +128,82 @@ def _snapshot_dates(con, table: str, corp_col: str, corp_code: str, rcept_no: st
     return stlm, prev
 
 
-def _snapshot(con, table: str, corp_col: str, corp_code: str, stlm: date, cols: str) -> list[tuple]:
-    return con.execute(
-        f"SELECT {cols} FROM {table} WHERE {corp_col} = ? AND valid_from = ? AND superseded_by IS NULL", [corp_code, stlm]
-    ).fetchall()
+def _snapshot(con, table: str, corp_col: str, corp_code: str, stlm: date, cols: str) -> list[dict]:
+    """그 기준일 스냅샷의 행들을 이름 있는 dict로 (SELECT의 열 이름이 그대로 키)."""
+    cur = con.execute(f"SELECT {cols} FROM {table} WHERE {corp_col} = ? AND valid_from = ? AND superseded_by IS NULL", [corp_code, stlm])
+    names = [c[0] for c in cur.description]
+    return [dict(zip(names, r)) for r in cur.fetchall()]
 
 
-def executive_changes(con, corp_code: str, rcept_no: str) -> tuple[list[Change], date | None, date | None]:
-    stlm, prev = _snapshot_dates(con, "executive", "corp_code", corp_code, rcept_no, "source_rcept_no")
+def _snapshots(con, table: str, corp_col: str, rcept_col: str, corp_code: str, rcept_no: str, cols: str, key=None):
+    """(이번 스냅샷, 직전 스냅샷, 직전 기준일). key가 있으면 {key(행): 행}, 없으면 행 목록. 이 보고서에 그 표가 없으면 None."""
+    stlm, prev = _snapshot_dates(con, table, corp_col, corp_code, rcept_no, rcept_col)
     if stlm is None:
-        return [], None, None
-    cols = "person_id, nm, coalesce(ofcps, ''), coalesce(rgist_exctv_at, '')"
-    now = {r[0]: r for r in _snapshot(con, "executive", "corp_code", corp_code, stlm, cols)}
-    before = {r[0]: r for r in _snapshot(con, "executive", "corp_code", corp_code, prev, cols)} if prev else {}
+        return None
+    now = _snapshot(con, table, corp_col, corp_code, stlm, cols)
+    before = _snapshot(con, table, corp_col, corp_code, prev, cols) if prev else []
+    if key is not None:
+        now, before = {key(r): r for r in now}, {key(r): r for r in before}
+    return now, before, prev
+
+
+def _diff(now: dict, before: dict, prev: date | None, *, new, gone, changed) -> list[Change]:
+    """세 표가 같이 쓰는 비교 뼈대: 이번에만 있으면 신규(직전 스냅샷이 있을 때만), 둘 다 있으면 changed(직전 값, 이번 값)가 Change를
+    주면 변경, 직전에만 있으면 제외. 순서는 이번 스냅샷 행 순서 → 직전 스냅샷 행 순서."""
     out: list[Change] = []
-    for pid, r in now.items():
-        if pid not in before:
+    for key, r in now.items():
+        if key not in before:
             if prev is not None:
-                out.append(Change("executive_new", f"{r[1]} ({r[2]})", after=r[2], note=r[3]))
-        elif (r[2], r[3]) != (before[pid][2], before[pid][3]):
-            out.append(Change("executive_title", r[1], before=f"{before[pid][2]} {before[pid][3]}".strip(), after=f"{r[2]} {r[3]}".strip()))
-    for pid, r in before.items():
-        if pid not in now:
-            out.append(Change("executive_gone", f"{r[1]} ({r[2]})", before=r[2], note=r[3]))
-    return out, stlm, prev
+                out.append(new(r))
+        elif (c := changed(before[key], r)) is not None:
+            out.append(c)
+    for key, r in before.items():
+        if key not in now:
+            out.append(gone(r))
+    return out
+
+
+def _pct_change(kind: str, label: str, a, b) -> Change | None:
+    """지분율이 둘 다 있고 PCT_THRESHOLD 이상 다르면 변화."""
+    if a is not None and b is not None and abs(float(b) - float(a)) >= PCT_THRESHOLD:
+        return Change(kind, label, before=_pct(a), after=_pct(b), note=f"{float(b) - float(a):+.2f}%p")
+    return None
+
+
+def executive_changes(con, corp_code: str, rcept_no: str) -> list[Change]:
+    """키 person_id. 직위·등기 여부가 바뀐 사람은 신규·퇴임이 아니라 직위 변경 하나로."""
+    snaps = _snapshots(con, "executive", "corp_code", "source_rcept_no", corp_code, rcept_no,
+                       "person_id, nm, coalesce(ofcps, '') AS ofcps, coalesce(rgist_exctv_at, '') AS registered", key=lambda r: r["person_id"])
+    if snaps is None:
+        return []
+    now, before, prev = snaps
+
+    def title(r) -> str:
+        return f"{r['ofcps']} {r['registered']}".strip()
+
+    return _diff(now, before, prev,
+                 new=lambda r: Change("executive_new", f"{r['nm']} ({r['ofcps']})", after=r["ofcps"], note=r["registered"]),
+                 gone=lambda r: Change("executive_gone", f"{r['nm']} ({r['ofcps']})", before=r["ofcps"], note=r["registered"]),
+                 changed=lambda a, b: Change("executive_title", b["nm"], before=title(a), after=title(b))
+                 if (a["ofcps"], a["registered"]) != (b["ofcps"], b["registered"]) else None)
 
 
 def shareholder_changes(con, corp_code: str, rcept_no: str) -> list[Change]:
-    stlm, prev = _snapshot_dates(con, "major_shareholder", "corp_code", corp_code, rcept_no, "source_rcept_no")
-    if stlm is None:
+    """키 (주주명, 주식 종류). 지분율은 PCT_THRESHOLD 이상 차이만."""
+    snaps = _snapshots(con, "major_shareholder", "corp_code", "source_rcept_no", corp_code, rcept_no,
+                       "nm, coalesce(stock_knd, '') AS stock_knd, trmend_posesn_stock_qota_rt AS pct, coalesce(relate, '') AS relate",
+                       key=lambda r: (r["nm"], r["stock_knd"]))
+    if snaps is None:
         return []
-    cols = "nm, coalesce(stock_knd, ''), trmend_posesn_stock_qota_rt, coalesce(relate, '')"
-    now = {(r[0], r[1]): r for r in _snapshot(con, "major_shareholder", "corp_code", corp_code, stlm, cols)}
-    before = {(r[0], r[1]): r for r in _snapshot(con, "major_shareholder", "corp_code", corp_code, prev, cols)} if prev else {}
-    out: list[Change] = []
-    for key, r in now.items():
-        label = f"{r[0]} {r[1]}".strip()
-        if key not in before:
-            if prev is not None:
-                out.append(Change("shareholder_new", label, after=_pct(r[2]), note=r[3]))
-        else:
-            a, b = before[key][2], r[2]
-            if a is not None and b is not None and abs(float(b) - float(a)) >= PCT_THRESHOLD:
-                out.append(Change("shareholder_pct", label, before=_pct(a), after=_pct(b), note=f"{float(b) - float(a):+.2f}%p"))
-    for key, r in before.items():
-        if key not in now:
-            out.append(Change("shareholder_gone", f"{r[0]} {r[1]}".strip(), before=_pct(r[2]), note=r[3]))
-    return out
+    now, before, prev = snaps
+
+    def label(r) -> str:
+        return f"{r['nm']} {r['stock_knd']}".strip()
+
+    return _diff(now, before, prev,
+                 new=lambda r: Change("shareholder_new", label(r), after=_pct(r["pct"]), note=r["relate"]),
+                 gone=lambda r: Change("shareholder_gone", label(r), before=_pct(r["pct"]), note=r["relate"]),
+                 changed=lambda a, b: _pct_change("shareholder_pct", label(b), a["pct"], b["pct"]))
 
 
 def shareholder_change_events(con, corp_code: str, rcept_no: str) -> list[Change]:
@@ -187,43 +216,39 @@ def shareholder_change_events(con, corp_code: str, rcept_no: str) -> list[Change
     return [Change("shareholder_change_event", r[1], after=_pct(r[2]), note=f"{r[0]} {r[3]}".strip()) for r in rows]
 
 
+def _sum_investments(rows: list[dict]) -> dict[tuple, dict]:
+    """같은 대상이 취득 시점별로 여러 행이면 지분율을 합쳐 한 행으로. 이름이 '-'·빈 행은 "해당사항 없음" 자리 표시라 대상이 아니다."""
+    out: dict[tuple, dict] = {}
+    for r in rows:
+        if _is_placeholder(r["name"]):
+            continue
+        key = (r["name"], r["share_class"])
+        cur = out.setdefault(key, {"name": r["name"], "share_class": r["share_class"], "pct": None})
+        if r["pct"] is not None:
+            cur["pct"] = (cur["pct"] or 0.0) + float(r["pct"])
+    return out
+
+
 def investment_changes(con, corp_code: str, rcept_no: str) -> list[Change]:
-    stlm, prev = _snapshot_dates(con, "investment", "investor_corp_code", corp_code, rcept_no, "rcept_no")
-    if stlm is None:
+    """키 (출자 대상 이름, 주식 종류). 지분율은 취득 시점별 행을 합친 값."""
+    snaps = _snapshots(con, "investment", "investor_corp_code", "rcept_no", corp_code, rcept_no,
+                       "investee_name AS name, coalesce(share_class, '') AS share_class, trmend_blce_qota_rt AS pct")
+    if snaps is None:
         return []
-    cols = "investee_name, coalesce(share_class, ''), trmend_blce_qota_rt"
-    # 같은 대상이 취득 시점별로 여러 행이면 지분율을 합쳐 본다. 이름이 '-'·빈 행은 "해당사항 없음" 자리 표시라 대상이 아니다
-    def agg(rows):
-        out: dict[tuple, float | None] = {}
-        for name, cls, pct in rows:
-            if _is_placeholder(name):
-                continue
-            key = (name, cls)
-            if pct is None:
-                out.setdefault(key, None)
-            else:
-                out[key] = (out.get(key) or 0.0) + float(pct)
-        return out
-    now = agg(_snapshot(con, "investment", "investor_corp_code", corp_code, stlm, cols))
-    before = agg(_snapshot(con, "investment", "investor_corp_code", corp_code, prev, cols)) if prev else {}
+    now_rows, before_rows, prev = snaps
+    now, before = _sum_investments(now_rows), _sum_investments(before_rows)
     # 표가 통째로 없으면(자리 표시 행뿐) 비교하지 않는다 (2026-11-27): 분기보고서는 타법인 출자 표를 싣지 않는 회사가 있어,
     # 직전 사업보고서의 출자 전부가 "제외"로 잡혔다(하나증권 5,587건). 표가 없는 것은 변화가 아니라 "이 보고서에 그 표가 없음"이다
     if not now or not before:
         return []
-    out: list[Change] = []
-    for key, pct in now.items():
-        label = f"{key[0]} {key[1]}".strip()
-        if key not in before:
-            if prev is not None:
-                out.append(Change("investment_new", label, after=_pct(pct)))
-        else:
-            a = before[key]
-            if a is not None and pct is not None and abs(pct - a) >= PCT_THRESHOLD:
-                out.append(Change("investment_pct", label, before=_pct(a), after=_pct(pct), note=f"{pct - a:+.2f}%p"))
-    for key, pct in before.items():
-        if key not in now:
-            out.append(Change("investment_gone", f"{key[0]} {key[1]}".strip(), before=_pct(pct)))
-    return out
+
+    def label(r) -> str:
+        return f"{r['name']} {r['share_class']}".strip()
+
+    return _diff(now, before, prev,
+                 new=lambda r: Change("investment_new", label(r), after=_pct(r["pct"])),
+                 gone=lambda r: Change("investment_gone", label(r), before=_pct(r["pct"])),
+                 changed=lambda a, b: _pct_change("investment_pct", label(b), a["pct"], b["pct"]))
 
 
 def revision_changes(con, rcept_no: str) -> list[Change]:
@@ -241,11 +266,12 @@ def revision_changes(con, rcept_no: str) -> list[Change]:
 
 def report_changes(con: duckdb.DuckDBPyConnection, report: dict) -> ReportChanges:
     rcept_no, corp_code = report["rcept_no"], report["corp_code"]
-    exec_changes, stlm, prev = executive_changes(con, corp_code, rcept_no)
-    if stlm is None:  # 임원 표가 없는 보고서(자산운용사 등)는 최대주주 표에서 기준일을 얻는다
+    # 리포트에 적는 기준일·직전 기준일은 임원 표에서, 임원 표가 없는 보고서(자산운용사 등)는 최대주주 표에서
+    stlm, prev = _snapshot_dates(con, "executive", "corp_code", corp_code, rcept_no, "source_rcept_no")
+    if stlm is None:
         stlm, prev = _snapshot_dates(con, "major_shareholder", "corp_code", corp_code, rcept_no, "source_rcept_no")
-    changes = exec_changes + shareholder_changes(con, corp_code, rcept_no) + shareholder_change_events(con, corp_code, rcept_no) \
-        + investment_changes(con, corp_code, rcept_no) + revision_changes(con, rcept_no)
+    changes = executive_changes(con, corp_code, rcept_no) + shareholder_changes(con, corp_code, rcept_no) \
+        + shareholder_change_events(con, corp_code, rcept_no) + investment_changes(con, corp_code, rcept_no) + revision_changes(con, rcept_no)
     return ReportChanges(rcept_no, corp_code, report["corp_name"], report["report_nm"], report["rcept_dt"], stlm, prev, changes)
 
 

@@ -217,3 +217,25 @@ class GraphDraftTest(TempDuckDBTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GraphViewTest(unittest.TestCase):
+    """graph_view는 파생 값의 names·count·no_code_count 칸을 읽는다 (문장을 정규식으로 다시 파싱하지 않는다, 코드 리뷰 C1)."""
+
+    def test_reads_structured_fields_from_derived(self):
+        from types import SimpleNamespace
+        from eval.graph_draft import graph_view
+        from src.graph.query import StepResult, _derive_descendants
+
+        paths = [
+            {"nodes": [{"key": "H", "name": "지주"}, {"key": "A", "name": "(주)에이은행", "has_corp_code": True}], "rels": [{"pct": 100.0, "book_value": 5}]},
+            {"nodes": [{"key": "H", "name": "지주"}, {"key": "A", "name": "(주)에이은행"}, {"key": "F", "name": "글로벌 펀드", "has_corp_code": False}],
+             "rels": [{"pct": 100.0}, {"pct": 60.0}]},
+        ]
+        derived = _derive_descendants(StepResult("descendants", {"corp": "H"}, paths))
+        ctx = SimpleNamespace(relations=[], steps=[], derived=derived)
+        names, total, no_code = graph_view(ctx)
+        self.assertEqual((total, no_code), (2, 1))
+        self.assertTrue({"에이은행", "글로벌펀드"} <= names)    # 회사별 줄과 경유 회사의 names 칸
+        self.assertEqual(derived[0]["value"], "1단계 1곳, 2단계 1곳 (합계 2곳, corp_code 없음 1곳)")  # 문장은 전과 같다
+        self.assertEqual(derived[1]["rule"], "직접 출자 중 장부가액 최대")

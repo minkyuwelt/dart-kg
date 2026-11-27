@@ -26,11 +26,10 @@ from typing import TYPE_CHECKING
 
 from src.rag.retrievers.hit import Hit
 from src.rag.llm import LLM, NOT_FOUND, Answer, Passage
+from src.viewer import VIEWER_URL  # noqa: F401  (API가 여기서 가져간다)
 
 if TYPE_CHECKING:
     from src.graph.query import GraphContext
-
-VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
 
 GRAPH_LABEL = "그래프 관계표 (공시의 지분·임원 표를 그래프로 따라간 결과, 파생 값은 규칙 계산)"

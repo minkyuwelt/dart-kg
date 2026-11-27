@@ -66,12 +66,13 @@ def at(r: str) -> str:
 
 
 _NODE = "{key: coalesce(n.key, n.pid), name: n.name, label: labels(n)[0], has_corp_code: n.has_corp_code, names: n.names}"
+_REL = "r{.*, type: type(r), start_key: coalesce(startNode(r).key, startNode(r).pid)}"
 
 
 def return_path(limit: int = ROW_LIMIT) -> str:
     return f"""
 RETURN [n IN nodes(p) | {_NODE}] AS nodes,
-       [r IN relationships(p) | r{{.*, type: type(r), start_key: coalesce(startNode(r).key, startNode(r).pid)}}] AS rels
+       [r IN relationships(p) | {_REL}] AS rels
 LIMIT {limit}
 """
 
@@ -181,7 +182,7 @@ WHERE c.key = $corp OR ($name IS NOT NULL AND $name IN c.names)
 OPTIONAL MATCH q = (c)-[:FORMERLY*1..2]-(:Corp)
 WITH c, q
 WITH CASE WHEN q IS NULL THEN [c] ELSE nodes(q) END AS ns, CASE WHEN q IS NULL THEN [] ELSE relationships(q) END AS rs
-RETURN [n IN ns | {_NODE}] AS nodes, [r IN rs | r{{.*, type: type(r), start_key: coalesce(startNode(r).key, startNode(r).pid)}}] AS rels
+RETURN [n IN ns | {_NODE}] AS nodes, [r IN rs | {_REL}] AS rels
 LIMIT {ROW_LIMIT}
 """,
     (), ("corp", "name"),

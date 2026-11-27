@@ -30,9 +30,9 @@ import duckdb
 from eval.questions import Question
 from src.collectors.corp_code import HOLDING_CORPS
 from src.loaders.duckdb_store import REPO_ROOT, connect
+from src.viewer import VIEWER_URL
 
 DEFAULT_OUT = REPO_ROOT / "eval" / "questions.draft.jsonl"
-VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 SUBSIDIARY_TEMPLATES = 2
 
 

@@ -32,6 +32,7 @@ import duckdb
 from eval.draft import DEFAULT_OUT as DEFAULT_DRAFT
 from eval.questions import DEFAULT_QUESTIONS, NO_ANSWER, Question, load_questions
 from src.loaders.duckdb_store import connect
+from src.viewer import viewer_url
 
 PREVIEW_CHARS = 1500
 PREVIEW_ROWS = 12
@@ -103,7 +104,7 @@ def question_lines(q: Question, index: int, total: int) -> list[str]:
     if q.evidence_section:
         out.append(f"근거: {q.evidence_section}")
     for r in q.evidence_rcept_no:
-        out.append(f"뷰어: https://dart.fss.or.kr/dsaf001/main.do?rcpNo={r}")
+        out.append(f"뷰어: {viewer_url(r)}")
     if q.note:
         out.append(f"메모: {q.note.split('뷰어:')[0].strip()}")
     if q.answer and not q.is_ready:
