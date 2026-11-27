@@ -21,31 +21,25 @@ DuckDB 쓰기 연결을 처음부터 끝까지 하나만 연다. 실행 중에�
 """
 
 import argparse
-import os
 import sys
-import time
 
 import dagster as dg
 import duckdb
 
 from src.collectors.corp_code import get_api_key
-from src.collectors.dart_client import DartApiError, DartRateLimitError
 from src.loaders.collect import collect_report_details
-from src.loaders.duckdb_store import connect, is_lock_error
 from src.loaders.investments import rebuild_investments
-from src.loaders.periodic_reports import periodic_reports_of, report_partition_key
+from src.loaders.periodic_reports import FIRST_REPORT_YEAR, periodic_reports_of, report_partition_key, split_report_partition_key
 from src.loaders.relations import rebuild_relations
+from src.pipeline.backfill_common import open_connection, report_check_result, require_dagster_home, run_backfill
 from src.pipeline.definitions import (
-    FIRST_REPORT_YEAR,
-    RELATION_CHECK_FUNCTIONS,
-    RELATION_CHECKS,
+    RELATION_CHECK_SPECS,
     relations,
+    relations_metadata,
     report_details,
     report_partitions,
     target_codes_from_instance,
 )
-
-MAX_CONSECUTIVE_FAILURES = 5
 
 
 def plan_partitions(
@@ -79,38 +73,19 @@ def rebuild_and_check(instance: dg.DagsterInstance, con: duckdb.DuckDBPyConnecti
     inv = rebuild_investments(con)
     rel = rebuild_relations(con)
     instance.report_runless_asset_event(
-        dg.AssetMaterialization(
-            asset_key=relations.key,
-            metadata={"investment": inv["rows"], "investment_superseded": inv["investment_superseded"],
-                      **{k: v for k, v in rel.items() if k != "holder_by_method"},
-                      "holder_by_method": dg.MetadataValue.json(rel["holder_by_method"]), "source": "src.pipeline.backfill_reports"},
-        )
+        dg.AssetMaterialization(asset_key=relations.key, metadata={**relations_metadata(inv, rel), "source": "src.pipeline.backfill_reports"})
     )
-    results = []
-    for check in RELATION_CHECKS:
-        spec = next(iter(check.check_specs))
-        result = RELATION_CHECK_FUNCTIONS[spec.name](con)  # 쓰기 연결을 그대로 쓴다 (같은 프로세스에서 연결을 또 열 수 없음)
-        metadata = {k: v.value if hasattr(v, "value") else v for k, v in (result.metadata or {}).items()}
-        instance.report_runless_asset_event(
-            dg.AssetCheckEvaluation(asset_key=relations.key, check_name=spec.name, passed=result.passed,
-                                    metadata=result.metadata or {}, severity=result.severity)
-        )
-        results.append((spec.name, result.passed, metadata))
-    return results
+    # 쓰기 연결을 그대로 쓴다 (같은 프로세스에서 읽기 전용 연결을 또 열 수 없음) — 그래서 Dagster 검사가 아니라 본체 함수를 부른다
+    return [report_check_result(instance, relations.key, name, fn(con)) for name, _, fn in RELATION_CHECK_SPECS]
 
 
 def run(args: argparse.Namespace) -> int:
-    if not os.getenv("DAGSTER_HOME"):
-        print("DAGSTER_HOME이 없습니다. DAGSTER_HOME=$PWD/dagster_home 을 붙여 실행하세요.", file=sys.stderr)
+    if not require_dagster_home():
         return 2
     instance = dg.DagsterInstance.get()
-    try:
-        con = connect(read_only=args.dry_run)
-    except Exception as e:
-        if is_lock_error(e):
-            print("DuckDB가 다른 프로세스에서 열려 있습니다. dagster dev·노트북 연결을 닫고 다시 실행하세요.", file=sys.stderr)
-            return 1
-        raise
+    con = open_connection(read_only=args.dry_run)
+    if con is None:
+        return 1
 
     with con:
         if args.rebuild_only:
@@ -127,52 +102,32 @@ def run(args: argparse.Namespace) -> int:
             return 0
 
         api_key = get_api_key()
-        calls = done = 0
-        failures: list[tuple[str, str]] = []
-        consecutive_failures = 0
-        started = time.monotonic()
-        stop_reason = "완료"
-        for i, key in enumerate(keys, start=1):
-            if calls + 4 > args.max_calls:
-                stop_reason = f"호출 상한 {args.max_calls:,}건 도달"
-                break
-            corp_code, report = key.keys_by_dimension["corp"], key.keys_by_dimension["report"]
-            bsns_year, reprt_code = report.split("-")
-            try:
-                stats = collect_report_details(con, api_key, corp_code, bsns_year, reprt_code)
-            except DartRateLimitError as e:
-                stop_reason = f"DART 한도 초과: {e}"
-                break
-            except DartApiError as e:
-                failures.append((str(key), str(e)))
-                consecutive_failures += 1
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    stop_reason = f"연속 {MAX_CONSECUTIVE_FAILURES}번 실패 (마지막: {e})"
-                    break
-                continue
-            consecutive_failures = 0
-            calls += stats["api_calls"]
-            done += 1
-            instance.report_runless_asset_event(
-                dg.AssetMaterialization(
-                    asset_key=report_details.key,
-                    partition=str(key),
-                    metadata={"corp_code": corp_code, "report": report, "source": "src.pipeline.backfill_reports",
-                              **{k: v for k, v in stats.items() if k != "statuses"}},
-                )
-            )
-            if i % 50 == 0 or i == len(keys):
-                print(f"  {i:,}/{len(keys):,} 보고서, 호출 {calls:,}건, {(time.monotonic() - started) / 60:.1f}분", flush=True)
 
-        print(f"종료: {stop_reason}")
-        print(f"완료 보고서 {done:,}개, API 호출 {calls:,}건, 실패 {len(failures)}개")
-        for key, err in failures[:10]:
-            print(f"  실패 {key}: {err}")
-        if done:
+        def call_one(key):
+            corp_code, report = key.keys_by_dimension["corp"], key.keys_by_dimension["report"]
+            bsns_year, reprt_code = split_report_partition_key(report)
+            return collect_report_details(con, api_key, corp_code, bsns_year, reprt_code)
+
+        def on_success(key, stats):
+            corp_code, report = key.keys_by_dimension["corp"], key.keys_by_dimension["report"]
+            instance.report_runless_asset_event(
+                dg.AssetMaterialization(asset_key=report_details.key, partition=str(key),
+                                        metadata={"corp_code": corp_code, "report": report, "source": "src.pipeline.backfill_reports",
+                                                  **{k: v for k, v in stats.items() if k != "statuses"}})
+            )
+
+        def progress(i, n, run):
+            print(f"  {i:,}/{n:,} 보고서, 호출 {run.calls:,}건, {run.elapsed_min:.1f}분", flush=True)
+
+        result = run_backfill(keys, call_one, cost_per_item=4, max_calls=args.max_calls, on_success=on_success, label=str,
+                              progress_every=50, progress=progress)
+        result.print_tail()
+        print(f"완료 보고서 {result.succeeded:,}개, API 호출 {result.calls:,}건, 실패 {len(result.failures)}개")
+        if result.succeeded:
             print("관계 테이블 재생성(API 0건)...")
             for name, passed, metadata in rebuild_and_check(instance, con):
                 print(f"품질 검사 {name}: {'통과' if passed else '실패'} {metadata}")
-    return 0 if stop_reason == "완료" and not failures else 1
+    return 0 if result.ok else 1
 
 
 def main() -> None:

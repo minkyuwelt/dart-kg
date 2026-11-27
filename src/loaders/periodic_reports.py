@@ -50,6 +50,9 @@ def split_report_partition_key(key: str) -> tuple[str, str]:
     return bsns_year, reprt_code
 
 
+FIRST_REPORT_YEAR = 2021   # 정기보고서를 수집하는 첫 사업연도 (Dagster 파티션·백필 스크립트가 같이 쓴다)
+
+
 def report_partition_keys(first_year: int, last_year: int) -> list[str]:
     """first_year부터 last_year까지 모든 (사업연도, 보고서 종류) 파티션 키. 연도 안에서는 결산 순서."""
     return [

@@ -22,27 +22,19 @@ DuckDB 쓰기 연결을 처음부터 끝까지 하나만 연다. 실행 중에�
 
 import argparse
 import sys
-import time
 
 from src.collectors.corp_code import get_api_key
-from src.collectors.dart_client import DartApiError, DartRateLimitError
 from src.collectors.investment import REPORT_CODES
 from src.loaders.collect import collect_document
 from src.loaders.documents import missing_documents, target_corp_codes
-from src.loaders.duckdb_store import connect, is_lock_error
-
-MAX_CONSECUTIVE_FAILURES = 5
-FIRST_REPORT_YEAR = 2021
+from src.loaders.periodic_reports import FIRST_REPORT_YEAR
+from src.pipeline.backfill_common import open_connection, run_backfill
 
 
 def run(args: argparse.Namespace) -> int:
-    try:
-        con = connect(read_only=args.dry_run)
-    except Exception as e:
-        if is_lock_error(e):
-            print("DuckDB가 다른 프로세스에서 열려 있습니다. dagster dev·노트북 연결을 닫고 다시 실행하세요.", file=sys.stderr)
-            return 1
-        raise
+    con = open_connection(read_only=args.dry_run)
+    if con is None:
+        return 1
 
     with con:
         codes = target_corp_codes(con)
@@ -61,43 +53,25 @@ def run(args: argparse.Namespace) -> int:
             return 0
 
         api_key = get_api_key()
-        calls = done = no_file = 0
+        saved = no_file = 0
         total_bytes = 0
-        failures: list[tuple[str, str]] = []
-        consecutive_failures = 0
-        started = time.monotonic()
-        stop_reason = "완료"
-        for i, r in enumerate(plan, start=1):
-            if calls + 1 > args.max_calls:
-                stop_reason = f"호출 상한 {args.max_calls:,}건 도달"
-                break
-            try:
-                stats = collect_document(con, api_key, r["rcept_no"])
-            except DartRateLimitError as e:
-                stop_reason = f"DART 한도 초과: {e}"
-                break
-            except DartApiError as e:
-                failures.append((r["rcept_no"], str(e)))
-                consecutive_failures += 1
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    stop_reason = f"연속 {MAX_CONSECUTIVE_FAILURES}번 실패 (마지막: {e})"
-                    break
-                continue
-            consecutive_failures = 0
-            calls += stats["api_calls"]
+
+        def on_success(r, stats):
+            nonlocal saved, no_file, total_bytes
             if stats.get("no_file"):
                 no_file += 1  # [첨부정정] 등 본문 원문이 없는 공시. 기록되어 다음 백필에서 빠진다
-                continue
-            done += 1
+                return
+            saved += 1
             total_bytes += stats["file_size"]
-            if i % 25 == 0 or i == len(plan):
-                print(f"  {i:,}/{len(plan):,} 원문, {total_bytes / 1e6:,.0f}MB, {(time.monotonic() - started) / 60:.1f}분", flush=True)
 
-        print(f"종료: {stop_reason}")
-        print(f"저장 {done:,}개 ({total_bytes / 1e6:,.0f}MB), 원문 없음(014) {no_file}개, API 호출 {calls:,}건, 실패 {len(failures)}개")
-        for rcept_no, err in failures[:10]:
-            print(f"  실패 {rcept_no}: {err}")
-    return 0 if stop_reason == "완료" and not failures else 1
+        def progress(i, n, run):
+            print(f"  {i:,}/{n:,} 원문, {total_bytes / 1e6:,.0f}MB, {run.elapsed_min:.1f}분", flush=True)
+
+        result = run_backfill(plan, lambda r: collect_document(con, api_key, r["rcept_no"]), cost_per_item=1, max_calls=args.max_calls,
+                              on_success=on_success, label=lambda r: r["rcept_no"], progress_every=25, progress=progress)
+        result.print_tail()
+        print(f"저장 {saved:,}개 ({total_bytes / 1e6:,.0f}MB), 원문 없음(014) {no_file}개, API 호출 {result.calls:,}건, 실패 {len(result.failures)}개")
+    return 0 if result.ok else 1
 
 
 def main() -> None:
