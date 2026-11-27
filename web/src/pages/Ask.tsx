@@ -206,7 +206,7 @@ export default function Ask() {
                       <tbody>
                         {graph.relations.map((r, i) => (
                           <tr key={i}>
-                            <td className="strong nowrap">{r.src}</td><td className="dim nowrap">{REL_LABEL[r.rel] ?? r.rel}</td><td className="nowrap">{r.dst}</td><td className="nowrap">{r.value}</td>
+                            <td className="strong nowrap"><CorpName name={r.src} code={r.src_corp_code} /></td><td className="dim nowrap">{REL_LABEL[r.rel] ?? r.rel}</td><td className="nowrap"><CorpName name={r.dst} code={r.dst_corp_code} /></td><td className="nowrap">{r.value}</td>
                             <td className="dim"><span className="nowrap">{r.valid_from ?? ""}{r.valid_from ? " ~" : ""}</span>{r.valid_to ? <> <span className="nowrap">{r.valid_to}</span></> : null}</td>
                             <td>{r.url && r.source_rcept_no ? <a className="chip chipQuiet" href={r.url} target="_blank" rel="noreferrer" title={`접수번호 ${r.source_rcept_no}`}>{fmtDate(r.source_rcept_no)}</a> : ""}</td>
                           </tr>
@@ -227,7 +227,7 @@ export default function Ask() {
           <aside className={`panel ${s.hitsCol}`} aria-label="근거 공시">
             <div className="panelHead">
               <h3>근거 공시 <span className="panelCount">{result.hits.length}</span></h3>
-              <p className="panelNote">답이 인용한 {result.hits.filter((h) => h.cited).length}개는 노랗게</p>
+              <p className="panelNote">인용 {result.hits.filter((h) => h.cited).length}</p>
             </div>
             <ol className={s.hits}>
               {result.hits.map((h) => (
@@ -238,7 +238,13 @@ export default function Ask() {
                 >
                   <span className={s.hitN} aria-hidden="true">{h.n}</span>
                   <div className={s.hitBody}>
-                    <a className={s.hitLabel} href={h.url} target="_blank" rel="noreferrer">{h.label}</a>
+                    <span className={s.hitLabel}>
+                      {h.corp_code && h.corp_name && h.label.startsWith(h.corp_name + " | ") ? (
+                        <><Link to={`/corps/${h.corp_code}`} title="회사 페이지">{h.corp_name}</Link> | <a href={h.url} target="_blank" rel="noreferrer">{h.label.slice(h.corp_name.length + 3)}</a></>
+                      ) : (
+                        <a href={h.url} target="_blank" rel="noreferrer">{h.label}</a>
+                      )}
+                    </span>
                     <p className={s.hitPath}>{h.path}</p>
                     <p className={s.hitSnippet}>{h.snippet}</p>
                   </div>
@@ -271,6 +277,11 @@ function GroupMap({ corpList }: { corpList: Corp[] }) {
       })}
     </section>
   );
+}
+
+// 관계표의 회사 이름: 회사 페이지가 있으면 링크
+function CorpName({ name, code }: { name: string; code: string | null }) {
+  return code ? <Link to={`/corps/${code}`}>{name}</Link> : <>{name}</>;
 }
 
 // 접수번호 앞 8자리 = 접수일

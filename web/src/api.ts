@@ -3,6 +3,8 @@
 export type Hit = {
   n: number;
   rcept_no: string;
+  corp_code: string | null;   // 공시를 낸 회사 → 회사 페이지
+  corp_name: string | null;
   path: string;
   label: string;
   score: number;
@@ -22,8 +24,10 @@ export type Answer = {
 
 export type GraphRelation = {
   src: string;
+  src_corp_code: string | null;   // 회사 페이지가 있는 회사일 때만
   rel: string;
   dst: string;
+  dst_corp_code: string | null;
   value: string;
   valid_from: string | null;
   valid_to: string | null;

@@ -125,6 +125,7 @@ class ApiTest(unittest.TestCase):
         r = self.client.post("/ask", json={"question": "KB금융 주당 현금배당금은?", "use_llm": False}).json()
         self.assertIsNone(r["answer"])
         self.assertEqual(r["hits"][0]["rcept_no"], R2025)
+        self.assertEqual((r["hits"][0]["corp_code"], r["hits"][0]["corp_name"]), (KB, "KB금융"))   # 화면이 회사 페이지로 잇는다
         self.assertFalse(r["hits"][0]["cited"])
         self.assertEqual(self.llm.calls, [])
 

@@ -144,6 +144,9 @@ def relation_rows(steps: list[StepResult]) -> list[dict]:
                     a, b = b, a  # 위로 따라간 경로는 노드 순서가 (회사 ← 주주)라서 관계 방향(주주 → 회사)으로 뒤집는다
                 rows.append({"src": a["name"], "src_key": a["key"], "rel": rel.get("type"), "dst": b["name"], "dst_key": b["key"],
                              "dst_has_corp_code": b.get("has_corp_code"), "value": _value(rel),
+                             # 화면이 회사 페이지로 이어 주려고 쓴다. Person의 key는 person_id(생년월 포함)라 corp_code 칸에는 Corp만 넣는다
+                             "src_corp_code": a["key"] if a.get("label") == "Corp" and a.get("has_corp_code") else None,
+                             "dst_corp_code": b["key"] if b.get("label") == "Corp" and b.get("has_corp_code") else None,
                              "valid_from": _s(rel.get("valid_from")), "valid_to": _s(rel.get("valid_to")),
                              "source_rcept_no": rel.get("source_rcept_no") or rel.get("evidence_rcept_no"),
                              "source_table": rel.get("source_table") or rel.get("type"), "template": s.template})
