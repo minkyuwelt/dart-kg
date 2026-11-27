@@ -49,6 +49,16 @@ class ApiTest(unittest.TestCase):
         app = create_app(llm_factory=lambda: self.llm, retriever_name="chunk:section_path")
         self.client = self.enterContext(TestClient(app))
 
+    def test_cors_for_web(self):
+        # 화면(web/, Vite 개발 서버)에서 부를 수 있어야 한다 (0013). 허용 안 된 출처에는 헤더를 주지 않는다
+        r = self.client.get("/health", headers={"Origin": "http://localhost:5173"})
+        self.assertEqual(r.headers.get("access-control-allow-origin"), "http://localhost:5173")
+        r = self.client.get("/health", headers={"Origin": "https://evil.example"})
+        self.assertIsNone(r.headers.get("access-control-allow-origin"))
+        from src.api.main import cors_origins
+        with mock.patch.dict(os.environ, {"API_CORS_ORIGINS": "https://dart-kg.vercel.app/, http://localhost:5173"}):
+            self.assertEqual(cors_origins(), ["https://dart-kg.vercel.app", "http://localhost:5173"])
+
     def test_health_and_corps(self):
         h = self.client.get("/health").json()
         self.assertEqual((h["duckdb"], h["documents_with_chunks"], h["retriever"]), ("ok", 1, "chunk:section_path"))

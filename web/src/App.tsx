@@ -1,9 +1,8 @@
-"use client";
 
 // 질문 한 페이지 (0013 "첫 화면"). 질문 → 답 + 근거 공시 + (그래프 질문이면) 관계표.
 // 화면은 API 응답을 그대로 보여 준다. 답의 [n]과 오른쪽 근거 n이 같은 번호이고, 인용된 근거만 형광펜을 칠한다.
 import { useEffect, useRef, useState } from "react";
-import { ApiError, API_URL, ask, health, splitCitations, type AskResponse, type Health } from "@/lib/api";
+import { ApiError, API_URL, ask, health, splitCitations, type AskResponse, type Health } from "./api";
 import s from "./ask.module.css";
 
 // 평가 세트(eval/questions.jsonl)의 실제 질문. 처음 온 사람이 "무엇을 물을 수 있나"를 보는 자리
@@ -15,7 +14,10 @@ const EXAMPLES = [
   "케이비국민카드의 2025년 중 주요 연혁은 무엇인가?",
 ];
 
-export default function Ask() {
+// 그래프 관계 종류(0011 결정 2)의 화면 이름. 모르는 종류는 코드 그대로 보여 준다
+const REL_LABEL: Record<string, string> = { OWNS: "출자", HOLDS_POSITION: "임원", FORMERLY: "옛 이름", FILED: "제출" };
+
+export default function App() {
   const [question, setQuestion] = useState("");
   const [useLlm, setUseLlm] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -51,9 +53,11 @@ export default function Ask() {
     }
   }
 
+  // 답의 [n]: 조각 번호면 오른쪽 근거 n으로, 그래프 번호(조각 뒤 마지막)면 관계표로
   function jumpTo(n: number) {
     setFocused(n);
-    document.getElementById(`hit-${n}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const id = result?.graph && n === result.graph.n ? "graph" : `hit-${n}`;
+    document.getElementById(id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   const answer = result?.answer ?? null;
@@ -149,9 +153,10 @@ export default function Ask() {
             </p>
 
             {graph && (
-              <section className={s.graph} aria-label="관계표">
+              <section id="graph" className={[s.graph, focused === graph.n ? s.hitFocused : ""].join(" ")} aria-label="관계표">
                 <h3 className={s.h3}>
-                  관계표 <span className={s.h3Sub}>그래프에서 찾은 {graph.relations.length}건{graph.cited ? " · 답이 인용함" : ""}</span>
+                  <span className={[s.hitN, graph.cited ? s.hitNCited : ""].join(" ")} aria-hidden="true">{graph.n}</span>
+                  관계표 <span className={s.h3Sub}>그래프에서 찾은 {graph.relations.length}건{graph.cited ? " · 답이 인용함" : " · 답이 인용하지 않음"}</span>
                 </h3>
                 {graph.derived.length > 0 && (
                   <ul className={s.derived}>
@@ -169,7 +174,7 @@ export default function Ask() {
                       <tbody>
                         {graph.relations.map((r, i) => (
                           <tr key={i}>
-                            <td>{r.src}</td><td>{r.rel}</td><td>{r.dst}</td><td>{r.value}</td>
+                            <td>{r.src}</td><td className={s.nowrap}>{REL_LABEL[r.rel] ?? r.rel}</td><td>{r.dst}</td><td>{r.value}</td>
                             <td className={s.nowrap}>{r.valid_from ?? ""}{r.valid_to ? ` ~ ${r.valid_to}` : r.valid_from ? " ~" : ""}</td>
                             <td>{r.url ? <a href={r.url} target="_blank" rel="noreferrer">{r.source_rcept_no}</a> : ""}</td>
                           </tr>

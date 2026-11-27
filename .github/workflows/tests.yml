@@ -52,3 +52,21 @@ jobs:
         run: |
           mkdir -p "$DAGSTER_HOME"
           dagster definitions validate -m src.pipeline.definitions
+
+  # 화면(web/, Vite + React): 타입 검사·빌드·린트. API를 부르지 않는다 (0013)
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
