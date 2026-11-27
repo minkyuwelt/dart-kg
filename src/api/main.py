@@ -28,6 +28,7 @@ from typing import Callable
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from eval.retrievers import make_retriever
@@ -37,6 +38,15 @@ from src.rag.ask import VIEWER_URL, ask
 from src.reports.changes import CHANGE_KINDS, PCT_THRESHOLD, build_report, summarize
 
 DEFAULT_RETRIEVER = "graph:hybrid:kure-v3"   # 그래프 질문이 아니면 neo4j:hybrid:kure-v3와 같다 (0011)
+
+
+DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]   # web/ 개발 서버 (vite.config.ts의 포트)
+
+
+def cors_origins() -> list[str]:
+    load_dotenv()
+    raw = os.getenv("API_CORS_ORIGINS", "")
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()] or DEFAULT_CORS_ORIGINS
 
 
 def api_settings() -> dict:
@@ -181,6 +191,8 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
                   description="4대 금융지주·자회사 공시를 시간축 위에 꿰어 질문에 근거 공시와 함께 답하는 API. 답은 공시 원문 조각에서만 만들고, 수치는 공시 그대로이며 투자 판단용이 아니다.")
     app.state.embedder, app.state.driver = embedder, driver
     app.state.retriever_name = retriever_name
+    # 화면(web/, 다른 출처)에서 부를 수 있게. 허용 출처는 .env의 API_CORS_ORIGINS (쉼표로 여러 개). 비우면 노트북의 Vite 개발 서버만 (0013)
+    app.add_middleware(CORSMiddleware, allow_origins=cors_origins(), allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
     def make_llm():
         if llm_factory is not None:
