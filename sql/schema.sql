@@ -67,10 +67,6 @@ CREATE TABLE IF NOT EXISTS investment (
     loaded_at                  TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (rcept_no, row_seq)
 );
--- 이미 만들어진 파일에 컬럼을 더한다 (Phase 2 E에서 추가. 값은 rebuild가 채운다)
-ALTER TABLE investment ADD COLUMN IF NOT EXISTS valid_from DATE;
-ALTER TABLE investment ADD COLUMN IF NOT EXISTS valid_to DATE;
-ALTER TABLE investment ADD COLUMN IF NOT EXISTS superseded_by VARCHAR;
 
 -- 수집 대상 회사 목록. src/loaders/targets.py가 investment 테이블에서 통째로 다시 만든다.
 -- 범위 결정: docs/decisions/0002-target-scope.md (지주 4곳 + 직속 자회사)
@@ -172,14 +168,7 @@ CREATE TABLE IF NOT EXISTS executive (
     loaded_at             TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (source_rcept_no, row_seq)
 );
--- B 단계(PR #17)로 만들어진 파일 이전: valid_from_method를 없애고 선임 시점·사람 식별자 컬럼을 더한다
-ALTER TABLE executive DROP COLUMN IF EXISTS valid_from_method;
-ALTER TABLE executive ADD COLUMN IF NOT EXISTS tenure_start_on DATE;
-ALTER TABLE executive ADD COLUMN IF NOT EXISTS tenure_start_method VARCHAR;
-ALTER TABLE executive ADD COLUMN IF NOT EXISTS person_id VARCHAR;
 
--- 사람. executive의 (이름, 생년월, 성별) 조합마다 한 행. 닫기 단계가 executive에서 다시 만든다 (결정 0006).
--- 같은 조합이 다른 사람일 가능성은 아주 낮지만 0이 아니다. 그 경우는 발견하면 수동 분리 규칙을 0006에 적는다.
 -- 지주 사업보고서 IX절 "회사와 계열회사간 임원 겸직 현황" 표 (결정 0014). 임원 표(executive)가 없는 자회사의 겸직 자리를 채운다.
 -- 출처는 document_section.tables(원문 표)라 API 호출이 없다. 사람은 같은 지주 임원 표의 같은 이름으로 person_id를 잇는다 (0006 보강).
 CREATE TABLE IF NOT EXISTS concurrent_position (
@@ -207,8 +196,9 @@ CREATE TABLE IF NOT EXISTS concurrent_position (
     loaded_at          TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (source_rcept_no, row_seq)
 );
-ALTER TABLE concurrent_position ADD COLUMN IF NOT EXISTS is_officer BOOLEAN DEFAULT true;   -- 2026-11-27 첫 적재 뒤 추가 (DuckDB는 ALTER에 NOT NULL을 못 붙인다. 적재는 늘 값을 넣는다)
 
+-- 사람. executive의 (이름, 생년월, 성별) 조합마다 한 행. 닫기 단계가 executive에서 다시 만든다 (결정 0006).
+-- 같은 조합이 다른 사람일 가능성은 아주 낮지만 0이 아니다. 그 경우는 발견하면 수동 분리 규칙을 0006에 적는다.
 CREATE TABLE IF NOT EXISTS person (
     person_id    VARCHAR     PRIMARY KEY,  -- '양종희|1961-06|남'
     nm           VARCHAR     NOT NULL,
@@ -219,13 +209,6 @@ CREATE TABLE IF NOT EXISTS person (
     corp_count   INTEGER,                  -- 임원으로 나온 회사 수 (2 이상이면 겸직 후보)
     loaded_at    TIMESTAMPTZ NOT NULL
 );
-
--- 현재 상태 뷰: 아직 유효하고(valid_to NULL) 정정되지 않은(superseded_by NULL) 행만.
--- 시점 조회는 WHERE valid_from <= d AND (valid_to IS NULL OR valid_to > d) AND superseded_by IS NULL (README 참고)
-CREATE OR REPLACE VIEW investment_current AS SELECT * FROM investment WHERE valid_to IS NULL AND superseded_by IS NULL;
-CREATE OR REPLACE VIEW major_shareholder_current AS SELECT * FROM major_shareholder WHERE valid_to IS NULL AND superseded_by IS NULL;
-CREATE OR REPLACE VIEW major_shareholder_change_current AS SELECT * FROM major_shareholder_change WHERE valid_to IS NULL AND superseded_by IS NULL;
-CREATE OR REPLACE VIEW executive_current AS SELECT * FROM executive WHERE valid_to IS NULL AND superseded_by IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Phase 3 공시 원문. ZIP 파일은 디스크(DOCUMENTS_PATH, 기본 data/documents/{rcept_no}.zip)에 두고
@@ -240,7 +223,10 @@ CREATE TABLE IF NOT EXISTS document (
     entry_count   INTEGER     NOT NULL,     -- ZIP 안 파일 수
     entries       JSON        NOT NULL,     -- [{name, size, encoding}] ZIP 안 파일 목록
     xml_encoding  VARCHAR,                  -- XML 선언의 encoding (여러 개면 쉼표로)
-    fetched_at    TIMESTAMPTZ NOT NULL
+    fetched_at    TIMESTAMPTZ NOT NULL,
+    status        VARCHAR     DEFAULT '000', -- DART 응답 status. '000' 정상, '014' 파일 없음 ([첨부정정]처럼 본문 원문이 없는 공시).
+                                            -- 014인 행은 file_path가 빈 문자열이고, 백필이 다시 호출하지 않도록 기록만 남긴다
+    message       VARCHAR                   -- DART 응답 message (status가 000이 아닐 때)
 );
 
 -- 원문 XML을 섹션(목차 항목) 단위로 풀어 놓은 것. src/loaders/document_parser.py가 ZIP에서 통째로 다시 만든다 (rebuild).
@@ -282,12 +268,6 @@ CREATE TABLE IF NOT EXISTS document_parse (
     parser         VARCHAR,                  -- 성공한 단계: etree / etree+escape / lxml (0007). 실패면 NULL
     PRIMARY KEY (rcept_no, file_name)
 );
-ALTER TABLE document_parse ADD COLUMN IF NOT EXISTS parser VARCHAR;
-
--- document.status: DART 응답 status. '000' 정상, '014' 파일 없음 ([첨부정정]처럼 본문 원문이 없는 공시).
--- 014인 행은 file_path가 빈 문자열이고, 백필이 다시 호출하지 않도록 기록만 남긴다.
-ALTER TABLE document ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT '000';
-ALTER TABLE document ADD COLUMN IF NOT EXISTS message VARCHAR;
 
 -- 조각(청킹). document_section에서 src/loaders/chunks.py가 전략별로 다시 만든다 (rebuild, 같은 전략·접수번호를 지우고 다시 넣음).
 -- 전략(strategy)은 0008 실험 변수: fixed(섹션 무시 고정 분할) / section(섹션 단위, 표는 따로) / section_path(section + 꼬리표).
@@ -327,3 +307,36 @@ CREATE TABLE IF NOT EXISTS chunk_embedding (
     embedded_at  TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (chunk_id, model_name)
 );
+
+-- ---------------------------------------------------------------------------
+-- 기존 DB 올리기. 위 CREATE는 새 파일의 완성된 모양이고, 이미 만들어진 data/dartkg.duckdb에는 여기서 빠진 칸을 더한다.
+-- 모두 IF (NOT) EXISTS라 새 파일에서는 아무것도 하지 않는다. CREATE에 칸을 더하면 여기에도 ALTER를 한 줄 더한다.
+-- investment: Phase 2 E(이중 시간축)에서 더한 칸. 값은 rebuild가 채운다
+ALTER TABLE investment ADD COLUMN IF NOT EXISTS valid_from DATE;
+ALTER TABLE investment ADD COLUMN IF NOT EXISTS valid_to DATE;
+ALTER TABLE investment ADD COLUMN IF NOT EXISTS superseded_by VARCHAR;
+
+-- executive: B 단계(PR #17) 이전 파일에서 valid_from_method를 없애고 선임 시점·사람 식별자 칸을 더한다
+ALTER TABLE executive DROP COLUMN IF EXISTS valid_from_method;
+ALTER TABLE executive ADD COLUMN IF NOT EXISTS tenure_start_on DATE;
+ALTER TABLE executive ADD COLUMN IF NOT EXISTS tenure_start_method VARCHAR;
+ALTER TABLE executive ADD COLUMN IF NOT EXISTS person_id VARCHAR;
+
+-- concurrent_position: 2026-11-27 첫 적재 뒤 더한 칸 (DuckDB는 ALTER에 NOT NULL을 못 붙인다. 적재는 늘 값을 넣는다)
+ALTER TABLE concurrent_position ADD COLUMN IF NOT EXISTS is_officer BOOLEAN DEFAULT true;
+
+-- document_parse: 0007에서 더한 칸
+ALTER TABLE document_parse ADD COLUMN IF NOT EXISTS parser VARCHAR;
+
+-- document: status·message는 원문 없는 공시(014)를 기록하려고 뒤에 더한 칸
+ALTER TABLE document ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT '000';
+ALTER TABLE document ADD COLUMN IF NOT EXISTS message VARCHAR;
+
+-- ---------------------------------------------------------------------------
+-- 뷰. 위 ALTER 뒤에 만들어야 기존 DB에서도 새 칸(valid_to 등)을 볼 수 있다.
+-- 현재 상태 뷰: 아직 유효하고(valid_to NULL) 정정되지 않은(superseded_by NULL) 행만.
+-- 시점 조회는 WHERE valid_from <= d AND (valid_to IS NULL OR valid_to > d) AND superseded_by IS NULL (README 참고)
+CREATE OR REPLACE VIEW investment_current AS SELECT * FROM investment WHERE valid_to IS NULL AND superseded_by IS NULL;
+CREATE OR REPLACE VIEW major_shareholder_current AS SELECT * FROM major_shareholder WHERE valid_to IS NULL AND superseded_by IS NULL;
+CREATE OR REPLACE VIEW major_shareholder_change_current AS SELECT * FROM major_shareholder_change WHERE valid_to IS NULL AND superseded_by IS NULL;
+CREATE OR REPLACE VIEW executive_current AS SELECT * FROM executive WHERE valid_to IS NULL AND superseded_by IS NULL;

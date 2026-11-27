@@ -171,7 +171,7 @@ def solve(con, spec: Spec, lineage: list[dict], today: date | None = None) -> Dr
     mentions = find_corps(con, spec.question, lineage)
     corp = mentions[0].corp_code if mentions else None
     fn = SOLVERS[spec.solver]
-    if corp is None and spec.solver not in ("shared_outside_holdings",):
+    if corp is None and spec.solver != "shared_outside_holdings":
         return Draft("(회사를 찾지 못함 — 질문의 회사 이름이 DuckDB 사전에 없음)", note="회사 이름 확인 필요")
     return fn(con, corp, as_of, mentions, lineage, spec.question)
 

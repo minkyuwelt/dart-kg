@@ -8,7 +8,7 @@
 backfill_reports.py와 같은 방식이다. 다른 점 둘:
 - 보고서 1건 = API 1건 (ZIP 하나)
 - 완료 기록을 Dagster가 아니라 DuckDB document 테이블로 본다. 원문은 접수번호 단위라 "이미 받은 접수번호"가
-  곧 완료 기록이다. Dagster documents 자산(계획 10번 PR)은 이 테이블을 읽어 같은 판단을 한다
+  곧 완료 기록이다. Dagster documents 자산(definitions.py)은 이 테이블을 읽어 같은 판단을 한다
 
 동작
     - 대상 회사: target_corp 테이블 (--corp로 좁힐 수 있음)
