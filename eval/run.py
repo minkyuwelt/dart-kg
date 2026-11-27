@@ -103,7 +103,7 @@ def attach_picker(retriever, choice: str, llm_mode: bool) -> None:
 def run_with_llm(args, target, llm=None, retriever=None) -> int:
     """검색 + LLM 답을 만들어 채점표(markdown)와 JSON으로 남긴다. 채점은 사람이 한다 (계획 4절: LLM 채점은 사람 채점과 일치율 확인 뒤에만)."""
     from eval.metrics import score_question as _score
-    from src.rag.ask import VIEWER_URL, ask
+    from src.rag.ask import NEIGHBOR_MAX, VIEWER_URL, ask
     from src.rag.llm import OpenAILLM
 
     llm = llm or OpenAILLM()
@@ -112,7 +112,7 @@ def run_with_llm(args, target, llm=None, retriever=None) -> int:
         retriever = retriever or make_retriever(args.retriever, con, corp_filter=args.filter == "corp", rerank=args.rerank)
         attach_picker(retriever, getattr(args, "picker", "auto"), llm_mode=True)
         for i, q in enumerate(target, 1):
-            res = ask(q.question, retriever, llm, args.k, con)
+            res = ask(q.question, retriever, llm, args.k, con, neighbors=getattr(args, "neighbors", NEIGHBOR_MAX))
             sc = _score(res.hits, q.evidence_rcept_no, q.evidence_section, args.k) if q.type != "없음" else {"hit_doc": None}
             a = res.answer
             cited = [f"[{n}] {res.labels[n - 1]} {VIEWER_URL.format(rcept_no=h.rcept_no)}" for n, h in res.cited_hits]
@@ -123,7 +123,7 @@ def run_with_llm(args, target, llm=None, retriever=None) -> int:
             t_in += a.input_tokens
             t_out += a.output_tokens
             print(f"  {i}/{len(target)} {q.id} {'(없음)' if a.not_found else '답 ' + str(len(a.citations)) + '개 인용'}  토큰 {a.input_tokens:,}/{a.output_tokens:,}")
-    config = {"retriever": retriever.name, "filter": args.filter, "rerank": args.rerank, "k": args.k, "label": args.label, "llm": llm.name,
+    config = {"retriever": retriever.name, "filter": args.filter, "rerank": args.rerank, "k": args.k, "neighbors": getattr(args, "neighbors", NEIGHBOR_MAX), "label": args.label, "llm": llm.name,
               "picker": picker_on(getattr(args, "picker", "auto"), llm_mode=True), "questions": str(args.questions), "run_at": datetime.now().isoformat(timespec="seconds")}
     n_none = sum(1 for r in rows if r["type"] == "없음")
     none_ok = sum(1 for r in rows if r["type"] == "없음" and r["not_found"])
@@ -152,6 +152,7 @@ def main(argv=None) -> int:
     ap.add_argument("--filter", choices=["corp"], help="corp: 질문의 회사명으로 그 회사 보고서만 (chunk·dense)")
     ap.add_argument("--rerank", choices=["nano"], help="nano: 상위 30개를 KURE-Reranker-nano로 다시 매김 (chunk·dense, 노트북)")
     ap.add_argument("--k", type=int, default=5)
+    ap.add_argument("--neighbors", type=int, default=4, help="LLM 모드에서 상위 조각과 같은 절의 앞뒤 조각을 함께 넘기는 상한 (기본 4, 0이면 끔 — 비교용). 검색 지표에는 영향 없음")
     ap.add_argument("--label", default="", help="결과 파일 이름에 붙일 설정 이름")
     ap.add_argument("--include-none", action="store_true", help="LLM 평가에 '없음' 유형도 넣는다 (정답은 '공시에서 찾지 못했습니다')")
     ap.add_argument("--id", nargs="*", help="질문 id만 (예: --id d055 d068). 고친 뒤 몇 개만 다시 볼 때 — LLM 호출을 그 수만큼으로 줄인다")

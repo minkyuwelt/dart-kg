@@ -4,9 +4,13 @@
     python -m src.rag.ask "..." --no-llm                 # 검색 결과만 (API 키 없이)
     python -m src.rag.ask "..." --retriever dense:kure-v3:section_path   # Neo4j 없이 DuckDB 벡터 검색으로
     python -m src.rag.ask "..." --k 8 --no-filter
+    python -m src.rag.ask "..." --neighbors 0               # 이웃 조각 끄기 (비교용)
 
 기본 검색기는 graph:hybrid:kure-v3 + 회사 필터: 그래프 질문이면 관계표와 근거 조각을 RRF로 합치고(0011), 아니면 neo4j:hybrid:kure-v3(0009·0010)와 같다. 조각은 Neo4j에 들어가 있어야 한다(load_chunks).
 근거 출력: 인용된 조각을 먼저, 나머지 검색 결과는 "참고"로. 모든 근거에 DART 뷰어 링크를 붙인다.
+이웃 조각(0011 "같은 절의 앞뒤 조각", 2026-11-27): 검색 상위 조각과 같은 보고서·같은 섹션 경로에서 바로 앞·뒤 조각을 최대 NEIGHBOR_MAX개 LLM에 함께 넘긴다.
+연혁처럼 한 절이 여러 조각으로 잘린 답(d033)은 상위 5개 안에 절의 일부만 들어오는데, k를 늘리면 다른 보고서·다른 절 조각(소음)이 들어오고
+이웃 조각은 "이미 맞다고 본 절의 이어지는 글"만 더한다. 검색 평가(hit@k)는 retriever.search 결과만 보므로 바뀌지 않는다.
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
 
 GRAPH_LABEL = "그래프 관계표 (공시의 지분·임원 표를 그래프로 따라간 결과, 파생 값은 규칙 계산)"
+NEIGHBOR_MAX = 4          # 덧붙이는 이웃 조각 상한. 조각 1,000자 상한이 그대로라 최악 +4,000자(≈ 3,000 토큰) — d033 7,531 토큰에 더해도 0011 예산(약 12k) 안
+CHUNK_STRATEGY = "section_path"   # Neo4j에 올린 조각 전략 (src/graph/load_chunks.DEFAULT_STRATEGY). 이웃을 DuckDB chunk 표에서 같은 전략으로 찾는다
 GRAPH_MAX_CHARS = 9000   # 파생 값 80줄 + 관계 행 50개가 들어가는 길이. 6000에서는 g05의 파생 값이 잘렸다(2026-11-26). 0011 예산(총 약 12k 토큰) 안
 
 
@@ -58,8 +64,46 @@ def passage_label(hit: Hit, con=None) -> str:
     return f"접수번호 {hit.rcept_no} | {hit.path}"
 
 
-def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None) -> AskResult:
-    """검색 → (그래프 관계표) → LLM. 그래프 검색기(src/graph/query.GraphRetriever)면 retriever.last에 관계표가 남아 있다."""
+def expand_neighbors(hits: list[Hit], con, limit: int = NEIGHBOR_MAX) -> list[tuple[Hit, int, bool]]:
+    """검색 상위 조각과 같은 보고서·파일·섹션 경로(path)에서 seq가 바로 앞·뒤인 조각을 DuckDB chunk 표에서 찾는다.
+
+    순위대로 돌며(1위의 앞·뒤, 2위의 앞·뒤, …) limit개가 차면 멈춘다. 이미 검색된 조각과 중복은 건너뛴다.
+    Hit에는 seq가 없어 (접수번호, 파일, 글)로 chunk 행을 찾는다 — Neo4j 노드의 text는 chunk.text 그대로다.
+    돌려주는 것: (이웃 Hit, 어느 검색 조각의 번호(1부터)인지, 뒤 조각인가(True) 앞 조각인가(False)). 점수는 0(검색된 것이 아님).
+    """
+    out: list[tuple[Hit, int, bool]] = []
+    if con is None or limit <= 0:
+        return out
+    seen = {(h.rcept_no, h.file_name, h.text) for h in hits}
+    for i, h in enumerate(hits):
+        if len(out) >= limit:
+            break
+        row = con.execute("SELECT seq FROM chunk WHERE strategy = ? AND rcept_no = ? AND file_name = ? AND text = ? LIMIT 1",
+                          [CHUNK_STRATEGY, h.rcept_no, h.file_name, h.text]).fetchone()
+        if row is None:
+            continue
+        seq = row[0]
+        rows = con.execute(
+            "SELECT rcept_no, file_name, section_id, path, text, seq FROM chunk "
+            "WHERE strategy = ? AND rcept_no = ? AND file_name = ? AND path = ? AND seq IN (?, ?) ORDER BY seq",
+            [CHUNK_STRATEGY, h.rcept_no, h.file_name, h.path, seq - 1, seq + 1]).fetchall()
+        for r in rows:
+            key = (r[0], r[1], r[4])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((Hit(r[0], r[1], r[2], r[3], 0.0, r[4][:120], r[4]), i + 1, r[5] > seq))
+            if len(out) >= limit:
+                break
+    return out
+
+
+def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None, neighbors: int = NEIGHBOR_MAX) -> AskResult:
+    """검색 → 이웃 조각 → (그래프 관계표) → LLM. 그래프 검색기(src/graph/query.GraphRetriever)면 retriever.last에 관계표가 남아 있다.
+
+    이웃 조각은 LLM에 넘길 때만 붙인다(--no-llm·use_llm=False의 검색 결과는 검색기가 돌려준 그대로). 번호는 검색 조각 뒤에 이어 붙이고
+    꼬리표에 "(이웃: [n]의 다음 조각)"을 적어 답의 인용·화면에서 검색된 조각과 구별된다. 그래프 관계표는 여전히 마지막 번호.
+    """
     hits = retriever.search(question, k)
     labels = [passage_label(h, con) for h in hits]
     graph = getattr(retriever, "last", None)
@@ -70,6 +114,9 @@ def ask(question: str, retriever, llm: LLM | None, k: int = 5, con=None) -> AskR
     if not hits and not has_graph:
         result.answer = Answer(NOT_FOUND, [], getattr(llm, "name", ""))
         return result
+    for nh, n, after in expand_neighbors(hits, con, neighbors):
+        hits.append(nh)
+        labels.append(f"{passage_label(nh, con)} (이웃: [{n}]의 {'다음' if after else '앞'} 조각)")
     passages = [Passage(i + 1, labels[i], h.text or h.snippet) for i, h in enumerate(hits)]
     if graph is not None:
         from src.graph.query import to_text
@@ -123,6 +170,7 @@ def main(argv=None) -> int:
     ap.add_argument("--rerank", choices=["nano"])
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--no-llm", action="store_true", help="검색 결과만 (API 호출 없음)")
+    ap.add_argument("--neighbors", type=int, default=NEIGHBOR_MAX, help=f"상위 조각과 같은 절의 앞뒤 조각을 LLM에 함께 넘기는 상한 (기본 {NEIGHBOR_MAX}, 0이면 끔)")
     args = ap.parse_args(argv)
 
     from eval.retrievers import make_retriever
@@ -137,7 +185,7 @@ def main(argv=None) -> int:
         if llm is not None and hasattr(retriever, "picker"):
             from src.graph.picker import LLMPicker
             retriever.picker = LLMPicker()   # 규칙이 못 고른 질문만 LLM이 템플릿 번호를 고른다
-        result = ask(args.question, retriever, llm, args.k, con)
+        result = ask(args.question, retriever, llm, args.k, con, neighbors=args.neighbors)
     print(format_result(result))
     return 0
 
