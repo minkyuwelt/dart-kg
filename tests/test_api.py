@@ -4,7 +4,7 @@
 1) /health, /corps, /corps/{code}/executives·shareholders (시점 필터, 생년월 없음, 모르는 회사 404)
 1b) /corps/{code}: 회사 페이지 묶음 — 개요·최신 정기보고서·임원·최대주주·출자·겸직 표 자리·지분 추이, 모든 행에 url, 생년월 없음
 2) /ask: use_llm=false면 검색만, true면 가짜 LLM 답과 인용 표시, 입력 검증(빈 질문 422)
-3) /changes: 변화 리포트 JSON과 요약, since > until 422
+3) /changes: 변화 리포트 JSON과 요약, since > until 422. /changes/text: 문장 변화(전년 같은 종류 보고서와 절 비교, section 낱말)
 """
 
 import os
@@ -46,6 +46,13 @@ class ApiTest(unittest.TestCase):
                 [R2025, R2025, "배당에 관한 사항", "III. 재무 > 6. 배당에 관한 사항", text, len(text)],
             )
             build_chunks(con, [R2025], ["section_path"])
+            # 문장 변화(/changes/text)용: 두 해 사업보고서에 같은 '위험관리' 절. 금액은 바뀌고, 한 문장은 글이 바뀜
+            for rcept, body in ((R2024, "신용위험은 내부등급법으로 측정합니다. 2024년 말 위험가중자산은 1,000억원입니다."),
+                                (R2025, "신용위험은 내부등급법과 스트레스 테스트로 측정합니다. 2025년 말 위험가중자산은 1,200억원입니다.")):
+                con.execute(
+                    "INSERT INTO document_section VALUES (?, ? || '.xml', '11011', '사업보고서', 2, NULL, 1, NULL, NULL, NULL, ?, ?, false, true, ?, '[]', ?, 0)",
+                    [rcept, rcept, "위험관리", "III. 재무 > 7. 위험관리", body, len(body)],
+                )
         self.llm = FakeLLM("KB금융의 주당 현금배당금은 보통주 3,000원입니다.", [1])
         self.keys_seen: list[str | None] = []   # 요청 헤더의 OpenAI 키가 LLM 공장에 닿는지
         def llm_factory(api_key=None):
@@ -168,6 +175,19 @@ class ApiTest(unittest.TestCase):
         self.assertIn(("shareholder_pct", "국민연금공단 보통주"), kinds)
         self.assertEqual(r["reports"][0]["changes"][0]["kind_label"], "임원 신규")
         self.assertEqual(self.client.get("/changes", params={"since": "2026-04-01", "until": "2026-03-01"}).status_code, 422)
+
+    def test_text_changes(self):
+        r = self.client.get("/changes/text", params={"since": "2026-03-01", "until": "2026-03-31"}).json()
+        self.assertEqual(r["section_words"], ["위험", "회계정책", "경영진단"])
+        self.assertEqual(r["summary"], {"reports": 1, "compared": 1, "sections_changed": 1, "text_changes": 1, "numbers_only": 1})
+        rep = r["reports"][0]
+        self.assertEqual((rep["rcept_no"], rep["prev_rcept_no"]), (R2025, R2024))
+        sec = rep["sections"][0]
+        self.assertEqual((sec["path"], sec["status"], sec["numbers_only"]), ("III. 재무 > 7. 위험관리", "changed", 1))
+        self.assertEqual(sec["replaced"], [["신용위험은 내부등급법으로 측정합니다.", "신용위험은 내부등급법과 스트레스 테스트로 측정합니다."]])
+        # 절 낱말을 바꾸면 그 절만. '배당' 절은 2025에만 있어 '추가'
+        r2 = self.client.get("/changes/text", params={"since": "2026-03-01", "until": "2026-03-31", "section": ["배당"]}).json()
+        self.assertEqual([(s["path"], s["status"]) for s in r2["reports"][0]["sections"]], [("III. 재무 > 6. 배당에 관한 사항", "added")])
 
 
 if __name__ == "__main__":

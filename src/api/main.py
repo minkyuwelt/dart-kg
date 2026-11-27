@@ -8,6 +8,7 @@
     POST /ask                                     질문 → 답·인용·근거 링크 (src/rag/ask). use_llm=false면 검색만
                                                   그래프 질문이면 graph(관계표·파생 값·실행 기록)도 (0011)
     GET  /changes?since=&until=&corp=             변화 리포트 (src/reports/changes) JSON
+    GET  /changes/text?since=&until=&corp=&section=  문장 변화 (src/reports/text_changes, 0012 결정 4) JSON
     GET  /corps                                   수집 대상 회사 목록
     GET  /corps/{corp_code}/executives?as_of=     그 날짜의 임원 (src/loaders/as_of)
     GET  /corps/{corp_code}/shareholders?as_of=   그 날짜의 최대주주
@@ -36,6 +37,7 @@ from src.loaders.as_of import corp_page, executives_as_of, shareholders_as_of, t
 from src.loaders.duckdb_store import connect, is_lock_error
 from src.rag.ask import VIEWER_URL, ask
 from src.reports.changes import CHANGE_KINDS, PCT_THRESHOLD, build_report, summarize
+from src.reports import text_changes as tc
 
 DEFAULT_RETRIEVER = "graph:hybrid:kure-v3"   # 그래프 질문이 아니면 neo4j:hybrid:kure-v3와 같다 (0011)
 
@@ -154,6 +156,39 @@ class ChangesResponse(BaseModel):
     pct_threshold: float
     summary: dict
     reports: list[ReportChangesOut]
+
+
+class SectionDiffOut(BaseModel):
+    path: str
+    status: str                       # changed | numbers_only | same | added | removed
+    replaced: list[list[str]]         # [전년 문장, 이번 문장] 자리가 같은 짝
+    removed: list[str]
+    added: list[str]
+    numbers_only: int
+    sentences_before: int
+    sentences_after: int
+    text_changes: int
+
+
+class TextChangesOut(BaseModel):
+    rcept_no: str
+    corp_code: str
+    corp_name: str
+    report_nm: str
+    rcept_dt: date
+    url: str
+    prev_rcept_no: str | None         # 전년 같은 종류 보고서. None이면 비교 대상 없음
+    prev_report_nm: str | None
+    prev_url: str | None
+    sections: list[SectionDiffOut]
+
+
+class TextChangesResponse(BaseModel):
+    since: date
+    until: date
+    section_words: list[str]
+    summary: dict
+    reports: list[TextChangesOut]
 
 
 # ----- 앱 -----
@@ -294,6 +329,25 @@ def create_app(embedder=None, driver=None, llm_factory: Callable | None = None, 
                                     changes=[ChangeOut(kind=c.kind, kind_label=CHANGE_KINDS[c.kind], subject=c.subject, before=c.before, after=c.after, note=c.note)
                                              for c in r.changes]) for r in results]
         return ChangesResponse(since=since, until=until, pct_threshold=PCT_THRESHOLD, summary=summarize(results), reports=reports)
+
+    @app.get("/changes/text", response_model=TextChangesResponse)
+    def get_text_changes(since: date | None = None, until: date | None = None, days: int = Query(7, ge=1, le=366),
+                         corp: list[str] | None = Query(None), section: list[str] | None = Query(None)) -> TextChangesResponse:
+        """문장 변화(0012 결정 4): 기간 안에 접수된 정기보고서를 전년 같은 종류 보고서와 절 단위로 비교. section은 비교할 절 경로의 낱말(여러 개)."""
+        until = until or date.today()
+        since = since or until - timedelta(days=days)
+        if since > until:
+            raise HTTPException(422, "since가 until보다 늦습니다")
+        words = tuple(w.strip() for w in section if w.strip()) if section else tc.SECTION_WORDS_DEFAULT
+        with _open_duckdb() as con:
+            results = tc.build_text_report(con, since, until, corp, words)
+        reports = [TextChangesOut(rcept_no=r.rcept_no, corp_code=r.corp_code, corp_name=r.corp_name, report_nm=r.report_nm, rcept_dt=r.rcept_dt,
+                                  url=r.url, prev_rcept_no=r.prev_rcept_no, prev_report_nm=r.prev_report_nm, prev_url=r.prev_url,
+                                  sections=[SectionDiffOut(path=d.path, status=d.status, replaced=[list(x) for x in d.replaced], removed=d.removed,
+                                                           added=d.added, numbers_only=d.numbers_only, sentences_before=d.sentences_before,
+                                                           sentences_after=d.sentences_after, text_changes=d.text_changes) for d in r.sections])
+                   for r in results]
+        return TextChangesResponse(since=since, until=until, section_words=list(words), summary=tc.summarize(results), reports=reports)
 
     @app.get("/corps")
     def get_corps() -> list[dict]:

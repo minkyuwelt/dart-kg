@@ -59,3 +59,18 @@
 .quiet ul { margin: 8px 0 0; padding-left: 18px; }
 .quiet li { padding: 2px 0; }
 .foot { margin: 0; padding: 8px 16px 10px; font-size: 13px; color: var(--ink-3); }
+
+/* 두 보기(임원·주주·출자 / 보고서 문장) 고르기. 고르는 줄 아래, 판 위 */
+.views { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+.viewNote { margin-left: 8px; font-size: 13px; color: var(--ink-2); }
+
+/* 문장 변화: 절마다 표 하나. 문장이 길어 열 너비는 전·후 반반 */
+.section { padding: 4px 0 10px; }
+.sectionHead { margin: 0 16px 6px; font-size: 13.5px; }
+.sectionPath { font-weight: 700; margin-right: 8px; }
+.textTable { width: 100%; min-width: 0; table-layout: fixed; }   /* 문장은 어차피 줄을 바꾸므로 좁은 화면에서도 가로 스크롤 없이 */
+.textTable .thKind { width: 4.5em; }
+.textTable td { white-space: normal; line-height: 1.55; }
+.more { margin: 6px 16px 0; }
+.extra { margin: 6px 16px 0; padding: 0; list-style: none; font-size: 14px; }
+.extra li { padding: 3px 0; }
