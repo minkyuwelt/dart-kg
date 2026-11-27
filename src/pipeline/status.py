@@ -10,7 +10,8 @@
 ④ DuckDB ↔ Neo4j 수 (--no-neo4j로 끌 수 있다. Neo4j가 꺼져 있으면 그 줄만 "연결 안 됨")
 
 판정 규칙(코드가 추측하지 않는다 — 기준은 모두 숫자로 적어 둔다):
-- 스케줄이 꺼져 있으면 "꺼짐" (README 2단계: 화면 Automation에서 켠다)
+- 스케줄이 꺼져 있으면 "꺼짐" (코드 기본은 켜짐. 화면 Automation에서 끈 것)
+- 스케줄은 켜진 시각보다 앞선 평가는 만들지 않는다 (Dagster 규칙). 그래서 처음 켠 날은 그 뒤 시각의 스케줄만 돈다. 따라잡기(놓친 평가 중 가장 최근 하나)는 켜진 뒤 데몬이 꺼져 있던 동안에만
 - 마지막 평가가 STALE_HOURS(36시간)보다 오래됐으면 "오래됨" — 데몬이 그동안 안 돌았다는 뜻 (노트북이 꺼져 있었거나 dagster dev를 안 켰다)
 - 마지막 평가가 FAILURE면 오류 메시지 앞부분을 보여 준다
 Dagster 인스턴스만 읽는다 (스케줄과 같은 이유로 DuckDB를 열지 않아도 ①~③은 나온다). ④만 DuckDB 읽기 전용 + Neo4j.
@@ -50,7 +51,9 @@ def schedule_rows(instance: dg.DagsterInstance, schedule_names: list[str], now: 
         if st is None:
             rows.append(row)
             continue
-        row["running"] = st.status in (InstigatorStatus.RUNNING, InstigatorStatus.AUTOMATICALLY_RUNNING)
+        # DECLARED_IN_CODE = 코드의 default_status를 따른다. 우리 스케줄은 모두 기본 켜짐(definitions.SCHEDULE_DEFAULT)이라 켜진 것.
+        # 화면에서 끄면 STOPPED, 화면에서 켜면 RUNNING으로 바뀐다 (2026-11-27 첫 실행에서 7개가 "꺼짐"으로 잘못 나와 고침)
+        row["running"] = st.status in (InstigatorStatus.RUNNING, InstigatorStatus.AUTOMATICALLY_RUNNING, InstigatorStatus.DECLARED_IN_CODE)
         ticks = instance.get_ticks(st.instigator_origin_id, st.selector_id, limit=1)
         if ticks:
             t = ticks[0]
@@ -104,7 +107,7 @@ def render(schedules: list[dict], jobs: list[dict], assets: list[dict], now: flo
         stale = "  ⚠ 오래됨" if r["stale"] else ""
         out.append(f"  {r['name']:<22} {flag:<5} {_fmt(r['tick_at']):<12} {r['tick']}{stale}")
         if r["running"] is not True:
-            problems.append(f"{r['name']} 스케줄이 켜져 있지 않다 → Dagster 화면 Automation에서 켠다")
+            problems.append(f"{r['name']} 스케줄이 꺼져 있다 (코드 기본은 켜짐 → 화면 Automation에서 끈 것. 다시 켜거나, 끈 이유를 devlog에)")
         elif r["stale"]:
             problems.append(f"{r['name']} 마지막 평가가 {_hours_ago(r['tick_at'], now):.0f}시간 전 → 그동안 dagster dev(데몬)가 돌지 않았다")
         elif r["tick"].startswith("오류"):

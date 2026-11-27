@@ -442,6 +442,7 @@ RELATION_CHECKS = (relations_source_known, relations_valid_from_sane, relations_
 # 시각은 노트북을 켜는 시각(보통 09:30) 뒤인 10:00~12:00. 그보다 이르면 늘 "따라잡기"(놓친 평가 중 가장 최근 하나)로만 돌고, 그때는 6개가 같은 시각에
 # 평가되어 report_details가 그날 disclosures 결과(아직 대기 중)를 못 보고 다음 날 따라잡는다 — 하루 지연. 순서: 10:00 대상 → 10:05 공시 목록(59 run, 10분쯤)
 # → 10:45 주요정보 → 11:00 원문 → 11:30 관계 테이블 → 11:45 그래프 → 12:00 색인
+# Dagster는 스케줄이 켜진 시각보다 앞선 평가를 만들지 않는다 — 처음 켠 날(11-27 10:18)은 10:45부터만 돌았다. 따라잡기는 켜진 뒤 데몬이 꺼져 있던 동안에만
 SCHEDULE_DEFAULT = dg.DefaultScheduleStatus.RUNNING
 
 targets_job = dg.define_asset_job(

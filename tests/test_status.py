@@ -40,7 +40,7 @@ class ScheduleRowsTest(unittest.TestCase):
         now = time.time()
         inst = FakeInstance(
             [state("daily_disclosures", InstigatorStatus.RUNNING), state("daily_relations", InstigatorStatus.STOPPED),
-             state("daily_rag_index", InstigatorStatus.RUNNING), state("daily_documents", InstigatorStatus.RUNNING)],
+             state("daily_rag_index", InstigatorStatus.RUNNING), state("daily_documents", InstigatorStatus.DECLARED_IN_CODE)],   # 코드 기본 켜짐 = 켜짐
             {"o-daily_disclosures": [tick(now - 3600, TickStatus.SUCCESS, run_ids=["a", "b"])],
              "o-daily_rag_index": [tick(now - (STALE_HOURS + 5) * 3600, TickStatus.SKIPPED, skip_reason="최근 2일에 새 원문이 없고 지난 색인도 끝까지 갔습니다.")],
              "o-daily_documents": [tick(now - 600, TickStatus.FAILURE, error="ConnectionError: boom\n  trace")]},
@@ -50,12 +50,12 @@ class ScheduleRowsTest(unittest.TestCase):
         self.assertEqual((rows["daily_relations"]["running"], rows["daily_relations"]["tick"]), (False, "평가 기록 없음"))
         self.assertTrue(rows["daily_rag_index"]["stale"])                       # 36시간 넘게 평가 없음 → 데몬이 안 돈 것
         self.assertTrue(rows["daily_rag_index"]["tick"].startswith("건너뜀 — 최근 2일"))
-        self.assertEqual(rows["daily_documents"]["tick"], "오류 — ConnectionError: boom")
+        self.assertEqual((rows["daily_documents"]["running"], rows["daily_documents"]["tick"]), (True, "오류 — ConnectionError: boom"))
         self.assertEqual((rows["targets_freshness"]["running"], rows["targets_freshness"]["tick"]), (None, "기록 없음"))   # 켠 적 없음
 
         text = render(list(rows.values()), [], [], now)
-        self.assertIn("daily_relations 스케줄이 켜져 있지 않다", text)
-        self.assertIn("targets_freshness 스케줄이 켜져 있지 않다", text)
+        self.assertIn("daily_relations 스케줄이 꺼져 있다", text)
+        self.assertIn("targets_freshness 스케줄이 꺼져 있다", text)
         self.assertIn("daily_rag_index 마지막 평가가 41시간 전", text)
         self.assertIn("daily_documents 마지막 평가가 오류", text)
         self.assertNotIn("daily_disclosures 스케줄", text)
