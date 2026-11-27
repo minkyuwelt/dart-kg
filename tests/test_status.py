@@ -103,7 +103,7 @@ class RunsAndAssetsTest(unittest.TestCase):
     def test_definitions_names_exist(self):
         # status는 definitions의 스케줄·작업·자산 이름을 그대로 쓴다 — 이름이 바뀌어도 코드가 깨지지 않는지 (인스턴스 없이 목록만)
         from src.pipeline import definitions as d
-        self.assertEqual(len(list(d.defs.schedules)), 6)
+        self.assertEqual(len(list(d.defs.schedules)), 7)
         self.assertIn("graph_job", [j.name for j in d.defs.jobs])
         self.assertTrue(hasattr(status, "main"))
 

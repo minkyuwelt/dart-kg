@@ -29,7 +29,7 @@
     neo4j_chunks        : (Phase 3) DuckDB와 조각 수가 다른 보고서만 Neo4j에 MERGE. Neo4j(Docker)가 꺼져 있으면 실패하고
                           다음 날 스케줄이 다시 시도한다 (실패가 정상 상태)
     neo4j_relations     : (Phase 4, 0011) 관계 테이블 → Neo4j Corp·Person·OWNS·HOLDS_POSITION·FORMERLY·FILED. 지우고 통째로 다시 넣는다.
-                          스케줄 없음 — 노트북에서 검증할 때까지 graph_job으로 직접 실행
+                          스케줄 daily_graph 11:45 (relations가 최근 바뀌었을 때만)
 
 왜 월 × 회사 파티션인가
     - 일 단위로 나누면 5년 백필 호출이 30배가 된다 (59곳 기준 일 단위 약 107,000건 vs 월 단위 3,540건)
@@ -437,6 +437,13 @@ def relations_current_unique() -> dg.AssetCheckResult:
 RELATION_CHECKS = (relations_source_known, relations_valid_from_sane, relations_intervals_sane, relations_current_unique)
 
 
+# 스케줄은 코드에서 기본 켜짐 (2026-11-27, `python -m src.pipeline.status`로 확인: README대로 "화면에서 켠다"고 적어 두었지만 4일 동안 아무도 켜지 않아
+# 11-23 백필 뒤 새 공시가 한 건도 들어오지 않았다). dagster dev를 켜는 순간 함께 켜지고, 새 환경에서도 같다. 화면에서 끄면 꺼진 상태가 유지된다.
+# 시각은 노트북을 켜는 시각(보통 09:30) 뒤인 10:00~12:00. 그보다 이르면 늘 "따라잡기"(놓친 평가 중 가장 최근 하나)로만 돌고, 그때는 6개가 같은 시각에
+# 평가되어 report_details가 그날 disclosures 결과(아직 대기 중)를 못 보고 다음 날 따라잡는다 — 하루 지연. 순서: 10:00 대상 → 10:05 공시 목록(59 run, 10분쯤)
+# → 10:45 주요정보 → 11:00 원문 → 11:30 관계 테이블 → 11:45 그래프 → 12:00 색인
+SCHEDULE_DEFAULT = dg.DefaultScheduleStatus.RUNNING
+
 targets_job = dg.define_asset_job(
     "targets_job", selection=dg.AssetSelection.assets(corp_codes, holding_investments, target_corps)
 )
@@ -457,9 +464,9 @@ def latest_target_bsns_year(instance: dg.DagsterInstance) -> int | None:
     return int(value.value) if value is not None else None
 
 
-@dg.schedule(job=targets_job, cron_schedule="30 6 * * *", execution_timezone="Asia/Seoul")
+@dg.schedule(job=targets_job, cron_schedule="0 10 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def targets_freshness(context: dg.ScheduleEvaluationContext):
-    """매일 06:30(KST), 수집 대상이 최신 사업보고서 기준인지 확인하고 아니면 targets_job을 실행한다.
+    """매일 10:00(KST), 수집 대상이 최신 사업보고서 기준인지 확인하고 아니면 targets_job을 실행한다.
 
     예전에는 매년 4월 15일 한 번만 돌았다(yearly_targets). Dagster는 놓친 스케줄을 따라잡지 않아서
     그날 노트북이 꺼져 있으면 1년 동안 작년 목록으로 수집하게 된다. 그래서 매일 확인하되,
@@ -480,9 +487,9 @@ def targets_freshness(context: dg.ScheduleEvaluationContext):
     yield dg.RunRequest(run_key=f"targets|{wanted}|{today.isoformat()}")
 
 
-@dg.schedule(job=disclosures_job, cron_schedule="0 7 * * *", execution_timezone="Asia/Seoul")
+@dg.schedule(job=disclosures_job, cron_schedule="5 10 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def daily_disclosures(context: dg.ScheduleEvaluationContext):
-    """매일 07:00(KST) 이번 달 파티션을 대상 회사별로 다시 수집한다.
+    """매일 10:05(KST) 이번 달 파티션을 대상 회사별로 다시 수집한다.
 
     매달 1~7일에는 지난달도 함께 다시 수집한다. 지난달 마지막 날 저녁에 올라온 공시나,
     노트북이 며칠 꺼져 있던 사이에 빠진 공시를 채우기 위해서다.
@@ -522,11 +529,11 @@ def _recent_materializations(instance: dg.DagsterInstance, asset_key: dg.AssetKe
 LOOKBACK_DAYS = 2  # 스케줄이 "최근"으로 보는 범위. 하루 꺼져 있어도 다음 날 따라잡는다. run_key가 같은 날 중복을 막는다
 
 
-@dg.schedule(job=report_details_job, cron_schedule="30 7 * * *", execution_timezone="Asia/Seoul")
+@dg.schedule(job=report_details_job, cron_schedule="45 10 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def daily_report_details(context: dg.ScheduleEvaluationContext):
-    """매일 07:30(KST), 최근 disclosures 실행이 새로 본 정기보고서(정정본 포함)의 주요정보를 수집한다.
+    """매일 10:45(KST), 최근 disclosures 실행이 새로 본 정기보고서(정정본 포함)의 주요정보를 수집한다.
 
-    07:00 daily_disclosures가 남긴 실행 메타데이터(periodic_reports)를 Dagster 인스턴스에서 읽는다.
+    10:05 daily_disclosures가 남긴 실행 메타데이터(periodic_reports)를 Dagster 인스턴스에서 읽는다.
     DuckDB는 열지 않는다. 정기보고서가 없는 날은 건너뛰므로 평소 API 0건, 보고서 접수 시기에 보고서당 4건.
     """
     yield from _runs_for_new_periodic_reports(context, run_prefix="")
@@ -562,9 +569,9 @@ def _runs_for_new_periodic_reports(context: dg.ScheduleEvaluationContext, run_pr
         )
 
 
-@dg.schedule(job=relations_job, cron_schedule="30 8 * * *", execution_timezone="Asia/Seoul")
+@dg.schedule(job=relations_job, cron_schedule="30 11 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def daily_relations(context: dg.ScheduleEvaluationContext):
-    """매일 08:30(KST), 최근에 report_details가 실행됐으면 관계 테이블을 다시 만든다 (API 0건)."""
+    """매일 11:30(KST), 최근에 report_details가 실행됐으면 관계 테이블을 다시 만든다 (API 0건)."""
     now = context.scheduled_execution_time
     today = now.astimezone(KST).date()
     if not _recent_materializations(context.instance, report_details.key, now.timestamp() - LOOKBACK_DAYS * 86400):
@@ -767,9 +774,9 @@ rag_index_job = dg.define_asset_job("rag_index_job", selection=dg.AssetSelection
 graph_job = dg.define_asset_job("graph_job", selection=dg.AssetSelection.assets(neo4j_relations))
 
 
-@dg.schedule(job=documents_job, cron_schedule="0 8 * * *", execution_timezone="Asia/Seoul")
+@dg.schedule(job=documents_job, cron_schedule="0 11 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def daily_documents(context: dg.ScheduleEvaluationContext):
-    """매일 08:00(KST), 최근 disclosures가 새로 본 정기보고서(정정본 포함)의 원문을 받는다. daily_report_details와 같은 입력.
+    """매일 11:00(KST), 최근 disclosures가 새로 본 정기보고서(정정본 포함)의 원문을 받는다. daily_report_details와 같은 입력.
 
     DuckDB는 열지 않는다. 평소 API 0건, 보고서 접수 시기에 보고서당 1건.
     """
@@ -790,9 +797,9 @@ def _recent_saved_documents(instance: dg.DagsterInstance, since: float) -> int:
     return total
 
 
-@dg.schedule(job=rag_index_job, cron_schedule="0 9 * * *", execution_timezone="Asia/Seoul")
+@dg.schedule(job=rag_index_job, cron_schedule="0 12 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
 def daily_rag_index(context: dg.ScheduleEvaluationContext):
-    """매일 09:00(KST), 색인(chunks → chunk_embeddings → neo4j_chunks)을 돌릴 이유가 있으면 rag_index_job을 실행한다.
+    """매일 12:00(KST), 색인(chunks → chunk_embeddings → neo4j_chunks)을 돌릴 이유가 있으면 rag_index_job을 실행한다.
 
     이유 둘 중 하나:
     1) 최근 documents 실행이 새 원문을 저장했다 (메타데이터 saved > 0)
@@ -813,13 +820,28 @@ def daily_rag_index(context: dg.ScheduleEvaluationContext):
     yield dg.RunRequest(run_key=f"rag_index|{today.isoformat()}")
 
 
+@dg.schedule(job=graph_job, cron_schedule="45 11 * * *", execution_timezone="Asia/Seoul", default_status=SCHEDULE_DEFAULT)
+def daily_graph(context: dg.ScheduleEvaluationContext):
+    """매일 11:45(KST), 최근에 relations(관계 테이블)가 다시 만들어졌으면 Neo4j 관계 그래프를 다시 올린다 (API 0건, 조각 층은 그대로).
+
+    2026-11-27까지 스케줄이 없어서 11:30 관계 테이블이 바뀌어도 그래프는 옛것으로 남았다(그래프 질문이 오래된 답을 함). daily_relations와 같은 꼴.
+    DuckDB는 열지 않는다.
+    """
+    now = context.scheduled_execution_time
+    today = now.astimezone(KST).date()
+    if not _recent_materializations(context.instance, relations.key, now.timestamp() - LOOKBACK_DAYS * 86400):
+        yield dg.SkipReason(f"최근 {LOOKBACK_DAYS}일에 relations 실행이 없습니다.")
+        return
+    yield dg.RunRequest(run_key=f"graph|{today.isoformat()}")
+
+
 defs = dg.Definitions(
     assets=[corp_codes, holding_investments, target_corps, disclosures, report_details, relations, change_report,
             documents, chunks, chunk_embeddings, neo4j_chunks, neo4j_relations],
     asset_checks=[target_corps_complete, disclosure_corp_code_exists, disclosure_rcept_no_format, *RELATION_CHECKS, *RAG_CHECKS,
                   neo4j_relations_match],
     jobs=[targets_job, disclosures_job, report_details_job, relations_job, documents_job, rag_index_job, graph_job],
-    schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations, daily_documents, daily_rag_index],
+    schedules=[targets_freshness, daily_disclosures, daily_report_details, daily_relations, daily_documents, daily_rag_index, daily_graph],
     # 한 run 안에서 자산을 동시에 실행하지 않는다 (DuckDB 쓰기는 한 프로세스만)
     executor=dg.in_process_executor,
 )
