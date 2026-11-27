@@ -380,6 +380,8 @@ python -m src.loaders.documents parse        # (Phase 3) 저장된 원문 ZIP에
    ```bash
    python -m src.reports.changes --days 7                                   # → data/reports/changes_YYYY-MM-DD.md
    python -m src.reports.changes --since 2026-03-01 --until 2026-03-31 --corp 00688996 --stdout
+   python -m src.reports.text_changes --rcept 20260313000002            # 문장 변화(2차): 전년 같은 종류 보고서와 위험·회계정책·경영진단 절의 문장 비교 (0012 결정 4)
+   python -m src.reports.text_changes --days 7                          # → data/reports/text_changes_YYYY-MM-DD.md
    ```
 
 17. **(Phase 3) 색인 자동화** — 8~14번을 매일 Dagster가 이어서 합니다. `daily_documents`(11:00, 그날 새로 접수된 정기보고서의 원문)와 `daily_rag_index`(12:00, 파싱 → 청킹 → 임베딩 → Neo4j)가 매일 이어서 합니다(기본 켜짐). 세 단계 모두 "아직 안 된 것만" 처리하므로 평소에는 몇 초에 끝나고, 보고서가 접수된 날만 보고서당 몇 분(임베딩)이 걸립니다. 색인 스케줄은 새 원문이 저장됐거나 지난 색인이 Neo4j 단계에서 멈췄을 때만 run을 만듭니다. 처음 한 번은 화면에서 `rag_index_job`을 직접 실행해 기존 명령어(11·12·14번)로 만든 상태와 같은지(`neo4j_chunks_match` 검사) 확인합니다. 스크립트로 백필한 원문·조각·벡터는 자산이 다시 만들지 않습니다.
