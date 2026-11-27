@@ -119,3 +119,15 @@ h3 .hitN { margin-right: 8px; vertical-align: -0.4em; }
   overflow: hidden;
 }
 .retriever { margin: 0; padding: 8px 16px 9px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); }
+
+/* 시작 화면의 지주 지도: 지주 네 칸, 칸 머리는 남색 띠 */
+.map { margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); overflow: hidden; }
+.group { min-width: 0; border-right: 1px solid var(--rule); }
+.group:last-child { border-right: 0; }
+.groupName { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; background: var(--blue); color: #fff; font-weight: 700; font-size: 15px; text-decoration: none; }
+.groupName:hover { background: var(--blue-ink); color: #fff; }
+.groupN { font-weight: 500; font-size: 13px; opacity: 0.75; }
+.groupSubs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px 14px; }
+.groupSubs a { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--desk); color: var(--ink); font-size: 13.5px; text-decoration: none; }
+.groupSubs a:hover { background: var(--blue-soft); color: var(--blue); }
+@media (max-width: 760px) { .group { border-right: 0; border-bottom: 1px solid var(--rule); } .group:last-child { border-bottom: 0; } }

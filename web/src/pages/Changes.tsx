@@ -99,7 +99,6 @@ export default function Changes() {
             ))}
           </select>
         </div>
-        <p className={s.toolbarHint}>기간 안에 접수된 사업·분기보고서가 직전 보고서와 견주어 최대주주·임원·출자에 무엇을 바꿨는지 봅니다.</p>
       </div>
 
       {error && <p role="alert" className="alert">{error}</p>}
@@ -108,13 +107,13 @@ export default function Changes() {
       {data && (
         <div className={loading ? s.stale : undefined} aria-busy={loading}>
           {data.summary.reports === 0 ? (
-            <section className="panel"><p className="panelEmpty" style={{ paddingTop: 18 }}>이 기간에 접수된 관계 보고서가 없습니다. 기간을 넓히거나 다른 회사를 고르세요. 정기보고서는 보통 3·5·8·11월에 접수됩니다.</p></section>
+            <section className="panel"><p className="panelEmpty" style={{ paddingTop: 14 }}>이 기간에 접수된 정기보고서가 없습니다. 정기보고서는 보통 3·5·8·11월에 들어옵니다.</p></section>
           ) : (
             <section className="panel">
               <div className="panelHead">
                 <h3>변화 <span className="panelCount">{data.summary.changes}</span></h3>
                 <p className="panelNote">
-                  보고서 {data.summary.reports}개 중 변화가 있는 것 {data.summary.reports_with_changes}개
+                  보고서 {data.summary.reports_with_changes}/{data.summary.reports}개에서
                   {Object.entries(data.summary.by_kind).map(([k, n]) => <span key={k} className={s.kind}><span className="chip chipQuiet">{kindLabel(data, k)}</span> {n}</span>)}
                 </p>
               </div>
@@ -134,7 +133,7 @@ export default function Changes() {
                   </ul>
                 </details>
               )}
-              <p className={s.foot}>지분율 변화는 {data.pct_threshold}%p 이상만 적습니다.</p>
+              <p className={s.foot}>지분율 변화는 {data.pct_threshold}%p 이상만</p>
             </section>
           )}
         </div>

@@ -89,12 +89,11 @@ export default function CorpPageView() {
           <label htmlFor="as_of">기준일</label>
           <input id="as_of" type="date" value={asOf} max={today()} onChange={(e) => setAsOf(e.target.value)} />
         </div>
-        <p className={s.toolbarHint}>기준일에 참이었던 임원·최대주주·출자를 보여 줍니다. 날짜를 바꾸면 그때의 표로 바뀝니다.</p>
       </div>
 
       {!corpCode && corpList.length > 0 && (
         <section className="panel" aria-label="회사 고르기">
-          <div className="panelHead"><h3>회사 {corpList.length}곳</h3><p className="panelNote">지주 4곳과 직속 자회사. 지주의 최신 사업보고서 타법인 출자현황에서 뽑았습니다.</p></div>
+          <div className="panelHead"><h3>회사 <span className="panelCount">{corpList.length}</span></h3></div>
           <div className={s.pick}>
             {grouped.map(({ holding, subs }) => (
               <div key={holding.corp_code} className={s.pickGroup}>
@@ -122,6 +121,7 @@ function Body({ data }: { data: CorpPage }) {
   const [quarters, setQuarters] = useState(false);
   const yearEnd = data.stake_history.filter((h) => h.stlm_dt.endsWith("-12-31"));
   const stakes = quarters || yearEnd.length === 0 ? data.stake_history : yearEnd;
+  const maxBook = Math.max(0, ...stakes.map((h) => h.book_value ?? 0));
 
   return (
     <div>
@@ -142,17 +142,17 @@ function Body({ data }: { data: CorpPage }) {
           <div><dt>기준일</dt><dd>{data.as_of}</dd></div>
           <div><dt>고유번호</dt><dd className={s.factMono}>{corp.corp_code}</dd></div>
         </dl>
+        <Structure data={data} />
         <nav className={s.jump} aria-label="이 페이지의 표">
           {SECTIONS.map(([id, label]) => {
             const n = id === "stakes" ? stakes.length : data[id].length;
             return <a key={id} href={`#${id}`} className={n === 0 ? s.jumpOff : s.jumpOn}>{label} <b>{n}</b></a>;
           })}
         </nav>
-        {noOwnTable && <p className={s.headNote}>이 회사는 임원·최대주주 표를 내지 않습니다. 지주 사업보고서의 겸직 현황 표에 적힌 자리가 아는 전부입니다.</p>}
+        {noOwnTable && <p className={s.headNote}>임원·최대주주 표를 내지 않는 회사입니다. 지주 겸직 표의 자리만 있습니다.</p>}
       </header>
 
-      <Section id="stakes" title="지분 추이" rows={stakes} empty="수집 대상 회사의 출자 표에 이 회사가 없습니다. 지주회사이거나, 출자 표의 이름이 이 회사로 이어지지 않은 경우입니다."
-               note="지주의 사업보고서 타법인 출자현황이 적은 이 회사의 기말 지분율·장부가액입니다."
+      <Section id="stakes" title="지분 추이" rows={stakes} empty="출자 표에 이 회사가 없습니다."
                tools={yearEnd.length > 0 && yearEnd.length < data.stake_history.length && (
                  <button type="button" className={`btnQuiet ${quarters ? "btnQuietOn" : ""}`} onClick={() => setQuarters((q) => !q)} aria-pressed={quarters}>
                    분기 포함 {data.stake_history.length}건
@@ -166,7 +166,7 @@ function Body({ data }: { data: CorpPage }) {
                 <td className="dim">{h.share_class ?? "—"}</td>
                 <td className="num">{num(h.shares)}</td>
                 <td className="num">{pct(h.pct)}</td>
-                <td className="num">{won(h.book_value)}</td>
+                <td className="num"><Bar v={h.book_value} max={maxBook}>{won(h.book_value)}</Bar></td>
                 <td><Src r={h} /></td>
               </tr>
           )} />
@@ -185,8 +185,7 @@ function Body({ data }: { data: CorpPage }) {
           )} />
 
       <Section id="executives" title="임원" rows={data.executives}
-               empty={noOwnTable ? "임원 표를 내지 않는 회사입니다. 아래 '지주 겸직 표의 자리'를 보세요." : "이 날짜에 유효한 임원 표가 없습니다."}
-               note="등기구분·직위·담당은 공시 표 그대로입니다. 생년월은 사람을 구별하는 데만 쓰고 보여 주지 않습니다."
+               empty={noOwnTable ? "임원 표가 없습니다. 아래 겸직 표 자리를 보세요." : "이 날짜에 유효한 임원 표가 없습니다."}
                head={<tr><th>이름</th><th>등기구분</th><th>직위</th><th>상근</th><th>담당</th><th>재임 시작</th><th>근거</th></tr>}
                row={(e, i) => (
             <tr key={i}>
@@ -200,8 +199,8 @@ function Body({ data }: { data: CorpPage }) {
               </tr>
           )} />
 
-      <Section id="concurrent_positions" title="지주 겸직 표의 자리" rows={data.concurrent_positions} empty="지주 사업보고서의 계열회사 임원 겸직 현황 표에 이 회사 자리가 없습니다."
-               note="지주 사업보고서 '회사와 계열회사간 임원 겸직 현황' 표에서 이 회사 자리로 적힌 지주 임원입니다. 본부장·부장처럼 임원이 아닌 직책은 뺐습니다."
+      <Section id="concurrent_positions" title="지주 겸직 표의 자리" rows={data.concurrent_positions} empty="지주 겸직 표에 이 회사 자리가 없습니다."
+               note="지주 사업보고서의 계열회사 임원 겸직 현황 표에서."
                head={<tr><th>이름</th><th>직책</th><th>상근</th><th>선임</th><th>지주</th><th>사람 연결</th><th>근거</th></tr>}
                row={(c, i) => (
             <tr key={i}>
@@ -215,8 +214,7 @@ function Body({ data }: { data: CorpPage }) {
               </tr>
           )} />
 
-      <Section id="investments" title="타법인 출자" rows={data.investments} empty="이 날짜에 유효한 출자 표가 없습니다. 자회사는 대부분 출자 표를 내지 않습니다."
-               note="기말 장부가액이 큰 순입니다. 수집 대상인 회사는 이름을 누르면 그 회사로 갑니다. 해외 법인·펀드는 이름만 있습니다."
+      <Section id="investments" title="타법인 출자" rows={data.investments} empty="이 날짜에 유효한 출자 표가 없습니다."
                head={<tr><th>출자 대상</th><th>목적</th><th>최초 취득</th><th className="num">주식 수</th><th className="num">지분율</th><th className="num">장부가액</th><th>근거</th></tr>}
                row={(v, i) => (
             <tr key={i}>
@@ -230,6 +228,52 @@ function Body({ data }: { data: CorpPage }) {
               </tr>
           )} />
     </div>
+  );
+}
+
+// 지배구조 그림: 지주 → 이 회사 → 이 회사가 출자한 회사(장부가액 큰 순 STRUCT_MAX곳). 선 위의 숫자는 지분율.
+// 데이터는 이미 응답에 있는 것뿐(지주·지분, 출자 표). HTML 상자와 CSS 선으로 그려 좁은 화면에서는 세로로 쌓인다
+const STRUCT_MAX = 6;
+function Structure({ data }: { data: CorpPage }) {
+  const { corp } = data;
+  const kids = data.investments.slice(0, STRUCT_MAX);
+  const rest = data.investments.length - kids.length;
+  if (corp.role !== "holding" && !corp.parent_corp_code && kids.length === 0) return null;
+  return (
+    <div className={s.struct} aria-label="지배구조">
+      {corp.parent_corp_code && (
+        <>
+          <Link to={`/corps/${corp.parent_corp_code}`} className={s.node}>{corp.parent_corp_name}</Link>
+          <span className={s.edge}><span className={s.edgePct}>{corp.stake_pct !== null ? `${corp.stake_pct}%` : ""}</span></span>
+        </>
+      )}
+      <span className={`${s.node} ${s.nodeSelf}`}>{corp.corp_name}</span>
+      {kids.length > 0 && (
+        <>
+          <span className={s.edgeStub} />
+          <ul className={s.kids}>
+            {kids.map((v, i) => (
+              <li key={i} className={s.kid}>
+                <span className={s.kidPct}>{v.pct !== null ? `${v.pct}%` : ""}</span>
+                {v.investee_corp_code ? <Link to={`/corps/${v.investee_corp_code}`} className={s.node}>{v.investee_name}</Link> : <span className={`${s.node} ${s.nodeOut}`}>{v.investee_name}</span>}
+              </li>
+            ))}
+            {rest > 0 && <li className={s.kid}><span className={s.kidPct} /><a href="#investments" className={s.nodeMore}>+{rest}곳</a></li>}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+// 숫자 아래 얇은 막대. 같은 표 안의 최댓값을 100으로. 한 종류 한 색이라 범례는 없다
+function Bar({ v, max, children }: { v: number | null; max: number; children: React.ReactNode }) {
+  const w = v && max > 0 ? Math.max(2, Math.round((v / max) * 100)) : 0;
+  return (
+    <span className={s.bar}>
+      {children}
+      <span className={s.barTrack} aria-hidden="true"><span className={s.barFill} style={{ width: `${w}%` }} /></span>
+    </span>
   );
 }
 

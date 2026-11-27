@@ -15,8 +15,9 @@ export default function App() {
         <header className={s.top}>
           <div className={s.topInner}>
             <Link to="/" className={s.brand}>
+              <Mark />
               <span className={s.brandName}>dart-kg</span>
-              <span className={s.brandTag}>4대 금융지주 공시를 시간축 위에</span>
+              <span className={s.brandTag}>4대 금융지주 공시</span>
             </Link>
             <nav className={s.nav} aria-label="페이지">
               <NavLink to="/" end className={tab}>질문</NavLink>
@@ -34,9 +35,22 @@ export default function App() {
             <Route path="/corps/:corpCode" element={<CorpPageView />} />
           </Routes>
         </div>
-        <p className={s.foot}>답과 표는 공시 원문에서만 만들고 수치는 공시 그대로입니다. 투자 판단용이 아닙니다. 자료: 금융감독원 전자공시(OpenDART).</p>
+        <p className={s.foot}>수치는 공시 그대로이며 투자 판단용이 아닙니다. 자료: 금융감독원 OpenDART</p>
       </div>
     </BrowserRouter>
+  );
+}
+
+// 마크: 남색 서류 위에 꿰어진 세 점(회사·사람·지분). public/favicon.svg와 같은 그림
+function Mark() {
+  return (
+    <svg className={s.mark} viewBox="0 0 64 64" width="22" height="22" aria-hidden="true">
+      <rect width="64" height="64" rx="14" fill="var(--blue)" />
+      <path d="M18 44 L32 20 L46 44" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="18" cy="44" r="5" fill="var(--marker)" />
+      <circle cx="32" cy="20" r="5" fill="#fff" />
+      <circle cx="46" cy="44" r="5" fill="#fff" />
+    </svg>
   );
 }
 

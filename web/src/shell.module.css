@@ -5,7 +5,8 @@
   max-width: 1080px; margin: 0 auto; padding: 0 var(--gutter);
   display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 28px; min-height: 52px;
 }
-.brand { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--ink); }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.mark { flex: 0 0 auto; }
 .brandName { font-size: 19px; font-weight: 800; letter-spacing: -0.02em; }
 .brandTag { color: var(--ink-3); font-size: 13px; }
 .nav { display: flex; gap: 4px; }

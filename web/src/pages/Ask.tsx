@@ -2,7 +2,8 @@
 // 질문 한 페이지 (0013 "첫 화면"). 질문 → 답 + 근거 공시 + (그래프 질문이면) 관계표.
 // 화면은 API 응답을 그대로 보여 준다. 답의 [n]과 오른쪽 근거 n이 같은 번호이고, 인용된 근거만 형광펜을 칠한다.
 import { useEffect, useRef, useState } from "react";
-import { ApiError, API_URL, ask, splitCitations, type AskResponse } from "../api";
+import { Link } from "react-router-dom";
+import { ApiError, API_URL, ask, corps, splitCitations, type AskResponse, type Corp } from "../api";
 import s from "./ask.module.css";
 
 // 평가 세트(eval/questions.jsonl)의 실제 질문. 처음 온 사람이 "무엇을 물을 수 있나"를 보는 자리
@@ -45,6 +46,13 @@ export default function Ask() {
   // 이 세션에서 물은 것 (sessionStorage, 탭을 닫으면 사라짐). 결과도 함께 두어 다시 누르면 API를 다시 부르지 않는다
   const [history, setHistory] = useState<AskResponse[]>(() => loadHistory());
   useEffect(() => { saveHistory(history); }, [history]);
+  // 시작 화면의 지주 지도용 회사 목록
+  const [corpList, setCorpList] = useState<Corp[]>([]);
+  useEffect(() => {
+    const c = new AbortController();
+    corps(c.signal).then(setCorpList).catch(() => setCorpList([]));
+    return () => c.abort();
+  }, []);
 
   async function submit(q: string) {
     const text = q.trim();
@@ -106,13 +114,15 @@ export default function Ask() {
         <div className={s.askRow}>
           <label className={s.toggle}>
             <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
-            답 만들기 <span className="muted">(끄면 근거 공시만 찾습니다)</span>
+            답 만들기
           </label>
           <button type="submit" className="btn" disabled={loading || question.trim().length < 2}>
             {loading ? "찾는 중" : "묻기"}
           </button>
         </div>
       </form>
+
+      {!result && !loading && !error && corpList.length > 0 && <GroupMap corpList={corpList} />}
 
       {!result && !loading && !error && (
         <div className={s.lists}>
@@ -166,12 +176,9 @@ export default function Ask() {
                   )}
                 </div>
               ) : (
-                <p className={s.noAnswer}>답은 만들지 않았습니다. 오른쪽 근거 공시를 직접 읽어 보세요.</p>
+                <p className={s.noAnswer}>답은 만들지 않았습니다. 근거 공시를 읽어 보세요.</p>
               )}
-              <p className={s.caveat}>
-                답은 공시 원문 조각에서만 만들고, 수치는 공시 그대로입니다.
-                {answer && <> {answer.model} · 토큰 {answer.input_tokens.toLocaleString()} / {answer.output_tokens.toLocaleString()}</>}
-              </p>
+              {answer && <p className={s.caveat}>{answer.model} · 토큰 {answer.input_tokens.toLocaleString()} / {answer.output_tokens.toLocaleString()}</p>}
             </div>
 
             {graph && (
@@ -181,7 +188,7 @@ export default function Ask() {
                     <span className={[s.hitN, graph.cited ? s.hitNCited : ""].join(" ")} aria-hidden="true">{graph.n}</span>
                     관계표 <span className="panelCount">{graph.relations.length}</span>
                   </h3>
-                  <p className="panelNote">그래프에서 찾은 관계{graph.cited ? ". 답이 인용했습니다" : ". 답은 인용하지 않았습니다"}</p>
+                  {!graph.cited && <p className="panelNote">답이 인용하지 않음</p>}
                 </div>
                 {graph.derived.length > 0 && (
                   <ul className={s.derived}>
@@ -243,6 +250,26 @@ export default function Ask() {
         </div>
       )}
     </main>
+  );
+}
+
+// 시작 화면: 4대 지주와 자회사 59곳. 지주 한 칸에 자회사 칩, 누르면 회사 페이지. "이 도구가 아는 회사"가 첫 화면에 보인다
+function GroupMap({ corpList }: { corpList: Corp[] }) {
+  const holdings = corpList.filter((c) => c.role === "holding");
+  return (
+    <section className={`panel ${s.map}`} aria-label="회사 지도">
+      {holdings.map((h) => {
+        const subs = corpList.filter((c) => c.parent_corp_code === h.corp_code);
+        return (
+          <div key={h.corp_code} className={s.group}>
+            <Link to={`/corps/${h.corp_code}`} className={s.groupName}>{h.corp_name}<span className={s.groupN}>{subs.length}</span></Link>
+            <div className={s.groupSubs}>
+              {subs.map((c) => <Link key={c.corp_code} to={`/corps/${c.corp_code}`}>{c.corp_name}</Link>)}
+            </div>
+          </div>
+        );
+      })}
+    </section>
   );
 }
 
